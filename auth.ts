@@ -7,7 +7,8 @@ import bcrypt from 'bcrypt';
 import postgres from 'postgres';
 
 
- 
+export const runtime = 'nodejs';
+
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
  
 async function getUser(email: string): Promise<User | undefined> {
