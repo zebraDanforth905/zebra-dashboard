@@ -1,6 +1,6 @@
 // app/seed/route.ts
 import postgres from 'postgres';
-import {users} from '../lib/test-data';
+import {customers, users, invoices, payments, students} from '../lib/test-data';
 import bcrypt from 'bcrypt';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
@@ -10,15 +10,58 @@ export async function GET() {
     await sql.begin(async (tx) => {
       // 1) One-time setup (no parallel DDL)
       await tx`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
+      await tx`DROP TABLE IF EXISTS payments`;
+      await tx`DROP TABLE IF EXISTS invoices`;
+      await tx`DROP TABLE IF EXISTS students`; 
+      await tx`DROP TABLE IF EXISTS customers`;
+      await tx`DROP TABLE IF EXISTS users`;
+  
 
       await tx`
         CREATE TABLE IF NOT EXISTS users (
           id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
-          email TEXT NOT NULL UNIQUE,
+          email TEXT NOT NULL,
           password TEXT NOT NULL
         );
       `;
+
+      await tx`
+        CREATE TABLE IF NOT EXISTS customers (
+          id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          email TEXT NOT NULL
+        );
+      `;
+
+      await tx`
+        CREATE TABLE IF NOT EXISTS students (
+          id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          customer_id UUID REFERENCES customers(id) ON DELETE CASCADE
+        );
+      `;
+
+      await tx`
+        CREATE TABLE IF NOT EXISTS invoices (
+          id UUID DEFAULT (uuid_generate_v4()) PRIMARY KEY,
+          customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+          amount NUMERIC(10, 2) NOT NULL,
+          date DATE NOT NULL
+        );
+      `;
+
+      await tx`
+        CREATE TABLE IF NOT EXISTS payments (
+          id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+          customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+          amount NUMERIC(10, 2) NOT NULL,
+          date DATE NOT NULL,
+          status VARCHAR(255) NOT NULL
+        );
+      `;
+
+
 
       // 2) Inserts (you can parallelize per-table rows)
       for (const u of users) {
@@ -27,6 +70,25 @@ export async function GET() {
           INSERT INTO users (id, name, email, password)
           VALUES (${u.id}, ${u.name}, ${u.email}, ${hashed})
           ON CONFLICT (id) DO NOTHING;
+        `;
+      }
+      for (const c of customers) {
+        await tx`
+          INSERT INTO customers (id, name, email)
+          VALUES (${c.id}, ${c.name}, ${c.email})
+          ON CONFLICT (id) DO NOTHING;
+        `;
+      }
+      for (const i of invoices) {
+        await tx`
+          INSERT INTO invoices (customer_id, amount, date)
+          VALUES (${i.customer_id}, ${i.amount}, ${i.date});
+        `;
+      } 
+      for (const p of payments) {
+        await tx`
+          INSERT INTO payments (customer_id, amount, date, status)
+          VALUES (${p.customer_id}, ${p.amount}, ${p.date}, ${p.status});
         `;
       }
 

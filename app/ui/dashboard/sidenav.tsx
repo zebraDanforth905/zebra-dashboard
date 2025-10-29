@@ -42,14 +42,15 @@ export default function SideNav() {
           <div className="absolute bottom-2 left-2">
             <BrandMark />
           </div>
+          
         </div>
       </Link>
 
       {/* Links + filler + signout */}
       <div className="flex grow flex-row justify-between space-x-2 md:flex-col md:space-x-0 md:space-y-2">
         <NavLinks />
-        
-        <div className="hidden h-auto w-full grow rounded-xl border border-slate-200 bg-white md:block" />
+
+        <div className="hidden h-auto w-full grow bg-white md:block" />
         <form
           action={async () => {
             'use server';
@@ -57,11 +58,11 @@ export default function SideNav() {
           }}
         >
           <button className={
-            'flex h-[48px] w-full grow items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-sm font-medium '+
-            'hover:bg-sky-50 hover:text-sky-700 md:flex-none md:justify-start md:p-2 md:px-3'
+            'flex h-[48px] w-full grow items-center justify-center gap-2 rounded-xl bg-white p-3 text-sm font-medium '+
+            'hover:bg-sky-50 hover:text-blue-600 md:flex-none md:justify-start md:p-2 md:px-3 cursor-pointer'
           }>
 
-            <div className="hidden md:block">Sign Out</div>
+            <div className="md:block">Sign Out</div>
           </button>
         </form>
       </div>
