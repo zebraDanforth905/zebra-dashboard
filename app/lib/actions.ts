@@ -5,9 +5,15 @@ import { AuthError } from 'next-auth';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
+import {z} from 'zod';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
+const FormSchema = z.object({
+  studentId: z.string(),
+  customerId: z.string(),
+});
+ 
 
  
 export async function authenticate(
@@ -32,8 +38,12 @@ export async function authenticate(
 }
 
 export async function assignStudent(formData: FormData) {
-  const studentId = formData.get('student_id');
-  const customerId = formData.get('customer_id');
+
+  const { customerId, studentId } = FormSchema.parse({
+    customerId: formData.get('customer_id'),
+    studentId: formData.get('student_id'),
+  });
+
 
   console.log(`Assigning student ID ${studentId} to customer ID ${formData.get('customer_id')}`);
 
