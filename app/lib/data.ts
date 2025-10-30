@@ -1,5 +1,6 @@
 import postgres from 'postgres';
 import { CustomerTableData } from './definitions';
+import { revalidatePath } from 'next/cache';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -59,6 +60,7 @@ export async function fetchFilteredCustomers(
         `
         return customers;
 
+      
     
   } catch (error) {
     console.error('Database Error:', error);
@@ -80,5 +82,21 @@ export async function fetchCustomerPages(query: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch total number of customers.');
+  }
+}
+
+
+export async function fetchUnnassignedStudents(query: string) {
+  try {
+    console.log(`Fetching unassigned students with query: ${query}`);
+    const students = await sql<{ id: number; name: string }[]>`
+      SELECT id, name FROM students
+      WHERE customer_id IS NULL AND name ILIKE '%' || ${query} || '%'
+      LIMIT ${ITEMS_PER_PAGE}
+      ;`
+    return students;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch unassigned students.');
   }
 }

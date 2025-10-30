@@ -8,6 +8,7 @@ import { fetchCustomerPages } from "@/app/lib/data";
 export default async function Page(props: {
   searchParams?: Promise<{
     query?: string;
+    studentQuery?: string;
     page?: string;
     sortBy?: string;
     incDec?: boolean;

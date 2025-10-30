@@ -2,6 +2,7 @@
 import postgres from 'postgres';
 import {customers, users, invoices, payments, students} from '../lib/test-data';
 import bcrypt from 'bcrypt';
+import { revalidatePath } from 'next/cache';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -10,11 +11,11 @@ export async function GET() {
     await sql.begin(async (tx) => {
       // 1) One-time setup (no parallel DDL)
       await tx`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
-      await tx`DROP TABLE IF EXISTS payments`;
-      await tx`DROP TABLE IF EXISTS invoices`;
-      await tx`DROP TABLE IF EXISTS students`; 
-      await tx`DROP TABLE IF EXISTS customers`;
-      await tx`DROP TABLE IF EXISTS users`;
+      // await tx`DROP TABLE IF EXISTS payments`;
+      // await tx`DROP TABLE IF EXISTS invoices`;
+      // await tx`DROP TABLE IF EXISTS students`; 
+      // await tx`DROP TABLE IF EXISTS customers`;
+      // await tx`DROP TABLE IF EXISTS users`;
   
 
       await tx`
@@ -36,10 +37,17 @@ export async function GET() {
 
       await tx`
         CREATE TABLE IF NOT EXISTS students (
-          id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+          id NUMERIC(10, 2) PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
           customer_id UUID REFERENCES customers(id) ON DELETE CASCADE
         );
+      `;
+
+      const cols = await tx`
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'students'
+        ORDER BY ordinal_position;
       `;
 
       await tx`
@@ -63,36 +71,48 @@ export async function GET() {
 
 
 
-      // 2) Inserts (you can parallelize per-table rows)
-      for (const u of users) {
-        const hashed = await bcrypt.hash(u.password, 10);
-        await tx`
-          INSERT INTO users (id, name, email, password)
-          VALUES (${u.id}, ${u.name}, ${u.email}, ${hashed})
-          ON CONFLICT (id) DO NOTHING;
-        `;
-      }
+      // // 2) Inserts (you can parallelize per-table rows)
+      // for (const u of users) {
+      //   const hashed = await bcrypt.hash(u.password, 10);
+
+      //   await tx`
+      //     INSERT INTO users (id, name, email, password)
+      //     VALUES (${u.id}, ${u.name}, ${u.email}, ${hashed})
+      //     ON CONFLICT (id) DO NOTHING;
+      //   `;
+      // }
       for (const c of customers) {
         await tx`
-          INSERT INTO customers (id, name, email)
-          VALUES (${c.id}, ${c.name}, ${c.email})
+          INSERT INTO customers (name, email)
+          VALUES (${c.name}, ${c.email})
           ON CONFLICT (id) DO NOTHING;
-        `;
-      }
-      for (const i of invoices) {
-        await tx`
-          INSERT INTO invoices (customer_id, amount, date)
-          VALUES (${i.customer_id}, ${i.amount}, ${i.date});
-        `;
-      } 
-      for (const p of payments) {
-        await tx`
-          INSERT INTO payments (customer_id, amount, date, status)
-          VALUES (${p.customer_id}, ${p.amount}, ${p.date}, ${p.status});
         `;
       }
 
+      // for (const i of invoices) {
+      //   await tx`
+      //     INSERT INTO invoices (customer_id, amount, date)
+      //     VALUES (${i.customer_id}, ${i.amount}, ${i.date});
+      //   `;
+      // } 
+      // for (const p of payments) {
+      //   await tx`
+      //     INSERT INTO payments (customer_id, amount, date, status)
+      //     VALUES (${p.customer_id}, ${p.amount}, ${p.date}, ${p.status});
+      //   `;
+      // }
+
+      // for (const s of students) {
+      //   await tx`
+      //     INSERT INTO students (id, name, customer_id)
+      //     VALUES (${s.student_id}, ${s.first_name + " " + s.last_name}, NULL)
+      //     ON CONFLICT (id) DO NOTHING;
+      //   `;
+      // }
+
     });
+
+    revalidatePath('/dashboard/billing');
 
     return Response.json({ message: 'Database seeded successfully' });
   } catch (err: any) {
