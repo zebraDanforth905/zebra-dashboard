@@ -4,7 +4,6 @@ import Search from "@/app/ui/search";
 import { SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import Pagination from "@/app/ui/pagination";
 import { fetchStudentPages } from "@/app/lib/data";
-import { Suspense } from "react";
 
 export default async function Page(props: {searchParams?: 
   Promise<{
@@ -24,15 +23,8 @@ export default async function Page(props: {searchParams?:
       <div className="flex w-full items-center justify-between">
         <h1 className={`text-2xl`}>Students</h1>
       </div>
-      <div className="my-4 flex items-center justify-between gap-2 md:mt-8"> 
-        <Search placeholder="Search students..." />
-      </div>
-      <Suspense>
+      <Search placeholder="Search students..." />
       <StudentTable query={query} currentPage={page} sortBy={sortBy}/>
-      </Suspense>
-      <div className="mt-5 flex w-full justify-center">
-        <Pagination totalPages={totalPages} />
-      </div>
-      
+      <Pagination totalPages={totalPages} />
     </div>
 }

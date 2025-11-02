@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import { CustomerTableData } from './definitions';
+import { CustomerTableData, ScheduleRow, StudentTableData, Session } from './definitions';
 import { revalidatePath } from 'next/cache';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
@@ -19,7 +19,9 @@ export async function fetchFilteredCustomers(
   try {
     const customers = await sql<CustomerTableData[]>`
     WITH inv AS (
-        SELECT customer_id, COALESCE(SUM(amount),0) AS sum_invoices
+        SELECT customer_id, COALESCE(SUM(amount),0) AS sum_invoices,
+        MIN(date) AS next_invoice_date, 
+        MIN(amount) AS next_invoice_amount
         FROM invoices GROUP BY customer_id
         ),
         pay AS (
@@ -85,7 +87,6 @@ export async function fetchCustomerPages(query: string) {
   }
 }
 
-
 export async function fetchUnnassignedStudents(query: string) {
   try {
     console.log(`Fetching unassigned students with query: ${query}`);
@@ -99,4 +100,208 @@ export async function fetchUnnassignedStudents(query: string) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch unassigned students.');
   }
+}
+
+export async function fetchFilteredStudentsTable(
+  query: string,
+  currentPage: number,
+  sortBy: string,
+ 
+) {
+  const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+
+  console.log(`Fetching students with query: ${query}, page: ${currentPage}, sortBy: ${sortBy}`);
+  
+  try {
+    const students = await sql<StudentTableData[]>`
+    WITH
+    e AS (
+      SELECT e.id, e.student_id, e.course_id, e.session_id
+      FROM enrolments e
+    ),
+    ec AS (
+      SELECT
+        e.student_id,
+        COALESCE(
+          JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+              'id', e.id,
+              'course_name', crs.name,        -- Course.name per your type
+              'weekday', sess.weekday,
+              'start_time', sess.start_time,
+              'end_time', sess.end_time
+            )
+            ORDER BY crs.name NULLS LAST
+          ) FILTER (WHERE e.id IS NOT NULL),
+          '[]'::jsonb
+        ) AS enrolled_courses
+      FROM e
+      LEFT JOIN courses  crs  ON crs.id  = e.course_id
+      LEFT JOIN sessions sess ON sess.id = e.session_id
+      GROUP BY e.student_id
+    ),
+    pd AS (
+      SELECT
+        p.student_id,
+        COALESCE(
+          JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+              'id', p.id,
+              'weekday', p.weekday,
+              'waiver_signed', p.waiver_signed,
+              'school_name', p.school_name,
+              'teacher_name', p.teacher_name,
+              'room_number', p.room_number
+            )
+            ORDER BY p.weekday
+          ) FILTER (WHERE p.id IS NOT NULL),
+          '[]'::jsonb
+        ) AS pickup_days
+      FROM pickups p
+      GROUP BY p.student_id
+    )
+    SELECT
+      s.id::text                                 AS id,
+      s.name                                     AS name,
+      c.name                                     AS customer_name,
+      COALESCE(ec.enrolled_courses, '[]'::jsonb) AS enrolled_courses,
+      COALESCE(pd.pickup_days, '[]'::jsonb)      AS pickup_days
+    FROM students s
+    LEFT JOIN customers c ON c.id = s.customer_id
+    LEFT JOIN ec ON ec.student_id = s.id
+    LEFT JOIN pd ON pd.student_id = s.id
+    WHERE s.name ILIKE '%' || ${query} || '%' OR c.name ILIKE '%' || ${query} || '%'
+    ORDER BY ${sql(sortBy)} 
+    LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset};
+  `;    
+  
+
+  return students;
+
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch students.');
+  } 
+}
+
+export async function fetchStudentPages(query: string) {
+  try {
+    const data = await sql`SELECT COUNT(*)
+    FROM students s
+      LEFT JOIN customers c ON s.customer_id = c.id
+      WHERE s.name ILIKE '%' || ${query} || '%'
+      OR c.name ILIKE '%' || ${query} || '%'
+  `;
+    const totalPages = Math.ceil(Number(data[0].count) / ITEMS_PER_PAGE);
+    return totalPages;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch total number of students.');
+  } 
+}
+
+
+export async function fetchCustomerById(customerId: string | "") {
+  try { 
+    const customers = await sql<CustomerTableData[]>`
+    WITH inv AS (
+        SELECT customer_id, COALESCE(SUM(amount),0) AS sum_invoices
+        FROM invoices GROUP BY customer_id
+        ),
+        pay AS (
+        SELECT
+            customer_id,
+            COALESCE(SUM(amount) FILTER (WHERE status='submitted'),0) AS sum_payments,
+            MIN(date)   FILTER (WHERE status='scheduled') AS next_payment_date,
+            MIN(amount) FILTER (WHERE status='scheduled') AS next_payment_amount,
+            AVG(amount) FILTER (WHERE status='scheduled') AS regular_payment_amount
+        FROM payments GROUP BY customer_id
+        ),
+        stu AS (
+        SELECT
+            customer_id,
+            COALESCE(
+            JSONB_AGG(JSONB_BUILD_OBJECT('id', id, 'name', name) ORDER BY name),
+            '[]'::jsonb
+            ) AS students
+        FROM students
+        GROUP BY customer_id
+        )
+        SELECT
+        c.id,
+        c.name,
+        c.email,
+        COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0) AS total_due,
+        pay.next_payment_date,
+        pay.next_payment_amount,
+        pay.regular_payment_amount,
+        COALESCE(stu.students, '[]'::jsonb) AS students 
+        FROM customers c
+        LEFT JOIN inv ON inv.customer_id = c.id
+        LEFT JOIN pay ON pay.customer_id = c.id
+        LEFT JOIN stu ON stu.customer_id = c.id
+        WHERE c.id = ${customerId}
+        ;`
+        return customers[0];
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch customer by ID.');
+  }
+}
+
+export async function fetchSessionStudents(sessionId: string) {
+  console.log(`Fetching students for session ID: ${sessionId}`);
+  try {
+    const students = await sql<ScheduleRow[]>`
+      SELECT e.id AS enrolment_id, s.id, s.name, crs.name AS course_name
+      FROM students s
+      JOIN enrolments e ON e.student_id = s.id
+      JOIN courses crs ON crs.id = e.course_id
+      WHERE e.session_id = ${sessionId}
+      ORDER BY s.name;
+    `;
+    return students;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch session students.');
+  } 
+}
+
+export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday') {
+  console.log(`Fetching sessions for day: ${day}`);
+  try {
+    const sessions = await sql<Session[]>
+    `
+      SELECT COUNT(e.id) as student_count, s.id, weekday, start_time, end_time
+      FROM sessions s
+      JOIN enrolments e ON e.session_id = s.id
+      WHERE weekday = ${day}
+      GROUP BY s.id
+      ORDER BY start_time;
+    `;
+
+
+
+    return sessions;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch sessions for day.');
+  } 
+}
+
+export async function fetchCustomersList(query: string) {
+  console.log(`Fetching customers list with query: ${query}`);
+  try {
+    const customers = await sql<CustomerTableData[]>`
+      SELECT id, name, email
+      FROM customers
+      WHERE name ILIKE '%' || ${query} || '%' OR email ILIKE '%' || ${query} || '%'
+      ORDER BY name
+      LIMIT 200
+    ;`;
+    return customers;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch customers list.');
+  } 
 }

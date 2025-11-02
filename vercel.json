@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/app/admin/scrape-now", "schedule": "0 * * * *" } 
+  ]
+}

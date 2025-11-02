@@ -1,6 +1,6 @@
 // app/seed/route.ts
 import postgres from 'postgres';
-import {customers, users, invoices, payments, students} from '../lib/test-data';
+import {customers, users, invoices, payments, students, sessions, enrolments, courses} from '../lib/test-data';
 import bcrypt from 'bcrypt';
 import { revalidatePath } from 'next/cache';
 
@@ -16,7 +16,16 @@ export async function GET() {
       // await tx`DROP TABLE IF EXISTS students`; 
       // await tx`DROP TABLE IF EXISTS customers`;
       // await tx`DROP TABLE IF EXISTS users`;
-  
+      
+      await tx`
+      CREATE TABLE IF NOT EXISTS recurring_invoices (
+        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+        customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+        day_of_month NUMERIC(10, 2) NOT NULL,
+        every NUMERIC (10, 2) NOT NULL,
+        start_date DATE NOT NULL,
+        end_after NUMERIC(10, 2)
+      );`;
 
       await tx`
         CREATE TABLE IF NOT EXISTS users (
@@ -69,6 +78,37 @@ export async function GET() {
         );
       `;
 
+      await tx`CREATE TABLE IF NOT EXISTS enrolments (
+        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+        student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
+        course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
+        session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+        start_date DATE DEFAULT CURRENT_DATE
+      );`;
+
+      await tx`CREATE TABLE IF NOT EXISTS pickups (
+        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+        student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
+        weekday VARCHAR(20) NOT NULL,
+        waiver_signed BOOLEAN NOT NULL,
+        school_name VARCHAR(255) NOT NULL,
+        teacher_name VARCHAR(255) NOT NULL,
+        room_number NUMERIC(10, 2) NOT NULL
+      );`;
+
+      await tx`CREATE TABLE IF NOT EXISTS courses (
+        id VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description TEXT
+      );`;
+
+      await tx`CREATE TABLE IF NOT EXISTS sessions (
+        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+        start_time TIME NOT NULL,
+        end_time TIME NOT NULL,
+        weekday VARCHAR(20) NOT NULL
+      );`;
+
 
 
       // // 2) Inserts (you can parallelize per-table rows)
@@ -81,13 +121,13 @@ export async function GET() {
       //     ON CONFLICT (id) DO NOTHING;
       //   `;
       // }
-      for (const c of customers) {
-        await tx`
-          INSERT INTO customers (name, email)
-          VALUES (${c.name}, ${c.email})
-          ON CONFLICT (id) DO NOTHING;
-        `;
-      }
+      // for (const c of customers) {
+      //   await tx`
+      //     INSERT INTO customers (name, email)
+      //     VALUES (${c.name}, ${c.email})
+      //     ON CONFLICT (id) DO NOTHING;
+      //   `;
+      // }
 
       // for (const i of invoices) {
       //   await tx`
@@ -110,6 +150,29 @@ export async function GET() {
       //   `;
       // }
 
+      // for (const s of sessions) {
+      //   await tx`
+      //     INSERT INTO sessions (start_time, end_time, weekday)
+      //     VALUES (${s.start_time}, ${s.end_time}, ${s.weekday}) 
+      //     ON CONFLICT (id) DO NOTHING;
+      //   `;
+      // }
+
+      // for (const c of courses) {
+      //   await tx`
+      //     INSERT INTO courses (id, name, description)
+      //     VALUES (${c.course_code}, ${c.display_name}, NULL) 
+      //     ON CONFLICT (id) DO NOTHING;
+      //   `;
+      // }
+
+      // for (const e of enrolments) {
+      //   await tx`
+      //     INSERT INTO enrolments (student_id, course_id, session_id)
+      //     VALUES (${e.student_id}, ${e.course}, NULL) 
+      //     ON CONFLICT (id) DO NOTHING;
+      //   `;
+      // }
     });
 
     revalidatePath('/dashboard/billing');

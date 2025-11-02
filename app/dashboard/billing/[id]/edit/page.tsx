@@ -3,16 +3,60 @@ import React from "react";
 
 import AddStudentForm from "@/app/ui/billing/add-student";  
 
-export default async function Page(props: { params: Promise<{ id: string }>; searchParams?: Promise<{studentQuery?: string;}>; }) {
-  const params = await props.params;
-  const searchParams = await props.searchParams;
-  const id = params.id;
+// app/dashboard/billing/[id]/edit/page.tsx
+import Link from "next/link";
+import clsx from "clsx";
+import { fetchCustomerById, fetchCustomersList } from "@/app/lib/data";
+import Search from "@/app/ui/search";
+import CustomerSearchList from "@/app/ui/billing/customer-search-list";
 
+export default async function Page(props: {
+  params?: Promise<{ id: string }>;
+  searchParams?: Promise<{ query?: string; studentQuery?: string }>;
+}) {
+
+  const id = (await props.params)?.id;
+  const searchParams = await props.searchParams;
   const studentQuery = searchParams?.studentQuery || '';
-  
+  const query = searchParams?.query || '';
+
+  const customer = await fetchCustomerById(id || " ");
+
+
   return (
-    <main>
-      <AddStudentForm query={studentQuery} customer_id={id}/>
-    </main>
+    <div className="min-h-[calc(100vh-6rem)] grid grid-cols-1 md:grid-cols-[340px_1fr] gap-4">
+      <CustomerSearchList query={query} id={id} />
+
+      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm ring-1 ring-slate-100 p-4">
+        <h1 className="text-2xl font-semibold text-slate-800 mb-4">
+          {customer ? customer.name : "Customer Not Found"}
+        </h1>
+        <h2 className="text-lg font-medium text-slate-700 mb-2">Students:</h2>
+
+          {customer && customer.students.length > 0 ? (
+            customer.students.map((student) => (
+              <Link
+                key={student.id}
+                href={`/dashboard/students/${student.id}/edit`}
+                className="block"
+              >
+
+              <div key={student.id} className="py-2 px-4 last:border-0 flex justify-between">
+                <div>
+                  <div className="font-medium text-slate-800">{student.name}</div>
+                </div>
+              </div>
+              </Link>
+            ))
+          ) : (
+            <div className="text-sm text-slate-500 px-2 py-2">No students enrolled.</div>
+          )}
+
+     
+        <AddStudentForm query={studentQuery} customer_id={id||''}/>
+
+        
+      </section>
+    </div>
   );
 }

@@ -1,3 +1,9 @@
+import { redirect } from "next/navigation";
+
+const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
+
 export default function Page() {
-  return <p>Schedule Page</p>;
+  const today = new Date();
+  const day = DAYS[today.getDay()];
+  redirect(`/dashboard/schedule/${day}`);
 }
