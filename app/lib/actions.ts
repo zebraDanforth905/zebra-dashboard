@@ -9,15 +9,43 @@ import {z} from 'zod';
 import { fetchReportJSON } from './scraper_helpers';
 import { normalizeRows } from "@/app/lib/normalize";
 import { upsertFromNormalized } from './insert_from_portal';
+import { RecurringInvoice } from './definitions';
+import { computeNextDate } from './utils';
+import { formatDate } from './utils';
+import { localMidnightFromISODate } from './utils';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
-const FormSchema = z.object({
+const AssignStudentFormSchema = z.object({
   studentId: z.string(),
   customerId: z.string(),
 });
  
+const NewRecurringInvoiceFormSchema = z.object({
+  customer_id: z.string(),
+  amount: z.coerce.number(),
+  day_of_month: z.coerce.number().refine(n => (n >= 1 && n <= 28) || n === -1, "day_of_month must be 1..28 or -1"),
+  every: z.coerce.number().int().positive(),
+  start_date: z.coerce.date(),
+  end_after: z.coerce.number(),
+  description: z.string(),
+}
+)
 
+const skipNextDateFormSchema = z.object({
+  invoiceId: z.string(),
+  nextDate: z.coerce.date(),
+  dayOfMonth: z.coerce.number().refine(n => (n >= 1 && n <= 28) || n === -1, "day_of_month must be 1..28 or -1"),
+  every: z.coerce.number()
+})
+
+function nextDay(d: Date){
+  console.log(`setting this date to next day: ${d}`)
+  d.setDate(d.getDate() + 1)
+  console.log(`this is the next day: ${d}`)
+  return d
+
+}
  
 export async function authenticate(
   prevState: string | undefined,
@@ -42,13 +70,10 @@ export async function authenticate(
 
 export async function assignStudent(formData: FormData) {
 
-  const { customerId, studentId } = FormSchema.parse({
+  const { customerId, studentId } = AssignStudentFormSchema.parse({
     customerId: formData.get('customer_id'),
     studentId: formData.get('student_id'),
   });
-
-
-  console.log(`Assigning student ID ${studentId} to customer ID ${formData.get('customer_id')}`);
 
   if (!studentId) return;
   try {
@@ -101,4 +126,98 @@ export async function scrapeNow(opts?: {
   revalidatePath("/billing");
 
   return { ok: true, rows: normalized.length, ...res };
+}
+
+
+
+
+export async function createRecurringInvoice(formData: FormData) {
+  const {customer_id, amount, day_of_month, every, start_date, end_after, description} = NewRecurringInvoiceFormSchema.parse({
+    customer_id: formData.get('customer_id'),
+    amount: formData.get('amount'),
+    day_of_month: formData.get('day_of_month'),
+    every: formData.get('every'),
+    start_date: formData.get('start_date'),
+    end_after: formData.get('end_after'),
+    description: formData.get('description')
+  });
+
+
+
+  const next_date = start_date > localMidnightFromISODate((new Date()).toLocaleDateString()) ? start_date : computeNextDate({
+                                                              startDate: start_date,
+                                                              dayOfMonth: day_of_month,
+                                                              every: every
+                                                            });
+
+  
+                                                            const amount_in_cents = amount*100;
+
+  console.log(`creating invoice ${description} ending after ${end_after} occurences`)
+
+  
+  // INSERT SQL (returns the created row)
+  const rows = await sql<RecurringInvoice[]>`
+    INSERT INTO recurring_invoices (
+      customer_id,
+      amount,
+      day_of_month,
+      every,
+      start_date,
+      next_date,
+      end_after,
+      description
+    )
+    VALUES (
+      ${customer_id},
+      ${amount_in_cents},
+      ${day_of_month},
+      ${every},
+      ${start_date},
+      ${next_date},
+      ${end_after == 0? null : end_after},
+      ${description ?? null}
+    )
+    RETURNING
+      id,
+      customer_id,
+      amount,
+      day_of_month,
+      every,
+      start_date,
+      next_date,
+      end_after,
+      description;
+  `;
+
+  // Revalidate any pages that list recurring invoices
+  revalidatePath("/dashboard/billing/[id]/edit");
+
+  return rows[0];
+}
+
+export async function skipNextDate(formData: FormData){
+  
+  const {invoiceId, nextDate, dayOfMonth, every} = skipNextDateFormSchema.parse({
+    invoiceId: formData.get('invoiceId'),
+    nextDate: formData.get('nextDate'),
+    dayOfMonth: formData.get('dayOfMonth'),
+    every: formData.get('every')
+  });
+
+  const next_date = computeNextDate({startDate: nextDay(nextDate), dayOfMonth: dayOfMonth, every: every})
+
+
+  try {
+    await sql`
+    UPDATE recurring_invoices
+      SET next_date = ${next_date}
+      WHERE id = ${invoiceId};
+    `;
+
+    revalidatePath("/dashboard/billing/[id]/edit");
+  }catch(error){
+    console.error('error skipping date: ', error);
+  }
+
 }

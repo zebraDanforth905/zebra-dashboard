@@ -34,10 +34,13 @@ export type Invoice = {
 export type RecurringInvoice = {
   id: string;
   customer_id: string;
+  amount: number;
   day_of_month: 1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|-1;
   every: number;
   start_date: Date;
+  next_date: Date;
   end_after: number | null;
+  description: string;
 };
 
 export type Payment = {
@@ -100,8 +103,6 @@ export type CustomerTableData = {
   total_due: number;
   next_invoice_date: Date | null;
   next_invoice_amount: number;
-  next_payment_date: Date | null;
-  next_payment_amount: number;
   regular_payment_amount: number;
   students: Student[];
 }
@@ -126,6 +127,15 @@ export type ScheduleRow = {
   name: string;
   course_name: string;
 };
+
+export type RecurringInvoiceListData = {
+  id: string;
+  amount: number;
+  day_of_month: number;
+  every: number;
+  next_date: Date;
+  description: string;
+}
 
 export type StudentSpecificData = {
 

@@ -7,6 +7,7 @@ import AddStudentPopup from './add-student';
 import { assignStudent } from '@/app/lib/actions';
 import Link from 'next/link';
 import { ClickableRow } from '../clickable-row';
+import { formatDate } from '@/app/lib/utils';
 
 export default async function CustomerTable({ query, currentPage, sortBy, incDec }: { query: string; currentPage: number; sortBy: string; incDec:boolean; }) { 
     
@@ -45,9 +46,9 @@ export default async function CustomerTable({ query, currentPage, sortBy, incDec
                 <td className="relative px-4 py-3 font-medium text-slate-800">{c.name}</td>
                 <td className="relative px-4 py-3">{c.email}</td>
                 <td className="relative px-4 py-3 text-right text-slate-700">${c.total_due/100}</td>
-                <td className="relative px-4 py-3 text-right text-slate-700">{c.next_invoice_amount} {c.next_invoice_date?.toDateString()}</td>
-                <td className="relative px-4 py-3 text-right text-slate-700">{c.next_payment_date?.toDateString()}</td>
-                <td className="relative px-4 py-3 text-right text-slate-700">${c.next_payment_amount/100}</td>
+                <td className="relative px-4 py-3 text-right text-slate-700">${c.next_invoice_amount/100} {c.next_invoice_date? formatDate(c.next_invoice_date): ""}</td>
+                <td className="relative px-4 py-3 text-right text-slate-700"></td>
+                <td className="relative px-4 py-3 text-right text-slate-700"></td>
                 
 
                 <td className="relative px-4 py-3">

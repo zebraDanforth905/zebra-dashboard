@@ -1,6 +1,5 @@
 import postgres from 'postgres';
-import { CustomerTableData, ScheduleRow, StudentTableData, Session } from './definitions';
-import { revalidatePath } from 'next/cache';
+import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData } from './definitions';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -20,9 +19,24 @@ export async function fetchFilteredCustomers(
     const customers = await sql<CustomerTableData[]>`
     WITH inv AS (
         SELECT customer_id, COALESCE(SUM(amount),0) AS sum_invoices,
-        MIN(date) AS next_invoice_date, 
         MIN(amount) AS next_invoice_amount
         FROM invoices GROUP BY customer_id
+        ),
+        rec AS (  
+          SELECT customer_id, next_invoice_date, day_sum AS next_invoice_amount
+          FROM (
+            SELECT
+              customer_id,
+              (next_date)::date                           AS next_invoice_date,
+              SUM(amount)                                 AS day_sum,
+              ROW_NUMBER() OVER (
+                PARTITION BY customer_id
+                ORDER BY (next_date)::date ASC
+              )                                           AS rn
+            FROM recurring_invoices
+            GROUP BY customer_id, (next_date)::date
+          ) x
+          WHERE rn = 1
         ),
         pay AS (
         SELECT
@@ -31,7 +45,7 @@ export async function fetchFilteredCustomers(
             MIN(date)   FILTER (WHERE status='scheduled') AS next_payment_date,
             MIN(amount) FILTER (WHERE status='scheduled') AS next_payment_amount,
             AVG(amount) FILTER (WHERE status='scheduled') AS regular_payment_amount
-        FROM payments GROUP BY customer_id
+        FROM payments GROUP BY customer_id 
         ),
         stu AS (
         SELECT
@@ -48,14 +62,15 @@ export async function fetchFilteredCustomers(
         c.name,
         c.email,
         COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0) AS total_due,
-        pay.next_payment_date,
-        pay.next_payment_amount,
+        rec.next_invoice_date,
+        rec.next_invoice_amount,
         pay.regular_payment_amount,
         COALESCE(stu.students, '[]'::jsonb) AS students
         FROM customers c
         LEFT JOIN inv ON inv.customer_id = c.id
         LEFT JOIN pay ON pay.customer_id = c.id
         LEFT JOIN stu ON stu.customer_id = c.id
+        LEFT JOIN rec ON rec.customer_id = c.id
         WHERE (c.name ILIKE '%' || ${query} || '%' OR c.email ILIKE '%' || ${query} || '%')
         ORDER BY ${sql(sortBy)} DESC
         LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset};
@@ -305,3 +320,19 @@ export async function fetchCustomersList(query: string) {
     throw new Error('Failed to fetch customers list.');
   } 
 }
+
+export async function fetchRecurringInvoicesByCustomer(customerId: string){
+  try {
+    const recurring = await sql<RecurringInvoiceListData[]>`
+      SELECT id, amount, every, day_of_month, next_date, description
+      FROM recurring_invoices r
+      WHERE customer_id = ${customerId}
+      ORDER BY next_date;
+    `
+    return recurring;
+  }catch (error){
+    console.error('Database Error: ', error);
+    throw new Error('Failed to fetch recurring invoices for customer.')
+  }
+}
+

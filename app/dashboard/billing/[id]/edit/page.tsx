@@ -6,12 +6,16 @@ import AddStudentForm from "@/app/ui/billing/add-student";
 // app/dashboard/billing/[id]/edit/page.tsx
 import Link from "next/link";
 import clsx from "clsx";
-import { fetchCustomerById, fetchCustomersList } from "@/app/lib/data";
+import { fetchCustomerById, fetchCustomersList, fetchRecurringInvoicesByCustomer } from "@/app/lib/data";
 import Search from "@/app/ui/search";
 import CustomerSearchList from "@/app/ui/billing/customer-search-list";
+import RecurringInvoiceForm from "@/app/ui/billing/recurring-invoice-form";
+import { createRecurringInvoice } from "@/app/lib/actions";
+import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
+import EditBillingClient from "@/app/ui/billing/edit-billing-client";
 
 export default async function Page(props: {
-  params?: Promise<{ id: string }>;
+  params: Promise<{ id: string }>;
   searchParams?: Promise<{ query?: string; studentQuery?: string }>;
 }) {
 
@@ -21,6 +25,7 @@ export default async function Page(props: {
   const query = searchParams?.query || '';
 
   const customer = await fetchCustomerById(id || " ");
+  const invoices = await fetchRecurringInvoicesByCustomer(id);
 
 
   return (
@@ -54,8 +59,8 @@ export default async function Page(props: {
 
      
         <AddStudentForm query={studentQuery} customer_id={id||''}/>
-
-        
+        <RecurringInvoiceTable invoices={invoices}></RecurringInvoiceTable>
+        <RecurringInvoiceForm customer_id={id} action={createRecurringInvoice}/>
       </section>
     </div>
   );

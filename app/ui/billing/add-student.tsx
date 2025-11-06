@@ -25,7 +25,7 @@ export default async function AddStudentPopup({
       className="
         rounded-2xl border border-slate-200 bg-white
         shadow-xl shadow-sky-900/10 ring-1 ring-slate-100
-        w-[min(28rem,92vw)] p-4 cursor-pointer
+        w-[min(28rem,20vw)] p-4 cursor-pointer
       "
     >
       {/* Header */}
@@ -43,7 +43,7 @@ export default async function AddStudentPopup({
       {/* List */}
       <div
         className="
-          max-h-64 overflow-auto rounded-xl border border-slate-200
+          max-h-50 overflow-auto rounded-xl border border-slate-200
           bg-white
         "
       >
