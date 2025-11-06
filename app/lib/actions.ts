@@ -89,7 +89,7 @@ export async function assignStudent(formData: FormData) {
   // After assignment, revalidate the customer edit page to reflect changes
 
   revalidatePath('/dashboard/billing/'+ formData.get('customer_id') +'/edit');
-  revalidatePath('/dashboard/billing/'+ formData.get('customer_id') +'/edit');
+  revalidatePath('/dashboard/billing');
   
 }
 
@@ -192,6 +192,7 @@ export async function createRecurringInvoice(formData: FormData) {
 
   // Revalidate any pages that list recurring invoices
   revalidatePath("/dashboard/billing/[id]/edit");
+  revalidatePath("/dashboard/billing");
 
   return rows[0];
 }
@@ -216,6 +217,7 @@ export async function skipNextDate(formData: FormData){
     `;
 
     revalidatePath("/dashboard/billing/[id]/edit");
+    revalidatePath("/dashboard/billing");
   }catch(error){
     console.error('error skipping date: ', error);
   }
