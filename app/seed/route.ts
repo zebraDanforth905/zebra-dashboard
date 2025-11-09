@@ -109,6 +109,23 @@ export async function GET() {
         weekday VARCHAR(20) NOT NULL
       );`;
 
+      await tx`CREATE TABLE IF NOT EXISTS trials (
+        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+        name TEXT,
+        session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+        course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
+        date DATE
+      );
+      `;
+
+      await tx`CREATE TABLE IF NOT EXISTS makeups (
+        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+        student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
+        session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+        course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
+        date DATE
+      );
+      `;
 
 
       // // 2) Inserts (you can parallelize per-table rows)

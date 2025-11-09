@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+
     const result = await scrapeNow();
 
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
-
     
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });

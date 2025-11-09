@@ -10,6 +10,7 @@ import postgres from "postgres";
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: "require" });
 
+
 function splitName(full: string): { first: string; last: string } {
   const parts = full.trim().split(/\s+/);
   return { first: parts[0] || "", last: parts.slice(1).join(" ") || "" };
@@ -37,7 +38,7 @@ export async function upsertFromNormalized(rows: any[]) {
     }
 
     for (const r of rows) {
-        console.log(r.student_id, r.name, r.day, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date);
+      console.log(r.student_id, r.name, r.day, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date);
       const sessionId = await getSessionId(r.day, r.start_time, r.end_time);
 
       // student
@@ -63,18 +64,18 @@ export async function upsertFromNormalized(rows: any[]) {
 
       if (trial) {
         seenTrials.add(`${sessionId}|${r.name}|${r.course_code}|${trial}`);
-        // await tx`
-        //   INSERT INTO trials (session_id, first_name, last_name, course, date)
-        //   VALUES (${sessionId}, ${first}, ${last}, ${code}, ${trial}::date)
-        //   ON CONFLICT DO NOTHING;
-        // `;
+        await tx`
+          INSERT INTO trials (session_id, name, course_id, date)
+          VALUES (${sessionId}, ${r.name}, ${r.course_code}, ${trial}::date)
+          ON CONFLICT DO NOTHING;
+        `;
       } else if (makeup) {
         seenMakeup.add(`${r.student_id}|${sessionId}|${makeup}`);
-        // await tx`
-        //   INSERT INTO makeups (student_id, session_id, course, date)
-        //   VALUES (${r["Student ID"]}, ${sessionId}, ${code}, ${makeup}::date)
-        //   ON CONFLICT DO NOTHING;
-        // `;
+        await tx`
+          INSERT INTO makeups (student_id, session_id, course_id, date)
+          VALUES (${r.student_id}, ${sessionId}, ${r.course_code}, ${makeup}::date)
+          ON CONFLICT DO NOTHING;
+        `;
       } else {
         seenRegular = true;
         seenEnroll.add(`${r.student_id}|${sessionId}`);
@@ -113,12 +114,55 @@ export async function upsertFromNormalized(rows: any[]) {
 
     if (STRICT_SNAPSHOT && seenTrials.size) {
       // delete trials not seen
-      // (depends on your table uniqueness; otherwise skip)
+
+        const keys = Array.from(seenTrials).map((k) => k.split("|"))
+        const keepSessions: string[] = keys.map(([sessionId , , , ]) => sessionId)
+        const keepNames: string[] = keys.map(([, studentName, ,]) => studentName)
+        const keepDate: string[] = keys.map(([ , , , trialDate]) => trialDate)
+
+        
+
+        await tx`
+            WITH keep AS (
+                SELECT *
+                FROM UNNEST(${keepSessions}::uuid[], ${keepNames}::text[], ${keepDate}::date[])
+                AS t(session_id, name, date)  -- zip pairs correctly
+            )
+            DELETE FROM trials e
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM keep k
+                WHERE k.name = e.name
+                AND k.session_id = e.session_id
+                AND k.date = e.date
+            );
+            `;
     }
 
     if (STRICT_SNAPSHOT && seenMakeup.size) {
       // delete makeups not seen
-      // (depends on your table uniqueness; otherwise skip)
+
+        const keys = Array.from(seenMakeup).map((k) => k.split("|"))
+        const keepStudents: number[] = keys.map(([studentId , , ]) => Number(studentId))
+        const keepSessions: string[] = keys.map(([, sessionId, ]) => sessionId)
+        const keepDate: string[] = keys.map(([ , , makeupDate]) => makeupDate)
+
+      
+        await tx`
+            WITH keep AS (
+                SELECT *
+                FROM UNNEST(${keepSessions}::uuid[], ${keepStudents}::int[], ${keepDate}::date[])
+                AS t(session_id, student_id, date)  -- zip pairs correctly
+            )
+            DELETE FROM makeups e
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM keep k
+                WHERE k.student_id = e.student_id
+                AND k.session_id = e.session_id
+                AND k.date = e.date
+            );
+            `;
     }
   });
 

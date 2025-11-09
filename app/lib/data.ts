@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData } from './definitions';
+import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow } from './definitions';
 import { unstable_cache } from 'next/cache';
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -268,7 +268,7 @@ export async function fetchSessionStudents(sessionId: string) {
   console.log(`Fetching students for session ID: ${sessionId}`);
   try {
     const students = await sql<ScheduleRow[]>`
-      SELECT e.id AS enrolment_id, s.id, s.name, crs.name AS course_name
+      SELECT e.id AS enrolment_id, s.name, crs.name AS course_name
       FROM students s
       JOIN enrolments e ON e.student_id = s.id
       JOIN courses crs ON crs.id = e.course_id
@@ -282,17 +282,68 @@ export async function fetchSessionStudents(sessionId: string) {
   } 
 }
 
+export async function fetchUpcomingSessionMakeups(sessionId: string){
+  try{
+  const students = await sql<MakeupRow[]>`
+    SELECT m.id AS id, s.name, crs.name AS course_name, m.date
+    FROM students s
+    JOIN makeups m ON m.student_id = s.id
+    JOIN courses crs ON crs.id = m.course_id
+    WHERE m.session_id = ${sessionId}
+    ORDER BY m.date;
+  `;
+  return students;
+  } catch (error){
+    throw new Error ('Failed to fetch makeups');
+  }
+}
+
+export async function fetchUpcomingSessionTrials(sessionId: string){
+  try{
+  const students = await sql<TrialRow[]>`
+    SELECT t.id AS trial_id, t.name, crs.name AS course_name, t.date
+    FROM trials t
+    JOIN courses crs ON crs.id = t.course_id
+    WHERE t.session_id = ${sessionId}
+    ORDER BY t.date;
+  `;
+  return students;
+  } catch (error){
+    throw new Error ('Failed to fetch trials');
+  }
+}
+
 export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday') {
   console.log(`Fetching sessions for day: ${day}`);
   try {
         const sessions = await sql<Session[]>
         `
-          SELECT COUNT(e.id) as student_count, s.id, weekday, start_time, end_time
+          SELECT
+            s.id,
+            s.weekday,
+            s.start_time,
+            s.end_time,
+            COALESCE(ec.student_count, 0) AS student_count,
+            COALESCE(mc.makeup_count, 0)  AS makeup_count,
+            COALESCE(tc.trial_count, 0)   AS trial_count
           FROM sessions s
-          JOIN enrolments e ON e.session_id = s.id
-          WHERE weekday = ${day}
-          GROUP BY s.id
-          ORDER BY start_time;
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS student_count
+            FROM enrolments e
+            WHERE e.session_id = s.id
+          ) ec ON true
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS makeup_count
+            FROM makeups m
+            WHERE m.session_id = s.id
+          ) mc ON true
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS trial_count
+            FROM trials t
+            WHERE t.session_id = s.id
+          ) tc ON true
+          WHERE s.weekday = ${day}
+          ORDER BY s.start_time;
         `;
         return sessions;
   } catch (error) {
@@ -300,8 +351,6 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
     throw new Error('Failed to fetch sessions for day.');
   } 
 }
-
-
 
 export async function fetchCustomersList(query: string) {
   console.log(`Fetching customers list with query: ${query}`);

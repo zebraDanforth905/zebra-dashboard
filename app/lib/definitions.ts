@@ -57,6 +57,9 @@ export type Session = {
   end_time: string;
   weekday: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
   student_count?: number;
+  makeup_count?: number;
+  trial_count?: number;
+  absences?: number;
 }
 
 export type Course = {
@@ -83,6 +86,22 @@ export type Pickup = {
   teacher_name: string;
   room_number: number;
   invoice_id: string;
+}
+
+export type Trial = {
+  id: string;
+  name: string;
+  course_id: string;
+  session_id: string;
+  date: Date;
+}
+
+export type Makeup = {
+  id: string;
+  student_id: string;
+  session_id: string;
+  course_id: string;
+  date: Date;
 }
 
 
@@ -123,10 +142,22 @@ export type StudentTableData = {
 
 export type ScheduleRow = {
   enrolment_id: string;
-  student_id: number;
   name: string;
   course_name: string;
 };
+export type MakeupRow = {
+  makeup_id: string;
+  name: string;
+  course_name: string;
+  date: Date;
+}
+
+export type TrialRow = {
+  trial_id: string;
+  name: string;
+  course_name: string;
+  date: Date;
+}
 
 export type RecurringInvoiceListData = {
   id: string;
@@ -140,7 +171,6 @@ export type RecurringInvoiceListData = {
 export type StudentSpecificData = {
 
 }
-
 export type CustomerSpecificData = {
 
 }

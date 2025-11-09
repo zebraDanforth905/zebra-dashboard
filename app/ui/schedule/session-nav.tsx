@@ -38,12 +38,31 @@ export default function SessionNav({
                     : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-sky-700"
                 )}
               >
+                
                 <span className={clsx(
                   "grid h-7 w-7 place-items-center rounded-lg text-xs",
                   isActive ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-600"
                 )}>
                   {s.student_count ?? 0}
                 </span>
+                
+                {(s.makeup_count? s.makeup_count > 0: s.makeup_count) &&
+                <span className={clsx(
+                  "grid h-7 w-7 place-items-center rounded-lg text-xs bg-sky-400",
+                )}>
+                  {s.makeup_count ?? 0}
+                </span>
+                } 
+
+                {(s.trial_count? s.trial_count > 0: s.trial_count)&&
+                <span className={clsx(
+                  "grid h-7 w-7 place-items-center rounded-lg text-xs bg-yellow-400",
+                )}>
+                  {s.trial_count ?? 0}
+                </span>
+                }
+
+
                 <span className="whitespace-nowrap">
                   {hhmm(s.start_time)}–{hhmm(s.end_time)}
                 </span>
