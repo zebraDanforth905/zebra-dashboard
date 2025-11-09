@@ -188,7 +188,7 @@ export async function createRecurringInvoice(formData: FormData) {
       next_date,
       end_after,
       description;
-  `;
+    `;
 
   // Revalidate any pages that list recurring invoices
   revalidatePath("/dashboard/billing/[id]/edit");

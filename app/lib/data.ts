@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData } from './definitions';
-
+import { unstable_cache } from 'next/cache';
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 const ITEMS_PER_PAGE = 10;
@@ -285,24 +285,30 @@ export async function fetchSessionStudents(sessionId: string) {
 export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday') {
   console.log(`Fetching sessions for day: ${day}`);
   try {
-    const sessions = await sql<Session[]>
-    `
-      SELECT COUNT(e.id) as student_count, s.id, weekday, start_time, end_time
-      FROM sessions s
-      JOIN enrolments e ON e.session_id = s.id
-      WHERE weekday = ${day}
-      GROUP BY s.id
-      ORDER BY start_time;
-    `;
 
-
-
-    return sessions;
+    return unstable_cache(
+      async () => {
+        const sessions = await sql<Session[]>
+        `
+          SELECT COUNT(e.id) as student_count, s.id, weekday, start_time, end_time
+          FROM sessions s
+          JOIN enrolments e ON e.session_id = s.id
+          WHERE weekday = ${day}
+          GROUP BY s.id
+          ORDER BY start_time;
+        `;
+        return sessions;
+      }, 
+      [`sessions:${day}`],
+      { tags: [`schedule`, `schedule:${day}`] }
+    )();
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch sessions for day.');
   } 
 }
+
+
 
 export async function fetchCustomersList(query: string) {
   console.log(`Fetching customers list with query: ${query}`);
