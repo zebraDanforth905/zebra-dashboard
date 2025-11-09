@@ -55,6 +55,7 @@ export async function authenticate(
     await signIn('credentials', formData);
     
     revalidatePath('/dashboard/billing');
+    revalidatePath('dashboard/schedule');
   } catch (error) {
     if (error instanceof AuthError) {
       switch (error.type) {
@@ -126,6 +127,15 @@ export async function scrapeNow(opts?: {
   revalidatePath("/billing");
 
   return { ok: true, rows: normalized.length, ...res };
+}
+
+export async function scrapeNowLocal(formData: FormData){
+  await scrapeNow()
+  
+  revalidatePath('/dashboard')
+  revalidatePath('/students')
+  revalidatePath('/billing')
+  revalidatePath('/schedule')
 }
 
 
@@ -222,4 +232,11 @@ export async function skipNextDate(formData: FormData){
     console.error('error skipping date: ', error);
   }
 
+}
+
+export async function forceScheduleRefresh(formData: FormData){
+  revalidatePath('/dashboard/schedule')
+  revalidatePath('/dashboard/schedule/[weekday]')
+  revalidatePath('/dashboard/schedule/[weekday]/[sessionId]')
+  console.log("refreshed")
 }

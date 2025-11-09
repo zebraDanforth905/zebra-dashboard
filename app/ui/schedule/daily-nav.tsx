@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
+import RefreshScheduleButton from "./refresh-schedule-button";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -16,6 +17,9 @@ export default function DailyNav() {
   return (
     <nav aria-label="Days of the week" className="overflow-x-auto">
       <ul className="flex gap-2 min-w-max">
+        <li>
+          <RefreshScheduleButton></RefreshScheduleButton>
+        </li>
         {DAYS.map((day) => {
           const href = `/dashboard/schedule/${day}`;
           const active = activeDay.toLowerCase() === day.toLowerCase();

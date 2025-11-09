@@ -285,9 +285,6 @@ export async function fetchSessionStudents(sessionId: string) {
 export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday') {
   console.log(`Fetching sessions for day: ${day}`);
   try {
-
-    return unstable_cache(
-      async () => {
         const sessions = await sql<Session[]>
         `
           SELECT COUNT(e.id) as student_count, s.id, weekday, start_time, end_time
@@ -298,10 +295,6 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
           ORDER BY start_time;
         `;
         return sessions;
-      }, 
-      [`sessions:${day}`],
-      { tags: [`schedule`, `schedule:${day}`] }
-    )();
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch sessions for day.');

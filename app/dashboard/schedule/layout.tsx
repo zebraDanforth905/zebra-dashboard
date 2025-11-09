@@ -9,7 +9,6 @@ export const dynamic = "force-static"; // flip to 'force-dynamic' if you need li
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-slate-50">
-      <AutoRefreshOnFocus></AutoRefreshOnFocus>
       {/* Gradient header */}
       <header className="relative overflow-hidden">
         <div className="h-24 bg-gradient-to-r from-sky-600 via-sky-600 to-emerald-500" />
