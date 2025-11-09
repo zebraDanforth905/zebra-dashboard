@@ -131,15 +131,12 @@ export async function scrapeNow(opts?: {
 
 export async function scrapeNowLocal(formData: FormData){
   await scrapeNow()
-  
+
   revalidatePath('/dashboard')
   revalidatePath('/students')
   revalidatePath('/billing')
   revalidatePath('/schedule')
 }
-
-
-
 
 export async function createRecurringInvoice(formData: FormData) {
   const {customer_id, amount, day_of_month, every, start_date, end_after, description} = NewRecurringInvoiceFormSchema.parse({
@@ -235,6 +232,8 @@ export async function skipNextDate(formData: FormData){
 }
 
 export async function forceScheduleRefresh(formData: FormData){
+  await scrapeNow()
+  
   revalidatePath('/dashboard/schedule')
   revalidatePath('/dashboard/schedule/[weekday]')
   revalidatePath('/dashboard/schedule/[weekday]/[sessionId]')
