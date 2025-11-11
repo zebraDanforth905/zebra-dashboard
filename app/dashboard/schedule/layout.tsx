@@ -4,7 +4,6 @@ import DailyNav from "@/app/ui/schedule/daily-nav";
 import OptionsBar from "@/app/ui/schedule/options-bar";
 import AutoRefreshOnFocus from "@/app/ui/auto-refresh-on-focus";
 
-export const dynamic = "force-static"; // flip to 'force-dynamic' if you need live data here
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (

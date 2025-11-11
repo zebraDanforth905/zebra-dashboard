@@ -2,7 +2,7 @@
  
 import { signIn } from '@/auth';
 import { AuthError } from 'next-auth';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
 import {z} from 'zod';
@@ -122,9 +122,9 @@ export async function scrapeNow(opts?: {
   const res = await upsertFromNormalized(normalized);
 
   // refresh any pages that read from these tables
-  revalidatePath("/dashboard");
-  revalidatePath("/students");
-  revalidatePath("/billing");
+  revalidatePath("/dashboard", 'layout');
+  revalidatePath("/students", 'layout');
+  revalidatePath("/billing", 'layout');
 
   return { ok: true, rows: normalized.length, ...res };
 }
@@ -232,9 +232,10 @@ export async function skipNextDate(formData: FormData){
 }
 
 export async function forceScheduleRefresh(formData: FormData){
-  await scrapeNow()
   
-  revalidatePath('/dashboard/schedule', "layout")
-  revalidatePath('/dashboard/schedule/[weekday]', "layout")
+  await scrapeNow()
+
+  revalidateTag('schedule', 'max')
+  
   console.log("refreshed")
 }

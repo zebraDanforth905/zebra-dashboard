@@ -1,6 +1,8 @@
+'use server'
+
 import postgres from 'postgres';
 import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow } from './definitions';
-import { unstable_cache } from 'next/cache';
+import { cacheTag, unstable_cache } from 'next/cache';
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 const ITEMS_PER_PAGE = 10;
@@ -265,8 +267,12 @@ export async function fetchCustomerById(customerId: string | "") {
 }
 
 export async function fetchSessionStudents(sessionId: string) {
+  'use cache'
   console.log(`Fetching students for session ID: ${sessionId}`);
+  
   try {
+    
+    cacheTag('schedule')
     const students = await sql<ScheduleRow[]>`
       SELECT e.id AS enrolment_id, s.name, crs.name AS course_name
       FROM students s
@@ -283,9 +289,12 @@ export async function fetchSessionStudents(sessionId: string) {
 }
 
 export async function fetchUpcomingSessionMakeups(sessionId: string){
+  'use cache'
   try{
+    
+  cacheTag('schedule')
   const students = await sql<MakeupRow[]>`
-    SELECT m.id AS id, s.name, crs.name AS course_name, m.date
+    SELECT m.id AS makeup_id, s.name, crs.name AS course_name, m.date
     FROM students s
     JOIN makeups m ON m.student_id = s.id
     JOIN courses crs ON crs.id = m.course_id
@@ -299,7 +308,10 @@ export async function fetchUpcomingSessionMakeups(sessionId: string){
 }
 
 export async function fetchUpcomingSessionTrials(sessionId: string){
+  'use cache'
   try{
+  
+  cacheTag('schedule')
   const students = await sql<TrialRow[]>`
     SELECT t.id AS trial_id, t.name, crs.name AS course_name, t.date
     FROM trials t
@@ -314,8 +326,11 @@ export async function fetchUpcomingSessionTrials(sessionId: string){
 }
 
 export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday') {
+  'use cache'
   console.log(`Fetching sessions for day: ${day}`);
+  
   try {
+     
         const sessions = await sql<Session[]>
         `
           SELECT
