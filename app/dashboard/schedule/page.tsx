@@ -1,4 +1,6 @@
+'use client'
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
 
