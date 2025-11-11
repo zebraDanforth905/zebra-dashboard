@@ -104,6 +104,11 @@ export type Makeup = {
   date: Date;
 }
 
+export type Absence = {
+  id: string;
+  enrolment_id: string;
+  date: Date;
+}
 
 // Formatted Data for display in Tables
 

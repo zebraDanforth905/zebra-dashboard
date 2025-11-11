@@ -234,8 +234,7 @@ export async function skipNextDate(formData: FormData){
 export async function forceScheduleRefresh(formData: FormData){
   await scrapeNow()
   
-  revalidatePath('/dashboard/schedule')
-  revalidatePath('/dashboard/schedule/[weekday]')
-  revalidatePath('/dashboard/schedule/[weekday]/[sessionId]')
+  revalidatePath('/dashboard/schedule', "layout")
+  revalidatePath('/dashboard/schedule/[weekday]', "layout")
   console.log("refreshed")
 }
