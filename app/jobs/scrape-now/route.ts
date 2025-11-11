@@ -1,13 +1,14 @@
 // app/api/admin/scrape-now/route.ts
 import { NextResponse } from "next/server";
 import { scrapeNow } from "@/app/lib/actions";
+import { revalidateTag } from "next/cache";
 
-export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
 
     const result = await scrapeNow();
+    revalidateTag('schedule', 'max')
 
     return NextResponse.json(result, { headers: { } });
     
