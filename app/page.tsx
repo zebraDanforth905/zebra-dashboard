@@ -116,7 +116,7 @@ export default function Page() {
         <div className="mx-auto max-w-7xl px-6 py-8 flex items-center justify-between text-sm text-slate-500">
           <div className="flex items-center gap-2">
             <Image src="/zebra-logo.png" alt="Zebra Robotics" height={100} width={200}/>
-            <span>© {new Date().getFullYear()} Zebra Robotics</span>
+            <span>© 2025 Zebra Robotics</span>
           </div>
           <div className="flex items-center gap-4">
             <button className="hover:text-slate-700">Log in</button>
