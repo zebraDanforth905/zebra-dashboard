@@ -248,6 +248,7 @@ export async function skipNextDate(formData: FormData){
 export async function forceScheduleRefresh(formData: FormData){
   
   await scrapeEnrolmentNow()
+  await syncAbsencesForCurrentWeek()
 
   revalidateTag('schedule', 'max')
   
