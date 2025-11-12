@@ -35,7 +35,7 @@ async function loginGetToken(): Promise<string> {
   return token;
 }
 
-export async function fetchReportJSON(options: {
+export async function fetchEnrolmentReportJSON(options: {
   endpoint: ReportEndpoint; // "class" | "class-makeup"
   branchId: number;
   activeId: number;         // 1 = All usually
@@ -75,3 +75,55 @@ export async function fetchReportJSON(options: {
   if (data && typeof data === "object" && Array.isArray((data as any).results)) return (data as any).results;
   return data ? [data] : [];
 }
+
+// scraper_helpers.ts
+export async function fetchAttendanceReport(opts: {
+  startDate: string;     // "YYYY-MM-DD"
+  endDate: string;       // "YYYY-MM-DD"
+  branchId: number; // 20
+}) {
+  const {startDate, endDate, branchId} = opts;
+  console.log(opts);
+
+  const token = await loginGetToken();
+
+  const url = `${ZEBRA_API_BASE}/reports/9210/batches/attendance?startDate=${encodeURIComponent(
+    startDate
+  )}&endDate=${encodeURIComponent(endDate)}&studentId=&branch_id=${encodeURIComponent(
+    String(branchId)
+  )}`;
+
+  console.log(url);
+
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "x-auth-token": token,
+      referer: "https://portal.zebrarobotics.com/",
+    },
+    cache: "no-store",
+  });
+
+
+  if (!res.ok) {
+    throw new Error(`Attendance fetch failed: ${res.status} ${res.statusText}`);
+  }
+
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(`Expected JSON, got ${ct}: ${text.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  console.log(data);
+
+  if (Array.isArray(data)) return data;
+
+ 
+  if (data && typeof data === "object" && Array.isArray((data as any).results)) return (data as any).results;
+
+  return data ? [data] : [];
+
+}
+

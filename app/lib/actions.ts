@@ -6,13 +6,15 @@ import { revalidatePath, revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
 import {z} from 'zod';
-import { fetchReportJSON } from './scraper_helpers';
-import { normalizeRows } from "@/app/lib/normalize";
-import { upsertFromNormalized } from './insert_from_portal';
+import { fetchAttendanceReport, fetchEnrolmentReportJSON } from './scraper_helpers';
+import { normalizeAbsencesFromAttendance, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
+import { syncAbsencesForRange, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
 import { RecurringInvoice } from './definitions';
 import { computeNextDate } from './utils';
 import { formatDate } from './utils';
 import { localMidnightFromISODate } from './utils';
+
+import { ymd } from './utils';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -94,7 +96,7 @@ export async function assignStudent(formData: FormData) {
   
 }
 
-export async function scrapeNow(opts?: {
+export async function scrapeEnrolmentNow(opts?: {
   branchId?: number;
   activeId?: number;
   day?: string; // "All" | "Monday"...
@@ -109,7 +111,7 @@ export async function scrapeNow(opts?: {
 
   const endpoint = includeExtra ? "class-makeup" : "class" as const;
 
-  const raw = await fetchReportJSON({
+  const raw = await fetchEnrolmentReportJSON({
     endpoint,
     branchId,
     activeId,
@@ -118,8 +120,8 @@ export async function scrapeNow(opts?: {
     toDate: opts?.toDate,
   });
 
-  const normalized = normalizeRows(raw);
-  const res = await upsertFromNormalized(normalized);
+  const normalized = normalizeEnrolmentRows(raw);
+  const res = await upsertEnrolmentFromNormalized(normalized);
 
   // refresh any pages that read from these tables
   revalidatePath("/dashboard", 'layout');
@@ -129,13 +131,25 @@ export async function scrapeNow(opts?: {
   return { ok: true, rows: normalized.length, ...res };
 }
 
-export async function scrapeNowLocal(formData: FormData){
-  await scrapeNow()
 
-  revalidatePath('/dashboard')
-  revalidatePath('/students')
-  revalidatePath('/billing')
-  revalidatePath('/schedule')
+export async function syncAbsencesForCurrentWeek(){
+  const startDate = new Date();
+  const endDate = new Date();
+  endDate.setDate(endDate.getDate() + 6);
+  console.log({startDate, endDate})
+  const branchId = Number(process.env.ZEBRA_BRANCH_ID ?? 20)
+  
+  const raw = await fetchAttendanceReport({
+    startDate: ymd(startDate),
+    endDate: ymd(endDate),
+    branchId: branchId
+  })
+
+  const normalized = normalizeAbsencesFromAttendance(raw)
+
+  const res = await syncAbsencesForRange({attendanceResults: normalized, startDate: ymd(startDate), endDate: ymd(endDate)});  
+
+  return {ok: true, rows: normalized.length, ...res};
 }
 
 export async function createRecurringInvoice(formData: FormData) {
@@ -233,7 +247,7 @@ export async function skipNextDate(formData: FormData){
 
 export async function forceScheduleRefresh(formData: FormData){
   
-  await scrapeNow()
+  await scrapeEnrolmentNow()
 
   revalidateTag('schedule', 'max')
   

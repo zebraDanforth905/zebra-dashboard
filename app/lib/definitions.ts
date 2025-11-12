@@ -149,7 +149,9 @@ export type ScheduleRow = {
   enrolment_id: string;
   name: string;
   course_name: string;
+  absent?: boolean;
 };
+
 export type MakeupRow = {
   makeup_id: string;
   name: string;

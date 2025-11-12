@@ -82,3 +82,17 @@ export function localMidnightFromISODate(isoYmd: string) {
   const [y, m, d] = isoYmd.split('-').map(Number);
   return new Date(y, m - 1, d); // local tz midnight
 }
+
+// utils.ts
+export const ymd = (d: string | Date) =>
+  typeof d === "string" ? d : d.toISOString().slice(0, 10);
+
+export function assertAligned(label: string, arrays: Record<string, any[]>) {
+  const lens = Object.values(arrays).map(a => a.length);
+  const same = lens.every(n => n === lens[0]);
+  if (!same) throw new Error(`${label}: unaligned arrays ${JSON.stringify(lens)}`);
+  for (const [k, a] of Object.entries(arrays)) {
+    const bad = a.findIndex(v => v === undefined);
+    if (bad !== -1) throw new Error(`${label}: ${k}[${bad}] is undefined`);
+  }
+}

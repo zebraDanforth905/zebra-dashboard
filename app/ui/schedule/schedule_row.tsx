@@ -1,5 +1,6 @@
 import React from "react";
 import { fetchSessionStudents, fetchUpcomingSessionMakeups, fetchUpcomingSessionTrials } from "@/app/lib/data";
+import clsx from "clsx";
 
 
 
@@ -33,7 +34,7 @@ export default async function ScheduleTable({sessionId} : {sessionId: string;}) 
         ))} 
 
       {students.map((student) => (
-        <div key={student.enrolment_id} className="py-2 px-4 border-b last:border-0 flex justify-between">
+        <div key={student.enrolment_id} className={clsx("py-2 px-4 border-b last:border-0 flex justify-between", student.absent && "bg-red-500")}>
             <div>
                 <div className="font-medium text-slate-800">{student.name}</div>
                 <div className="text-sm text-slate-600">{student.course_name}</div>

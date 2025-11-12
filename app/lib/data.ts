@@ -14,9 +14,6 @@ export async function fetchFilteredCustomers(
 ) {
 
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
-
-  console.log(`Fetching customers with query: ${query}, page: ${currentPage}, sortBy: ${sortBy}, order: ${incDec}`);
-
   try {
     const customers = await sql<CustomerTableData[]>`
     WITH inv AS (
@@ -106,7 +103,6 @@ export async function fetchCustomerPages(query: string) {
 
 export async function fetchUnnassignedStudents(query: string) {
   try {
-    console.log(`Fetching unassigned students with query: ${query}`);
     const students = await sql<{ id: number; name: string }[]>`
       SELECT id, name FROM students
       WHERE customer_id IS NULL AND name ILIKE '%' || ${query} || '%'
@@ -127,7 +123,6 @@ export async function fetchFilteredStudentsTable(
 ) {
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
-  console.log(`Fetching students with query: ${query}, page: ${currentPage}, sortBy: ${sortBy}`);
   
   try {
     const students = await sql<StudentTableData[]>`
@@ -266,21 +261,62 @@ export async function fetchCustomerById(customerId: string | "") {
   }
 }
 
-export async function fetchSessionStudents(sessionId: string) {
+
+const Y = (d: Date) => d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+
+const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
+type Weekday = typeof WEEKDAYS[number];
+
+function nextOccurrenceOf(weekday: Weekday, from = new Date()): Date {
+  const targetIdx = WEEKDAYS.indexOf(weekday);
+  const fromIdx = from.getDay();
+  let delta = (targetIdx - fromIdx + 7) % 7;
+  const dt = new Date(from);  // clone
+  dt.setHours(0,0,0,0);
+  dt.setDate(dt.getDate() + delta);
+  return dt;
+}
+
+export async function fetchSessionStudents(sessionId: string, date?: Date) {
   'use cache'
-  console.log(`Fetching students for session ID: ${sessionId}`);
   
   try {
     
     cacheTag('schedule')
+    // If no date provided, compute the next occurrence of this session's weekday
+    let targetDate = date;
+    
+    if (!targetDate) {
+      const rows = await sql<{ weekday: Weekday }[]>`
+        SELECT weekday
+        FROM sessions
+        WHERE id = ${sessionId}
+        LIMIT 1;
+      `;
+      if (!rows.length) throw new Error("Session not found");
+      targetDate = nextOccurrenceOf(rows[0].weekday);
+    }
+
+    const target = Y(targetDate);
+    console.log(target)
+
+    // Join absences ON the specific date and project a boolean
     const students = await sql<ScheduleRow[]>`
-      SELECT e.id AS enrolment_id, s.name, crs.name AS course_name
+      SELECT
+        e.id AS enrolment_id,
+        s.name,
+        crs.name AS course_name,
+        (abs.enrolment_id IS NOT NULL) AS absent
       FROM students s
       JOIN enrolments e ON e.student_id = s.id
       JOIN courses crs ON crs.id = e.course_id
+      LEFT JOIN absences abs
+        ON abs.enrolment_id = e.id
+       AND abs.date = ${target}::date
       WHERE e.session_id = ${sessionId}
       ORDER BY s.name;
     `;
+
     return students;
   } catch (error) {
     console.error('Database Error:', error);
@@ -327,7 +363,6 @@ export async function fetchUpcomingSessionTrials(sessionId: string){
 
 export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday') {
   'use cache'
-  console.log(`Fetching sessions for day: ${day}`);
   
   try {
      
@@ -368,7 +403,7 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
 }
 
 export async function fetchCustomersList(query: string) {
-  console.log(`Fetching customers list with query: ${query}`);
+
   try {
     const customers = await sql<CustomerTableData[]>`
       SELECT id, name, email

@@ -1,5 +1,7 @@
 // app/lib/insert.ts
 import postgres from "postgres";
+import { ymd, assertAligned } from "./utils";
+import { normalizeAbsencesFromAttendance } from "./normalize";
 
 // expects tables: students(student_id int PK?, first_name, last_name, lms_password?),
 // sessions(id serial/bigint, weekday text/enum, start_time time, end_time time) unique(weekday,start_time,end_time),
@@ -16,7 +18,19 @@ function splitName(full: string): { first: string; last: string } {
   return { first: parts[0] || "", last: parts.slice(1).join(" ") || "" };
 }
 
-export async function upsertFromNormalized(rows: any[]) {
+async function getSessionId(tx: any, weekday: string, start: string, end: string): Promise<string> {
+  const [{ id }] = await tx<{ id: string }[]>`
+    INSERT INTO sessions (weekday, start_time, end_time)
+    VALUES (${weekday}, ${start}, ${end})
+    ON CONFLICT (weekday, start_time, end_time)
+      DO UPDATE SET weekday = EXCLUDED.weekday
+    RETURNING id;
+  `;
+  return id;
+}
+
+export async function upsertEnrolmentFromNormalized(rows: any[]) {
+  
   if (!rows.length) return { inserted: 0, updated: 0, seen: 0 };
 
   let seenRegular = false;
@@ -25,21 +39,10 @@ export async function upsertFromNormalized(rows: any[]) {
   const seenMakeup = new Set<string>();
 
   await sql.begin(async (tx) => {
-    // helper: get/create session by (weekday,start,end)
-    async function getSessionId(weekday: string, start: string, end: string): Promise<number> {
-      const [{ id }] = await tx<{ id: number }[]>`
-        INSERT INTO sessions (weekday, start_time, end_time)
-        VALUES (${weekday}, ${start}, ${end})
-        ON CONFLICT (weekday, start_time, end_time) DO UPDATE
-            SET weekday = EXCLUDED.weekday
-        RETURNING id;
-      `;
-      return id;
-    }
 
     for (const r of rows) {
       console.log(r.student_id, r.name, r.day, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date);
-      const sessionId = await getSessionId(r.day, r.start_time, r.end_time);
+      const sessionId = await getSessionId(tx, r.day, r.start_time, r.end_time);
 
       // student
       await tx`
@@ -168,3 +171,195 @@ export async function upsertFromNormalized(rows: any[]) {
 
   return { inserted: rows.length, updated: 0, seen: rows.length };
 }
+
+// enrolment_resolver.ts
+type Pair = { student_id: number; session_id: string };
+
+export async function resolveEnrolmentIds(
+  tx: any,
+  pairs: Pair[]
+): Promise<Map<string, string>> {
+  if (!pairs.length) return new Map();
+
+  // dedupe pairs
+  const uniqKey = (p: Pair) => `${Number(p.student_id)}|${p.session_id}`;
+  const uniq = Array.from(new Map(pairs.map(p => [uniqKey(p), p])).values());
+
+  const studentIds = uniq.map(p => Number(p.student_id));
+  const sessionIds = uniq.map(p => p.session_id);
+
+  const rows = await tx<{ id: string; student_id: number; session_id: string }[]>`
+    WITH q AS (
+      SELECT *
+      FROM UNNEST(
+        ${studentIds}::numeric[],  -- enrolments.student_id is NUMERIC(10,2)
+        ${sessionIds}::uuid[]
+      ) AS t(student_id, session_id)
+    )
+    SELECT e.id, e.student_id::numeric AS student_id, e.session_id::uuid AS session_id
+    FROM enrolments e
+    JOIN q ON q.student_id = e.student_id AND q.session_id = e.session_id
+  `;
+
+  const map = new Map<string, string>();
+  for (const r of rows) map.set(`${Number(r.student_id)}|${r.session_id}`, r.id);
+  return map;
+}
+
+// upsert_absences.ts
+
+export async function upsertAbsences(
+  tx: any,
+  enrolmentIds: string[],
+  dates: string[]
+) {
+  if (!enrolmentIds.length) return;
+  assertAligned("upsertAbsences", { enrolmentIds, dates });
+
+  await tx`
+    WITH new_rows AS (
+      SELECT *
+      FROM UNNEST(
+        ${enrolmentIds}::uuid[],
+        ${dates}::date[]
+      ) AS t(enrolment_id, date)
+    )
+    INSERT INTO absences (enrolment_id, date)
+    SELECT enrolment_id, date
+    FROM new_rows
+    ON CONFLICT (enrolment_id, date) DO NOTHING;
+  `;
+}
+
+
+export async function deleteAbsencesNotSeen(
+  tx: any,
+  enrolmentIds: string[],
+  dates: string[],
+  startDate: string,
+  endDate: string
+) {
+  if (!enrolmentIds.length) return;
+  assertAligned("deleteAbsencesNotSeen", { enrolmentIds, dates });
+
+  const scopeEnrolments = Array.from(new Set(enrolmentIds));
+
+  await tx`
+    WITH keep AS (
+      SELECT *
+      FROM UNNEST(
+        ${enrolmentIds}::uuid[],
+        ${dates}::date[]
+      ) AS t(enrolment_id, date)
+    )
+    DELETE FROM absences a
+    WHERE a.date BETWEEN ${ymd(startDate)}::date AND ${ymd(endDate)}::date
+      AND a.enrolment_id = ANY(${scopeEnrolments}::uuid[])
+      AND NOT EXISTS (
+        SELECT 1
+        FROM keep k
+        WHERE k.enrolment_id = a.enrolment_id
+          AND k.date = a.date
+      );
+  `;
+}
+
+type AttendanceApiRow = any; // your raw attendance result type
+
+export async function syncAbsencesForRange(opts: {
+  attendanceResults: AttendanceApiRow[];
+  startDate: string | Date;          // inclusive
+  endDate: string | Date;            // inclusive
+}) {
+
+  
+  const { attendanceResults } = opts;
+  const start = ymd(opts.startDate);
+  const end   = ymd(opts.endDate);
+
+
+  const rows = attendanceResults.filter(r => r.date >= start && r.date <= end);
+
+
+  
+  if (rows.length == 0) return {inserted: 0, seen: 0};
+
+  return await sql.begin(async (tx: any) => {
+    // 1) resolve session ids (cache by weekday|start|end)
+    const sessMap = new Map<string, string>();
+    for (const r of rows) {
+      const key = `${r.weekday}|${r.start_time}|${r.end_time}`;
+      if (!sessMap.has(key)) {
+        const sid = await getSessionId(tx, r.weekday, r.start_time, r.end_time);
+        sessMap.set(key, sid);
+      }
+    }
+
+    const pairs = rows.map(r => {
+      const key = `${r.weekday}|${r.start_time}|${r.end_time}`;
+      const session_id = sessMap.get(key)!;
+    
+      return { student_id: Number(r.student_id), session_id };
+    });
+
+  
+    const enrolMap = await resolveEnrolmentIds(tx, pairs);
+
+    
+
+ 
+    const enrolmentIds: string[] = [];
+    const dates: string[] = [];
+
+  
+
+    for (const r of rows) {
+      const sessKey = `${r.weekday}|${r.start_time}|${r.end_time}`;
+      const session_id = sessMap.get(sessKey)!;
+      const enrolKey = `${Number(r.student_id)}|${session_id}`;
+
+      const enrolment_id = enrolMap.get(enrolKey);
+  
+
+      if (!enrolment_id) {
+        
+       
+        continue;
+      }
+      enrolmentIds.push(enrolment_id);
+      dates.push(ymd(r.date));
+    }
+
+
+    if (!enrolmentIds.length) return {inserted: 0, seen: rows.length};
+
+
+    try {
+      await tx`
+        WITH new_rows AS (
+          SELECT *
+          FROM UNNEST(
+            ${enrolmentIds}::uuid[],
+            ${dates}::date[]
+          ) AS t(enrolment_id, date)
+        )
+        INSERT INTO absences (enrolment_id, date)
+        SELECT enrolment_id, date
+        FROM new_rows
+        ON CONFLICT (enrolment_id, date) DO NOTHING;
+      `;
+    } catch (e){
+        console.error("error upserting snapshot", e)
+    }
+    
+
+    console.log("5) delete-not-seen within range, scoped to the enrolments we just touched")
+    await deleteAbsencesNotSeen(tx, enrolmentIds, dates, start, end);
+
+    return {inserted: enrolmentIds.length, seen: rows.length};
+  });
+}
+
+
+
+

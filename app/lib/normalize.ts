@@ -24,7 +24,7 @@ function toHMS(input: string | undefined | null): string | null {
   return null;
 }
 
-export function normalizeRows(rows: any[]) {
+export function normalizeEnrolmentRows(rows: any[]) {
   // Produce rows like the python inserter expected:
   // { Day, Times ("HH:MM:SS - HH:MM:SS"), Student ID, Student Name, Course (display), Stream (abbr/code), Trial Date?, Make Up Date? }
   return rows.flatMap((r) => {
@@ -54,4 +54,35 @@ export function normalizeRows(rows: any[]) {
         makeup_date: makeup ? String(makeup) : "",
     }];
   });
+}
+
+
+// normalize_absences.ts
+type RawAttendance = {
+  date: string; // "YYYY-MM-DD"
+  attendance_value: string; // "Absent", "Present", ...
+  student: { user_id: number; firstname: string; lastname: string };
+  batch: { day: string; start_time: string; end_time: string };
+};
+
+export type NormalizedAbsence = {
+  student_id: number;       // -> enrolments.student_id
+  weekday: string;          // sessions.weekday
+  start_time: string;       // sessions.start_time
+  end_time: string;         // sessions.end_time
+  date: string;             // 'YYYY-MM-DD'
+};
+
+export function normalizeAbsencesFromAttendance(results: RawAttendance[]): NormalizedAbsence[] {
+  console.log("normalizing attendance")
+  
+  return results
+    .filter(r => r.attendance_value === "Absent")
+    .map(r => ({
+      student_id: r.student.user_id,
+      weekday: r.batch.day,
+      start_time: r.batch.start_time,
+      end_time: r.batch.end_time,
+      date: r.date,
+    }));
 }
