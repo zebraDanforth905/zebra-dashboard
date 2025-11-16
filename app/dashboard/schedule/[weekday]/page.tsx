@@ -1,23 +1,73 @@
-import { notFound } from "next/navigation";
-import { fetchSessionsForDay } from "@/app/lib/data";
+// app/dashboard/schedule/[weekday]/pickups/page.tsx
+import Link from "next/link";
+import clsx from "clsx";
+import { fetchPickupsForDay } from "@/app/lib/data";
+import PickupTable from "@/app/ui/schedule/pickup-table";
+import { PickupListDisplay } from "@/app/lib/definitions";
 
-const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"] as const;
-type Weekday = typeof DAYS[number];
+const SCHOOLS: PickupListDisplay["school_name"][] = ["Frankland", "Jackman"];
 
-function hhmm(t: string) { return t?.slice(0,5); }
+type PageProps = {
+  params: { weekday: PickupListDisplay["weekday"] };
+  searchParams?: { school?: string };
+};
 
-export default async function DayPage({ params }: { params: Promise<{ weekday: string }> }) {
+export default async function Page(props: {
+  params?: Promise <{
+    weekday?:PickupListDisplay["weekday"];
+  }>,
+  searchParams?: Promise<{
+    school?: string;
+  }>;
+}) {
+  const params = await props.params;
+  const searchParams = await props.searchParams
 
-  const weekday = (await params).weekday;
+  const activeSchool: PickupListDisplay["school_name"] =
+    SCHOOLS.includes(((searchParams)?.school as any) || "")
+      ? (searchParams?.school as PickupListDisplay["school_name"])
+      : "Frankland";
 
-  const day = (decodeURIComponent(weekday) as Weekday);
-
+  const pickups = await fetchPickupsForDay(params?.weekday ?? 'Friday', activeSchool);
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      UNDER CONSTRUCTION
-      <br></br>
-      Will show a summary of all the absences, makeups, and trial students for {day}.
+    <div className="space-y-4">
+      {/* Little school nav above the table */}
+      <div className="flex items-center">
+        <h1 className="text-sm font-semibold text-slate-800">
+          Pickups for {params?.weekday}
+        </h1>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+            <div className="text-xs text-slate-500">
+              Total: <span className="font-semibold">{pickups.length}</span>
+            </div>
+          </div>
+        <div className="inline-flex rounded-full bg-slate-100 p-1">
+          
+          {SCHOOLS.map((s) => {
+            const href = `?school=${encodeURIComponent(s)}`;
+            const isActive = s === activeSchool;
+            return (
+              <Link
+                key={s}
+                href={href}
+                className={clsx(
+                  "px-3 py-1 text-xs font-medium rounded-full transition",
+                  isActive
+                    ? "bg-white text-sky-700 shadow-sm border border-sky-200"
+                    : "text-slate-600 hover:text-sky-700"
+                )}
+              >
+                {s}
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+      
+
+      <PickupTable day={params?.weekday ?? 'Friday'} pickups={pickups} />
     </div>
   );
 }
+

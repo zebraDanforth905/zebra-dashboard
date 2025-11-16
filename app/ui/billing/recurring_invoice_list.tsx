@@ -3,6 +3,7 @@ import { ClickableRow } from "@/app/ui/clickable-row";
 import clsx from "clsx";
 import { RecurringInvoiceListData } from "@/app/lib/definitions";
 import { formatDate } from "@/app/lib/utils";
+import { EditInvoiceButton } from "../buttons";
 
 function formatCurrency(amount: number) {
 
@@ -36,7 +37,6 @@ export default function RecurringInvoiceTable({
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="bg-slate-50 text-slate-700">
-            <th></th>
             <th className="px-4 py-2 text-left font-semibold">Description</th>
             <th className="px-4 py-2 text-left font-semibold">Amount</th>
             <th className="px-4 py-2 text-left font-semibold">Every</th>
@@ -47,11 +47,11 @@ export default function RecurringInvoiceTable({
 
         <tbody className="divide-y divide-slate-100">
           {invoices.map((inv) => {
-            const href = `/dashboard/billing/recurring/${inv.id}`;
+            const href = `/dashboard/billing/recurring_invoices/${inv.id}`;
             const active = inv.id === activeId;
 
             return (
-              <ClickableRow key={inv.id} href={href} active={active}>
+              <tr key={inv.id}>
                 <td className="relative z-[2] px-4 py-2 font-medium text-slate-800 truncate">
                   {inv.description || "—"}
                 </td>
@@ -72,8 +72,9 @@ export default function RecurringInvoiceTable({
                     <input name='every' value={inv.every} readOnly hidden/>
                     <button className="hover:text-blue-200">skip next date</button>
                   </form>
+                  <EditInvoiceButton id={inv.id} />
                 </td>
-              </ClickableRow>
+              </tr>
             );
           })}
         </tbody>

@@ -96,6 +96,25 @@ export async function assignStudent(formData: FormData) {
   
 }
 
+export async function unassignStudent(id: string) {
+
+  
+  if (!id) return; 
+  
+  try {
+    await sql`
+      UPDATE students
+        SET customer_id = NULL
+        WHERE id = ${Number(id)}
+      ;`;
+    } catch (error) {
+      console.error('Error unassigning student:', error);
+    }
+    // After unassignment, revalidate the customer edit page to reflect changes
+    revalidatePath('/dashboard/billing/'+ id +'/edit');
+    revalidatePath('/dashboard/billing');
+}
+
 export async function scrapeEnrolmentNow(opts?: {
   branchId?: number;
   activeId?: number;

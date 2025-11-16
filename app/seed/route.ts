@@ -17,127 +17,127 @@ export async function GET() {
       // await tx`DROP TABLE IF EXISTS customers`;
       // await tx`DROP TABLE IF EXISTS users`;
       
-      await tx`
-      CREATE TABLE IF NOT EXISTS recurring_invoices (
-        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-        customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
-        day_of_month NUMERIC(10, 2) NOT NULL,
-        every NUMERIC (10, 2) NOT NULL,
-        start_date DATE NOT NULL,
-        end_after NUMERIC(10, 2)
-      );`;
+      // await tx`
+      // CREATE TABLE IF NOT EXISTS recurring_invoices (
+      //   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //   customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+      //   day_of_month NUMERIC(10, 2) NOT NULL,
+      //   every NUMERIC (10, 2) NOT NULL,
+      //   start_date DATE NOT NULL,
+      //   end_after NUMERIC(10, 2)
+      // );`;
 
-      await tx`
-        CREATE TABLE IF NOT EXISTS users (
-          id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
-          email TEXT NOT NULL,
-          password TEXT NOT NULL
-        );
-      `;
+      // await tx`
+      //   CREATE TABLE IF NOT EXISTS users (
+      //     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //     name VARCHAR(255) NOT NULL,
+      //     email TEXT NOT NULL,
+      //     password TEXT NOT NULL
+      //   );
+      // `;
 
-      await tx`
-        CREATE TABLE IF NOT EXISTS customers (
-          id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
-          email TEXT NOT NULL
-        );
-      `;
+      // await tx`
+      //   CREATE TABLE IF NOT EXISTS customers (
+      //     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //     name VARCHAR(255) NOT NULL,
+      //     email TEXT NOT NULL
+      //   );
+      // `;
 
-      await tx`
-        CREATE TABLE IF NOT EXISTS students (
-          id NUMERIC(10, 2) PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
-          customer_id UUID REFERENCES customers(id) ON DELETE CASCADE
-        );
-      `;
+      // await tx`
+      //   CREATE TABLE IF NOT EXISTS students (
+      //     id NUMERIC(10, 2) PRIMARY KEY,
+      //     name VARCHAR(255) NOT NULL,
+      //     customer_id UUID REFERENCES customers(id) ON DELETE CASCADE
+      //   );
+      // `;
 
-      const cols = await tx`
-        SELECT column_name, data_type
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'students'
-        ORDER BY ordinal_position;
-      `;
+      // const cols = await tx`
+      //   SELECT column_name, data_type
+      //   FROM information_schema.columns
+      //   WHERE table_schema = 'public' AND table_name = 'students'
+      //   ORDER BY ordinal_position;
+      // `;
 
-      await tx`
-        CREATE TABLE IF NOT EXISTS invoices (
-          id UUID DEFAULT (uuid_generate_v4()) PRIMARY KEY,
-          customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
-          amount NUMERIC(10, 2) NOT NULL,
-          date DATE NOT NULL
-        );
-      `;
+      // await tx`
+      //   CREATE TABLE IF NOT EXISTS invoices (
+      //     id UUID DEFAULT (uuid_generate_v4()) PRIMARY KEY,
+      //     customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+      //     amount NUMERIC(10, 2) NOT NULL,
+      //     date DATE NOT NULL
+      //   );
+      // `;
 
-      await tx`
-        CREATE TABLE IF NOT EXISTS payments (
-          id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-          customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
-          amount NUMERIC(10, 2) NOT NULL,
-          date DATE NOT NULL,
-          status VARCHAR(255) NOT NULL
-        );
-      `;
+      // await tx`
+      //   CREATE TABLE IF NOT EXISTS payments (
+      //     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //     customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+      //     amount NUMERIC(10, 2) NOT NULL,
+      //     date DATE NOT NULL,
+      //     status VARCHAR(255) NOT NULL
+      //   );
+      // `;
 
-      await tx`CREATE TABLE IF NOT EXISTS enrolments (
-        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-        student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
-        course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
-        session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-        start_date DATE DEFAULT CURRENT_DATE
-      );`;
+      // await tx`CREATE TABLE IF NOT EXISTS enrolments (
+      //   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //   student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
+      //   course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
+      //   session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+      //   start_date DATE DEFAULT CURRENT_DATE
+      // );`;
 
-      await tx`CREATE TABLE IF NOT EXISTS pickups (
-        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-        student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
-        weekday VARCHAR(20) NOT NULL,
-        waiver_signed BOOLEAN NOT NULL,
-        school_name VARCHAR(255) NOT NULL,
-        teacher_name VARCHAR(255) NOT NULL,
-        room_number NUMERIC(10, 2) NOT NULL
-      );`;
+      // await tx`CREATE TABLE IF NOT EXISTS pickups (
+      //   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //   student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
+      //   weekday VARCHAR(20) NOT NULL,
+      //   waiver_signed BOOLEAN NOT NULL,
+      //   school_name VARCHAR(255) NOT NULL,
+      //   teacher_name VARCHAR(255) NOT NULL,
+      //   room_number NUMERIC(10, 2) NOT NULL
+      // );`;
 
-      await tx`CREATE TABLE IF NOT EXISTS courses (
-        id VARCHAR(255) PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        description TEXT
-      );`;
+      // await tx`CREATE TABLE IF NOT EXISTS courses (
+      //   id VARCHAR(255) PRIMARY KEY,
+      //   name VARCHAR(255) NOT NULL,
+      //   description TEXT
+      // );`;
 
-      await tx`CREATE TABLE IF NOT EXISTS sessions (
-        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-        start_time TIME NOT NULL,
-        end_time TIME NOT NULL,
-        weekday VARCHAR(20) NOT NULL
-      );`;
+      // await tx`CREATE TABLE IF NOT EXISTS sessions (
+      //   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //   start_time TIME NOT NULL,
+      //   end_time TIME NOT NULL,
+      //   weekday VARCHAR(20) NOT NULL
+      // );`;
 
-      await tx`CREATE TABLE IF NOT EXISTS trials (
-        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-        name TEXT,
-        session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-        course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
-        date DATE
-      );
-      `;
+      // await tx`CREATE TABLE IF NOT EXISTS trials (
+      //   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //   name TEXT,
+      //   session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+      //   course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
+      //   date DATE
+      // );
+      // `;
 
-      await tx`CREATE TABLE IF NOT EXISTS makeups (
-        id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-        student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
-        session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-        course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
-        date DATE
-      );
-      `;
+      // await tx`CREATE TABLE IF NOT EXISTS makeups (
+      //   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      //   student_id NUMERIC(10, 2) REFERENCES students(id) ON DELETE CASCADE,
+      //   session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+      //   course_id VARCHAR(255) REFERENCES courses(id) ON DELETE CASCADE,
+      //   date DATE
+      // );
+      // `;
 
 
-      // // 2) Inserts (you can parallelize per-table rows)
-      // for (const u of users) {
-      //   const hashed = await bcrypt.hash(u.password, 10);
+      // // // 2) Inserts (you can parallelize per-table rows)
+      for (const u of users) {
+        const hashed = await bcrypt.hash(u.password, 10);
 
-      //   await tx`
-      //     INSERT INTO users (id, name, email, password)
-      //     VALUES (${u.id}, ${u.name}, ${u.email}, ${hashed})
-      //     ON CONFLICT (id) DO NOTHING;
-      //   `;
-      // }
+        await tx`
+          INSERT INTO users (name, email, password)
+          VALUES (${u.name}, ${u.email}, ${hashed})
+          ON CONFLICT (id) DO NOTHING;
+        `;
+      }
       // for (const c of customers) {
       //   await tx`
       //     INSERT INTO customers (name, email)

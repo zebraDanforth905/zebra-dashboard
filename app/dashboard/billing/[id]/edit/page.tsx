@@ -13,6 +13,7 @@ import RecurringInvoiceForm from "@/app/ui/billing/recurring-invoice-form";
 import { createRecurringInvoice } from "@/app/lib/actions";
 import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
 import EditBillingClient from "@/app/ui/billing/edit-billing-client";
+import { UnassignStudentButton } from "@/app/ui/buttons";
 
 export default async function Page(props: {
   params: Promise<{ id: string }>;
@@ -40,8 +41,9 @@ export default async function Page(props: {
 
           {customer && customer.students.length > 0 ? (
             customer.students.map((student) => (
+              <div key={student.id} className="flex items-center justify-between border-b border-slate-200">
               <Link
-                key={student.id}
+                
                 href={`/dashboard/students/${student.id}/edit`}
                 className="block"
               >
@@ -51,16 +53,21 @@ export default async function Page(props: {
                   <div className="font-medium text-slate-800">{student.name}</div>
                 </div>
               </div>
+              
               </Link>
+              
+              <UnassignStudentButton id={student.id} />
+               </div>
             ))
           ) : (
             <div className="text-sm text-slate-500 px-2 py-2">No students enrolled.</div>
           )}
-
-     
         <AddStudentForm query={studentQuery} customer_id={id||''}/>
+        <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Recurring Invoices:</h2>
+          
+        
         <RecurringInvoiceTable invoices={invoices}></RecurringInvoiceTable>
-        <RecurringInvoiceForm customer_id={id} action={createRecurringInvoice}/>
+        
       </section>
     </div>
   );

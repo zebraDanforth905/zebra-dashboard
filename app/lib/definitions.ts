@@ -7,6 +7,7 @@ export type User = {
   name: string;
   email: string;
   password: string;
+  user_type: string;
 };
 
 export type Customer = {
@@ -148,6 +149,7 @@ export type StudentTableData = {
 export type ScheduleRow = {
   enrolment_id: string;
   name: string;
+  student_id: string;
   course_name: string;
   absent?: boolean;
 };
@@ -155,6 +157,7 @@ export type ScheduleRow = {
 export type MakeupRow = {
   makeup_id: string;
   name: string;
+  student_id: string;
   course_name: string;
   date: Date;
 }
@@ -179,5 +182,19 @@ export type StudentSpecificData = {
 
 }
 export type CustomerSpecificData = {
+
+}
+
+export type PickupListDisplay = {
+  id: string;
+  student_id: string;
+  weekday: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+  waiver_signed: boolean;
+  school_name: string;
+  teacher_name: string;
+  room_number: number;
+  invoice_id: string;
+  name: string;
+  absent: boolean;
 
 }

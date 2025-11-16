@@ -96,3 +96,15 @@ export function assertAligned(label: string, arrays: Record<string, any[]>) {
     if (bad !== -1) throw new Error(`${label}: ${k}[${bad}] is undefined`);
   }
 }
+
+const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
+type Weekday = typeof WEEKDAYS[number];
+export function nextOccurrenceOf(weekday: Weekday, from = new Date()): Date {
+  const targetIdx = WEEKDAYS.indexOf(weekday);
+  const fromIdx = from.getDay();
+  let delta = (targetIdx - fromIdx + 7) % 7;
+  const dt = new Date(from);  // clone
+  dt.setHours(0,0,0,0);
+  dt.setDate(dt.getDate() + delta);
+  return dt;
+}

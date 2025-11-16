@@ -23,6 +23,24 @@ async function getUser(email: string): Promise<User | undefined> {
  
 export const { auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  callbacks: {
+    async jwt({ token, user }) {
+      // When the user logs in, `user` will be populated.
+      // Attach user_type from your DB user.
+      if (user) {
+        // adjust property name to match your user object
+        token.user_type = (user as any).user_type;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      // Expose user_type in session.user so it's accessible as req.auth.user.user_type
+      if (token?.user_type) {
+        (session.user as any).user_type = token.user_type;
+      }
+      return session;
+    },
+  },
   providers: [
     Credentials({
       async authorize(credentials) {

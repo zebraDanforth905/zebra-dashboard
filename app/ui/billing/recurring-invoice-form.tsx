@@ -4,13 +4,13 @@ import { useId } from "react";
 import { useFormStatus } from "react-dom";
 import clsx from "clsx";
 import { RecurringInvoice } from "@/app/lib/definitions";
+import { createRecurringInvoice } from "@/app/lib/actions";
+import { create } from "domain";
 
 type Props = {                         
-  customer_id: string;
-  action: (fd: FormData) => Promise<RecurringInvoice>;               // create or save action (server)
+  customer_id: string;            // create or save action (server)
   initial?: Partial<RecurringInvoice>;                   // when editing
   submitLabel?: string;                                  // e.g., "Create" or "Save changes"
-  deleteAction?: (fd: FormData) => Promise<void>;        // optional server action for delete
 };
 
 function SubmitButton({ label }: { label: string }) {
@@ -56,10 +56,9 @@ function DangerButton({
 
 export default function RecurringInvoiceForm({
   customer_id,
-  action,
   initial,
   submitLabel = "Create recurring invoice",
-  deleteAction,
+
 }: Props) {
   const formId = useId();
 
@@ -77,8 +76,13 @@ export default function RecurringInvoiceForm({
     : ""; // yyyy-mm-dd
   const defaultEndAfter = initial?.end_after ?? null;
   const defaultDescription = initial?.description ?? "";
+  
   function actionVoid(FormData: FormData){
-        action(FormData);
+        createRecurringInvoice(FormData);
+  }
+
+  function deleteAction(FormData: FormData){
+        //deleteRecurringInvoice(FormData);
   }
 
   return (
@@ -212,7 +216,7 @@ export default function RecurringInvoiceForm({
               </form>
               <DangerButton label="Delete" />
             </>
-          )}
+          )}*/
         </div>
       </form>
     </div>

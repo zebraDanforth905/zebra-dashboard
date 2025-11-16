@@ -1,9 +1,12 @@
 'use server'
 
 import postgres from 'postgres';
-import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow } from './definitions';
+import { nextOccurrenceOf } from './utils';
+import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
+type Weekday = typeof WEEKDAYS[number];
 
 const ITEMS_PER_PAGE = 10;
 export async function fetchFilteredCustomers(
@@ -264,18 +267,9 @@ export async function fetchCustomerById(customerId: string | "") {
 
 const Y = (d: Date) => d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
 
-const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
-type Weekday = typeof WEEKDAYS[number];
 
-function nextOccurrenceOf(weekday: Weekday, from = new Date()): Date {
-  const targetIdx = WEEKDAYS.indexOf(weekday);
-  const fromIdx = from.getDay();
-  let delta = (targetIdx - fromIdx + 7) % 7;
-  const dt = new Date(from);  // clone
-  dt.setHours(0,0,0,0);
-  dt.setDate(dt.getDate() + delta);
-  return dt;
-}
+
+
 
 export async function fetchSessionStudents(sessionId: string, date?: Date) {
   'use cache'
@@ -305,6 +299,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
       SELECT
         e.id AS enrolment_id,
         s.name,
+        s.id as student_id,
         crs.name AS course_name,
         (abs.enrolment_id IS NOT NULL) AS absent
       FROM students s
@@ -324,17 +319,33 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
   } 
 }
 
-export async function fetchUpcomingSessionMakeups(sessionId: string){
+export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date){
   'use cache'
   try{
     
   cacheTag('schedule')
+
+  let targetDate = date;
+    
+    if (!targetDate) {
+      const rows = await sql<{ weekday: Weekday }[]>`
+        SELECT weekday
+        FROM sessions
+        WHERE id = ${sessionId}
+        LIMIT 1;
+      `;
+      if (!rows.length) throw new Error("Session not found");
+      targetDate = nextOccurrenceOf(rows[0].weekday);
+    }
+
+  const target = Y(targetDate);
+
   const students = await sql<MakeupRow[]>`
-    SELECT m.id AS makeup_id, s.name, crs.name AS course_name, m.date
+    SELECT m.id AS makeup_id, s.name, s.id as student_id, crs.name AS course_name, m.date
     FROM students s
     JOIN makeups m ON m.student_id = s.id
     JOIN courses crs ON crs.id = m.course_id
-    WHERE m.session_id = ${sessionId}
+    WHERE m.session_id = ${sessionId} AND m.date = ${target}
     ORDER BY m.date;
   `;
   return students;
@@ -343,16 +354,31 @@ export async function fetchUpcomingSessionMakeups(sessionId: string){
   }
 }
 
-export async function fetchUpcomingSessionTrials(sessionId: string){
+export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date){
   'use cache'
-  try{
-  
+  try{  
   cacheTag('schedule')
+
+  let targetDate = date;
+    
+    if (!targetDate) {
+      const rows = await sql<{ weekday: Weekday }[]>`
+        SELECT weekday
+        FROM sessions
+        WHERE id = ${sessionId}
+        LIMIT 1;
+      `;
+      if (!rows.length) throw new Error("Session not found");
+      targetDate = nextOccurrenceOf(rows[0].weekday);
+    }
+
+    const target = Y(targetDate);
+
   const students = await sql<TrialRow[]>`
     SELECT t.id AS trial_id, t.name, crs.name AS course_name, t.date
     FROM trials t
     JOIN courses crs ON crs.id = t.course_id
-    WHERE t.session_id = ${sessionId}
+    WHERE t.session_id = ${sessionId} AND t.date = ${target}
     ORDER BY t.date;
   `;
   return students;
@@ -361,11 +387,10 @@ export async function fetchUpcomingSessionTrials(sessionId: string){
   }
 }
 
-export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday') {
+export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday', date?: Date) {
   'use cache'
   
   try {
-     
         const sessions = await sql<Session[]>
         `
           SELECT
@@ -432,5 +457,49 @@ export async function fetchRecurringInvoicesByCustomer(customerId: string){
     console.error('Database Error: ', error);
     throw new Error('Failed to fetch recurring invoices for customer.')
   }
+}
+
+export async function fetchRecurringInvoiceById(invoiceId: string){
+  try {
+    const recurring = await sql<RecurringInvoice[]>`  
+      SELECT id, customer_id, amount, every, day_of_month, start_date, next_date, end_after, description
+      FROM recurring_invoices
+      WHERE id = ${invoiceId}
+      LIMIT 1;
+    `
+    return recurring[0];
+  }catch (error){
+    console.error('Database Error: ', error);
+    throw new Error('Failed to fetch recurring invoice by ID.')
+  }
+}
+
+export async function fetchPickupsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday', school?: string, date?: Date){
+  try {
+    let weekday = day.toLowerCase()
+    let school_name = school?.toLowerCase();
+
+    let targetDate = date;
+
+    targetDate = nextOccurrenceOf(day);
+
+
+    const target = Y(targetDate);
+
+
+    const pickups = await sql<PickupListDisplay[]>`
+      SELECT p.*, s.name AS name, CASE WHEN pa.id IS NOT NULL THEN true ELSE false END AS absent
+      FROM pickups p
+      LEFT JOIN students s ON p.student_id = s.id
+      LEFT JOIN pickup_absences pa ON p.id = pa.pickup_id AND pa.date = ${target}
+      WHERE p.weekday = ${weekday} AND p.school_name=${school_name??'frankland'}
+      ORDER BY p.school_name, s.name;
+    `
+    return pickups;
+  }catch(error){
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch session students.');
+  }
+
 }
 
