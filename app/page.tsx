@@ -65,11 +65,14 @@ export default function Page() {
               enrollments, reports, and day‑to‑day operations.
             </p>
             <div className="mt-8 flex items-center gap-3">
-              <button
-                className="rounded-full bg-white px-6 py-3 text-sky-700 font-medium shadow-lg shadow-sky-900/20 hover:bg-slate-100 active:scale-[0.99] transition"
-              >
-                Log in
-              </button>
+              <Link
+                href="/login">
+                <button
+                  className="rounded-full bg-white px-6 py-3 text-sky-700 font-medium shadow-lg shadow-sky-900/20 hover:bg-slate-100 active:scale-[0.99] transition"
+                >
+                  Log in
+                </button>
+              </Link>
             </div>
           </div>
         </div>
