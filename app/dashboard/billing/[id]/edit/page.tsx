@@ -12,7 +12,7 @@ import CustomerSearchList from "@/app/ui/billing/customer-search-list";
 import RecurringInvoiceForm from "@/app/ui/billing/recurring-invoice-form";
 import { createRecurringInvoice } from "@/app/lib/actions";
 import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
-import EditBillingClient from "@/app/ui/billing/edit-billing-client";
+
 import { UnassignStudentButton } from "@/app/ui/buttons";
 
 export default async function Page(props: {
@@ -55,7 +55,7 @@ export default async function Page(props: {
               </div>
               
               </Link>
-              
+
               <UnassignStudentButton id={student.id} />
                </div>
             ))
