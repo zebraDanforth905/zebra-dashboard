@@ -572,3 +572,57 @@ export async function fetchFilteredEnrolments(query: string) {
   }
 }
 
+export async function fetchFilteredScratchAccounts(query: string, unassignedOnly: boolean) {
+  try {
+    const accounts = await sql<{
+      username: string;
+      password: string;
+      student_id: string | null;
+      student_name: string | null;
+    }[]>`
+      SELECT 
+        scr.username,
+        scr.password,
+        scr.student_id,
+        s.name AS student_name
+      FROM scratch_accounts scr
+      LEFT JOIN students s ON s.id = scr.student_id
+      WHERE 
+        (scr.username ILIKE ${`%${query}%`}
+        OR s.name ILIKE ${`%${query}%`})
+        ${unassignedOnly ? sql`AND scr.student_id IS NULL` : sql``}
+      ORDER BY scr.username
+      LIMIT 50;
+    `;
+    return accounts;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch scratch accounts.');
+  }
+}
+
+export async function fetchStudentsForAssignment(query: string) {
+  try {
+    const students = await sql<{
+      id: string;
+      name: string;
+      email: string;
+    }[]>`
+      SELECT 
+        id,
+        name,
+        email
+      FROM students
+      WHERE 
+        name ILIKE ${`%${query}%`}
+        OR email ILIKE ${`%${query}%`}
+      ORDER BY name
+      LIMIT 20;
+    `;
+    return students;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch students for assignment.');
+  }
+}
+
