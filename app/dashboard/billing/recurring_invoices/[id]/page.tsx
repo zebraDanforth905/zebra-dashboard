@@ -20,5 +20,5 @@ export default async function Page(props: {
     } : undefined;
 
 
-    return <RecurringInvoiceForm customer_id={id} initial={initial} />;
+    return <RecurringInvoiceForm customer_id={initial?.customer_id ?? ""} initial={initial} />;
 }

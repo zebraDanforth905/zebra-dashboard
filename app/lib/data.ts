@@ -2,13 +2,17 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay } from './definitions';
+import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
+
+
+
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
 type Weekday = typeof WEEKDAYS[number];
 
 const ITEMS_PER_PAGE = 10;
+
 export async function fetchFilteredCustomers(
   query: string,
   currentPage: number,
@@ -501,5 +505,70 @@ export async function fetchPickupsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday'
     throw new Error('Failed to fetch session students.');
   }
 
+}
+
+export async function fetchSlipInfoById(userId: string) {
+  try {
+
+    console.log('Fetching slip info for user ID:', userId);
+    const slip = await sql<SlipInfo[]>` 
+      SELECT
+        id,
+        student_name,
+        user_id,
+        lms_username,
+        lms_password, 
+        course_name,
+        other_fields  
+      FROM slip_info
+      WHERE user_id = ${userId};
+    `
+    return slip;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch slip info by ID.');
+  }
+}
+
+export async function fetchFilteredEnrolments(query: string) {
+  try {
+    const enrolments = await sql<{
+      student_name: string;
+      enrolment_id: string;
+      student_id: string;
+      course_name: string;
+      other_fields: { [key: string]: string } | null;
+    }[]>`
+      SELECT 
+        e.id AS enrolment_id,
+        s.name AS student_name,
+        s.id AS student_id,
+        c.name AS course_name,
+        JSONB_STRIP_NULLS(
+          JSONB_BUILD_OBJECT(
+            'Scratch Login', scr.username,
+            'Scratch Password', scr.password,
+            'Roblox Login', rob.username,
+            'Roblox Password', rob.password,
+            'Laptop #', lap.laptop_number
+          )
+        ) AS other_fields
+      FROM enrolments e
+      JOIN students s ON s.id = e.student_id
+      JOIN courses c ON c.id = e.course_id
+      LEFT JOIN scratch_accounts scr ON scr.student_id = s.id
+      LEFT JOIN roblox_accounts rob ON rob.student_id = s.id
+      LEFT JOIN laptop_assignments lap ON lap.student_id = s.id
+      WHERE 
+        s.name ILIKE ${`%${query}%`}
+
+      ORDER BY s.name
+      LIMIT 20;
+    `;
+    return enrolments;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch filtered enrolments.');
+  }
 }
 

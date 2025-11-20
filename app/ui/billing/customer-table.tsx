@@ -25,7 +25,7 @@ export default async function CustomerTable({ query, currentPage, sortBy, incDec
             <th className="px-4 py-3 font-medium"><Sorter sortString='c.name'>Name</Sorter></th>
             <th className="px-4 py-3 font-medium"><Sorter sortString='c.email'>Email</Sorter></th>
             <th className="px-4 py-3 font-medium text-right"><Sorter sortString='total_due'>Total Overdue</Sorter></th>
-            <th className="px-4 py-3 font-medium text-right"><Sorter sortString='inv.next_invoice_date'>Next Invoice</Sorter></th>
+            <th className="px-4 py-3 font-medium text-right"><Sorter sortString='rec.next_invoice_date'>Next Invoice</Sorter></th>
             <th className="px-4 py-3 font-medium text-right"><Sorter sortString='pay.next_payment_date'>Next Setup Payment Date</Sorter></th>
             <th className="px-4 py-3 font-medium text-right"><Sorter sortString='pay.next_payment_amount'>Next Setup Payment Amount</Sorter></th>
             <th className="px-4 py-3 font-medium">Student(s)</th>

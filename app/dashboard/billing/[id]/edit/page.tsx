@@ -13,7 +13,7 @@ import RecurringInvoiceForm from "@/app/ui/billing/recurring-invoice-form";
 import { createRecurringInvoice } from "@/app/lib/actions";
 import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
 
-import { UnassignStudentButton } from "@/app/ui/buttons";
+import { NewInvoiceButton, UnassignStudentButton } from "@/app/ui/buttons";
 
 export default async function Page(props: {
   params: Promise<{ id: string }>;
@@ -30,7 +30,7 @@ export default async function Page(props: {
 
 
   return (
-    <div className="min-h-[calc(100vh-6rem)] grid grid-cols-1 md:grid-cols-[340px_1fr] gap-4">
+    <div className="min-h-[calc(100vh-6rem)] grid grid-cols-1 md:grid-cols-[340px_1fr] gap-4 m-6">
       <CustomerSearchList query={query} id={id} />
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm ring-1 ring-slate-100 p-4">
@@ -65,7 +65,7 @@ export default async function Page(props: {
         <AddStudentForm query={studentQuery} customer_id={id||''}/>
         <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Recurring Invoices:</h2>
           
-        
+        <NewInvoiceButton id={id} />
         <RecurringInvoiceTable invoices={invoices}></RecurringInvoiceTable>
         
       </section>

@@ -3,7 +3,7 @@ import { ClickableRow } from "@/app/ui/clickable-row";
 import clsx from "clsx";
 import { RecurringInvoiceListData } from "@/app/lib/definitions";
 import { formatDate } from "@/app/lib/utils";
-import { EditInvoiceButton } from "../buttons";
+import { DeleteInvoiceButton, EditInvoiceButton } from "../buttons";
 
 function formatCurrency(amount: number) {
 
@@ -73,6 +73,7 @@ export default function RecurringInvoiceTable({
                     <button className="hover:text-blue-200">skip next date</button>
                   </form>
                   <EditInvoiceButton id={inv.id} />
+                  <DeleteInvoiceButton id={inv.id} />
                 </td>
               </tr>
             );

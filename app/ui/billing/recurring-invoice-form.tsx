@@ -4,13 +4,15 @@ import { useId } from "react";
 import { useFormStatus } from "react-dom";
 import clsx from "clsx";
 import { RecurringInvoice } from "@/app/lib/definitions";
-import { createRecurringInvoice } from "@/app/lib/actions";
+import { createRecurringInvoice, updateRecurringInvoice } from "@/app/lib/actions";
 import { create } from "domain";
+import { CloseButton } from "../buttons";
 
 type Props = {                         
   customer_id: string;            // create or save action (server)
   initial?: Partial<RecurringInvoice>;                   // when editing
-  submitLabel?: string;                                  // e.g., "Create" or "Save changes"
+  submitLabel?: string;     
+  returnUrl?: string;                             // e.g., "Create" or "Save changes"
 };
 
 function SubmitButton({ label }: { label: string }) {
@@ -58,7 +60,7 @@ export default function RecurringInvoiceForm({
   customer_id,
   initial,
   submitLabel = "Create recurring invoice",
-
+  returnUrl,
 }: Props) {
   const formId = useId();
 
@@ -78,11 +80,7 @@ export default function RecurringInvoiceForm({
   const defaultDescription = initial?.description ?? "";
   
   function actionVoid(FormData: FormData){
-        createRecurringInvoice(FormData);
-  }
-
-  function deleteAction(FormData: FormData){
-        //deleteRecurringInvoice(FormData);
+        initial? updateRecurringInvoice(FormData) :  createRecurringInvoice(FormData);
   }
 
   return (
@@ -91,6 +89,7 @@ export default function RecurringInvoiceForm({
         <h2 className="text-base font-semibold text-slate-800">
           {initial?.id ? "Edit Recurring Invoice" : "New Recurring Invoice"}
         </h2>
+        <CloseButton returnUrl={returnUrl ? returnUrl : `/dashboard/billing/${customer_id}/edit`} />
       </div>
 
       <form action={actionVoid} className="grid gap-4 p-4" id={formId}>
@@ -207,16 +206,6 @@ export default function RecurringInvoiceForm({
         {/* Actions */}
         <div className="mt-2 flex items-center gap-2">
           <SubmitButton label={initial?.id ? "Save changes" : submitLabel} />
-          
-          {deleteAction && initial?.id && (
-            <>
-              {/* separate form for delete to avoid mixing inputs */}
-              <form id="delete-form" action={deleteAction}>
-                <input type="hidden" name="id" value={initial.id} />
-              </form>
-              <DangerButton label="Delete" />
-            </>
-          )}*/
         </div>
       </form>
     </div>

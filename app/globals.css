@@ -10,3 +10,35 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  body {
+    overflow: visible !important;
+  }
+  
+  /* Allow content to flow across pages, but exclude slip forms */
+  *:not(form):not(form *) {
+    overflow: visible !important;
+  }
+  
+  /* Remove height constraints from layout containers, but not slip forms */
+  div:not(form):not(form *) {
+    max-height: none !important;
+  }
+  
+  @page {
+    margin: 0.5cm;
+  }
+  
+  /* Page break before small slips that follow big slips */
+  .print-page-break {
+    page-break-before: always;
+    break-before: page;
+  }
+  
+  /* Prevent page breaks inside slip forms */
+  form {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

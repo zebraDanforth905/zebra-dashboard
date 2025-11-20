@@ -10,7 +10,6 @@ export const config = {
 
 export async function middleware(request: NextRequest) {
 
-  console.log("token: ", request)
   if (request.nextUrl.pathname.startsWith('/dashboard/camp')) {
     return NextResponse.rewrite(new URL('/dashboard/schedule', request.url))
   }

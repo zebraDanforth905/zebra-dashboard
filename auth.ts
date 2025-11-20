@@ -26,16 +26,19 @@ export const { auth, signIn, signOut } = NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       // When the user logs in, `user` will be populated.
-      // Attach user_type from your DB user.
+      // Attach user_type, id, and name from your DB user.
       if (user) {
-        // adjust property name to match your user object
+        token.id = user.id;
+        token.name = (user as any).name;
         token.user_type = (user as any).user_type;
       }
       return token;
     },
     async session({ session, token }) {
-      // Expose user_type in session.user so it's accessible as req.auth.user.user_type
-      if (token?.user_type) {
+      // Expose id, name, and user_type in session.user
+      if (token) {
+        (session.user as any).id = token.id;
+        (session.user as any).name = token.name;
         (session.user as any).user_type = token.user_type;
       }
       return session;

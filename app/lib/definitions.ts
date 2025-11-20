@@ -78,6 +78,33 @@ export type Enrolment = {
   invoice_id: string;
 }
 
+export type ScratchAccount = {
+  student_id?: string;
+  username: string;
+  password: string;
+}
+
+export type LaptopAssignment = {
+  student_id: string;
+  laptop_number: string;
+}
+
+export type RobloxAccount = {
+  student_id: string;
+  username: string;
+  password: string;
+}
+
+export type SlipInfo = {
+  id: string;
+  student_name: string;
+  user_id: string;
+  lms_username: string;
+  lms_password: string;
+  course_name: string;
+  other_fields?: { [key: string]: string; };
+}
+
 export type Pickup = {
   id: string;
   student_id: string;

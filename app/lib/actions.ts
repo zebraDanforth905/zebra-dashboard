@@ -10,6 +10,7 @@ import { fetchAttendanceReport, fetchEnrolmentReportJSON } from './scraper_helpe
 import { normalizeAbsencesFromAttendance, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { syncAbsencesForRange, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
 import { RecurringInvoice } from './definitions';
+import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
 import { formatDate } from './utils';
 import { localMidnightFromISODate } from './utils';
@@ -40,6 +41,16 @@ const skipNextDateFormSchema = z.object({
   dayOfMonth: z.coerce.number().refine(n => (n >= 1 && n <= 28) || n === -1, "day_of_month must be 1..28 or -1"),
   every: z.coerce.number()
 })
+
+const pickupFormSchema = z.object({
+  id: z.string(),
+  studentId: z.string(),
+  weekday: z.string(),
+  waiver_signed: z.coerce.boolean(),
+  school_name: z.string(),
+  teacher_name: z.string(),
+  room_number: z.string()
+});
 
 function nextDay(d: Date){
   console.log(`setting this date to next day: ${d}`)
@@ -233,10 +244,65 @@ export async function createRecurringInvoice(formData: FormData) {
   // Revalidate any pages that list recurring invoices
   revalidatePath("/dashboard/billing/[id]/edit");
   revalidatePath("/dashboard/billing");
+  redirect(`/dashboard/billing/${customer_id}/edit`);
 
   return rows[0];
 }
 
+export async function updateRecurringInvoice(formData: FormData) {
+  const {id, customer_id, amount, day_of_month, every, start_date, end_after, description} = NewRecurringInvoiceFormSchema.extend({
+    id: z.string()
+  }).parse({
+    id: formData.get('id'),
+    customer_id: formData.get('customer_id'),
+    amount: formData.get('amount'),
+    day_of_month: formData.get('day_of_month'),
+    every: formData.get('every'),
+    start_date: formData.get('start_date'),
+    end_after: formData.get('end_after'),
+    description: formData.get('description')
+  });
+  const amount_in_cents = amount*100;
+  try {
+    await sql`
+    UPDATE recurring_invoices
+      SET
+        customer_id = ${customer_id},
+        amount = ${amount_in_cents},
+        day_of_month = ${day_of_month},
+        every = ${every},
+        start_date = ${start_date},
+        end_after = ${end_after == 0? null : end_after},
+        description = ${description ?? null}
+      WHERE id = ${id};
+    `;
+  } catch (error) {
+    console.error('Error updating recurring invoice:', error);
+  }
+  revalidatePath("/dashboard/billing/[id]/edit");
+  revalidatePath("/dashboard/billing");
+  redirect(`/dashboard/billing/${customer_id}/edit`);
+}
+
+const deleteRecurringInvoiceFormSchema = z.object({
+  id: z.string()
+});
+export async function deleteRecurringInvoice(formData: FormData){
+  const id = deleteRecurringInvoiceFormSchema.parse({
+    id: formData.get('id')
+  }).id;
+  
+  try {
+    await sql`
+      DELETE FROM recurring_invoices
+      WHERE id = ${id};
+    `;
+  } catch (error) {
+    console.error('Error deleting recurring invoice:', error);
+  }
+  revalidatePath("/dashboard/billing/[id]/edit");
+  revalidatePath("/dashboard/billing");
+}
 export async function skipNextDate(formData: FormData){
   
   const {invoiceId, nextDate, dayOfMonth, every} = skipNextDateFormSchema.parse({
@@ -264,6 +330,8 @@ export async function skipNextDate(formData: FormData){
 
 }
 
+
+
 export async function forceScheduleRefresh(formData: FormData){
   
   await scrapeEnrolmentNow()
@@ -272,4 +340,173 @@ export async function forceScheduleRefresh(formData: FormData){
   revalidateTag('schedule', 'max')
   
   console.log("refreshed")
+}
+
+const addPickupFormSchema = pickupFormSchema.omit({id: true});
+export async function addPickup(formData: FormData){
+  console.log("adding pickup with form data: ", formData);
+  
+  const {studentId, weekday, waiver_signed, school_name, teacher_name, room_number} = addPickupFormSchema.parse({
+    studentId: formData.get('studentId'),
+    weekday: formData.get('weekday'),
+    waiver_signed: formData.get('waiver_signed'),
+    school_name: formData.get('school_name'),
+    teacher_name: formData.get('teacher_name'),
+    room_number: formData.get('room_number')
+  });
+
+  console.log(`adding pickup for student ${studentId} on ${weekday}`)
+  
+  try {
+    await sql`
+    INSERT INTO pickups ( 
+      student_id,
+      weekday,
+      waiver_signed,
+      school_name,
+      teacher_name,
+      room_number
+    )
+    VALUES (
+      ${studentId},
+      ${weekday},
+      ${waiver_signed},
+      ${school_name},
+      ${teacher_name ?? null},
+      ${room_number ?? null}
+    );
+    `;
+    revalidateTag("schedule", "max");
+  }catch(error){
+    console.error('error adding pickup: ', error);
+  }
+}
+
+export async function updatePickup(formData: FormData){
+  const {id, studentId, weekday, waiver_signed, school_name, teacher_name, room_number} = pickupFormSchema.parse({
+    id: formData.get('id'),
+    studentId: formData.get('studentId'),
+    weekday: formData.get('weekday'),
+    waiver_signed: formData.get('waiver_signed'),
+    school_name: formData.get('school_name'),
+    teacher_name: formData.get('teacher_name'),
+    room_number: formData.get('room_number')
+  }); 
+  try {
+    await sql`
+    UPDATE pickups
+      SET
+        student_id = ${studentId},  
+        weekday = ${weekday},
+        waiver_signed = ${waiver_signed},
+        school_name = ${school_name},
+        teacher_name = ${teacher_name},
+        room_number = ${room_number}
+      WHERE id = ${id};
+    `;
+
+    revalidatePath("/dashboard/schedule");
+  }
+  catch(error){
+    console.error('error updating pickup: ', error);
+  }
+}
+
+const SlipInfoFormSchema = z.object({
+  id: z.string(),
+  user_id: z.string(),
+  student_name: z.string(),
+  lms_username: z.string(),
+  lms_password: z.string(),
+  course_name: z.string(),
+  other_fields_raw: z.string().optional().nullable()
+});
+
+export async function updateSlipInfo(formData: FormData){
+  const {id, user_id, student_name, lms_username, lms_password, course_name, other_fields_raw} = SlipInfoFormSchema.parse({
+    id: formData.get('id'),
+    user_id: formData.get('user_id'),
+    student_name: formData.get('student_name'),
+    lms_username: formData.get('lms_username'),
+    lms_password: formData.get('lms_password'),
+    course_name: formData.get('course_name'),
+    other_fields_raw: formData.get('other_fields') || ''
+  });
+  const other_fields = other_fields_raw ? Object.fromEntries(
+    other_fields_raw.split('\n').map(line => {
+      const [key, ...rest] = line.split(':');
+      return [key.trim(), rest.join(':').trim()];
+    }).filter(([key, value]) => key && value)
+  ) : {};
+
+  try {
+    await sql`
+    UPDATE slip_info
+      SET
+        student_name = ${student_name},
+        lms_username = ${lms_username},
+        lms_password = ${lms_password},
+        course_name = ${course_name},
+        other_fields = ${Object.keys(other_fields).length > 0 ? other_fields : {}}
+      WHERE id = ${id} AND user_id = ${user_id};
+    `;
+  } catch (error) {
+    console.error('Error updating slip info:', error);
+  }
+
+  revalidatePath("/dashboard/printable");
+}
+
+const NewSlipInfoFormSchema = SlipInfoFormSchema.omit({id: true});
+
+export async function createSlipInfo(formData: FormData){
+  const {user_id, student_name, lms_username, lms_password, course_name, other_fields_raw} = NewSlipInfoFormSchema.parse({
+    user_id: formData.get('user_id'),
+    student_name: formData.get('student_name') || "",
+    lms_username: formData.get('lms_username') || "",
+    lms_password: formData.get('lms_password') || "",
+    course_name: formData.get('course_name') || "",
+    other_fields_raw: formData.get('other_fields')?? ""
+  });
+  const other_fields = other_fields_raw ? Object.fromEntries(
+    other_fields_raw.split('\n').map(line => {
+      const [key, ...rest] = line.split(':');
+      return [key.trim(), rest.join(':').trim()];
+    }).filter(([key, value]) => key && value)
+  ) : {};
+  try {
+    await sql`
+    INSERT INTO slip_info (
+      user_id,
+      student_name,
+      lms_username,
+      lms_password,
+      course_name,
+      other_fields
+    )
+    VALUES (
+      ${user_id},
+      ${student_name},
+      ${lms_username},
+      ${lms_password},
+      ${course_name},
+      ${Object.keys(other_fields).length > 0 ? other_fields : null}
+    );
+    `;
+    revalidatePath("/dashboard/printable");
+  } catch (error) {
+    console.error('Error creating slip info:', error);
+  }
+}
+
+export async function deleteSlipInfo(id: string){
+  try {
+    await sql`
+      DELETE FROM slip_info
+      WHERE id = ${id};
+    `;
+    revalidatePath("/dashboard/printable");
+  } catch (error) {
+    console.error('Error deleting slip info:', error);
+  }
 }

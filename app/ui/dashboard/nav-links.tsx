@@ -6,11 +6,10 @@ import clsx from 'clsx';
 
 // Central link registry (db-backed later if desired)
 const links = [
-  { name: 'Home', href: '/dashboard'},
+  { name: 'Schedule', href: '/dashboard/schedule' },
   { name: 'Billing', href: '/dashboard/billing' },
   { name: 'Students', href: '/dashboard/students' },
-  { name: 'Schedule', href: '/dashboard/schedule' },
-   { name: 'Camp', href: '/dashboard/camp' },
+  {name: 'Slips', href: '/dashboard/printable' },
 ];
 
 export default function NavLinks() {

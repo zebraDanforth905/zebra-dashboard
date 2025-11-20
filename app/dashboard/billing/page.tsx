@@ -22,7 +22,7 @@ export default async function Page(props: {
   const totalPages = await fetchCustomerPages(query);
 
   return (
-    <div className="w-full">
+    <div className="w-full m-6">
       <div className="flex w-full items-center justify-between">
         <h1 className={`text-2xl`}>Customers</h1>
       </div>

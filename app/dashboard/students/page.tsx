@@ -20,7 +20,7 @@ export default async function Page(props: {searchParams?:
   const sortBy = searchParams?.sortBy || 's.name';
   const totalPages = await fetchStudentPages(query);
   
-  return <div>
+  return <div className="m-6">
       <div className="flex w-full items-center justify-between">
         <h1 className={`text-2xl`}>Students</h1>
       </div>
