@@ -35,6 +35,7 @@ export default async function Page (props: {
                         <div className="flex items-center justify-between">
                             <h1 className="text-2xl font-semibold text-slate-800">LMS Slips</h1>
                             <div className="flex gap-2">
+                                {session.user.id &&<NewSlipButton userId={session.user.id} />}   
                                 <PrintButton />
                             </div>
                         </div>
