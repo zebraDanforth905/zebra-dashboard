@@ -78,7 +78,9 @@ export const { auth, signIn, signOut } = NextAuth({
             console.log('Authorize - password match, returning user:', {
               id: user.id,
               email: user.email,
+              name: user.name,
               user_type: user.user_type,
+              fullUser: user,
             });
             return user;
           }

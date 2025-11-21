@@ -15,7 +15,17 @@ export async function middleware(request: NextRequest) {
   }
 
   if (request.nextUrl.pathname.startsWith('/dashboard/billing')){
-    const token = await getToken({ req: request, secret: process.env.AUTH_SECRET as string });
+    console.log('Middleware - Environment check:', {
+      hasAuthSecret: !!process.env.AUTH_SECRET,
+      authSecretLength: process.env.AUTH_SECRET?.length,
+      cookies: request.cookies.getAll().map(c => ({ name: c.name, hasValue: !!c.value })),
+    });
+    
+    const token = await getToken({ 
+      req: request, 
+      secret: process.env.AUTH_SECRET as string,
+      secureCookie: process.env.NODE_ENV === 'production',
+    });
     
     console.log('Middleware - Billing access check:', {
       path: request.nextUrl.pathname,
