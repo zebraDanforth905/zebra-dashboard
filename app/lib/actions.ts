@@ -412,6 +412,57 @@ export async function updatePickup(formData: FormData){
   }
 }
 
+export async function deletePickup(pickupId: string) {
+  try {
+    await sql`
+      DELETE FROM pickups
+      WHERE id = ${pickupId};
+    `;
+    revalidatePath("/dashboard/schedule");
+  } catch (error) {
+    console.error('error deleting pickup: ', error);
+    throw error;
+  }
+}
+
+export async function markPickupAbsence(pickupId: string, date: Date) {
+  try {
+    // Check if absence already exists
+    console.log(`checking existing absence for pickup ${pickupId} on date ${date.toISOString().split('T')[0]}`);
+    const existing = await sql`
+      SELECT id FROM pickup_absences
+      WHERE pickup_id = ${pickupId} AND date = ${date.toISOString().split('T')[0]};
+    `;
+    
+    if (existing.length === 0) {
+      console.log(`marking absence for pickup ${pickupId} on date ${date.toISOString().split('T')[0]}`);
+      await sql`
+        INSERT INTO pickup_absences (pickup_id, date)
+        VALUES (${pickupId}, ${date.toISOString().split('T')[0]});
+      `;
+    }
+    
+    revalidatePath("/dashboard/schedule");
+  } catch (error) {
+    console.error('error marking pickup absence: ', error);
+    throw error;
+  }
+}
+
+export async function unmarkPickupAbsence(pickupId: string, date: Date) {
+  try {
+    await sql`
+      DELETE FROM pickup_absences
+      WHERE pickup_id = ${pickupId} AND date = ${date.toISOString().split('T')[0]};
+    `;
+    
+    revalidatePath("/dashboard/schedule");
+  } catch (error) {
+    console.error('error unmarking pickup absence: ', error);
+    throw error;
+  }
+}
+
 const SlipInfoFormSchema = z.object({
   id: z.string(),
   user_id: z.string(),
@@ -508,5 +559,112 @@ export async function deleteSlipInfo(id: string){
     revalidatePath("/dashboard/printable");
   } catch (error) {
     console.error('Error deleting slip info:', error);
+  }
+}
+
+export async function assignStudentToScratchAccount(scratchUsername: string, studentId: string | null) {
+  try {
+    await sql`
+      UPDATE scratch_accounts
+      SET student_id = ${studentId}
+      WHERE username = ${scratchUsername};
+    `;
+    revalidatePath('/dashboard/scratch-accounts');
+  } catch (error) {
+    console.error('Error assigning student to scratch account:', error);
+    throw new Error('Failed to assign student to scratch account.');
+  }
+}
+
+export async function assignStudentToRobloxAccount(robloxUsername: string, studentId: string | null) {
+  try {
+    await sql`
+      UPDATE roblox_accounts
+      SET student_id = ${studentId}
+      WHERE username = ${robloxUsername};
+    `;
+    revalidatePath('/dashboard/scratch-accounts');
+  } catch (error) {
+    console.error('Error assigning student to roblox account:', error);
+    throw new Error('Failed to assign student to roblox account.');
+  }
+}
+
+export async function assignStudentToLaptop(laptopNumber: string, studentId: string | null) {
+  try {
+    await sql`
+      UPDATE laptop_assignments
+      SET student_id = ${studentId}
+      WHERE laptop_number = ${laptopNumber};
+    `;
+    revalidatePath('/dashboard/scratch-accounts');
+  } catch (error) {
+    console.error('Error assigning student to laptop:', error);
+    throw new Error('Failed to assign student to laptop.');
+  }
+}
+
+export async function createScratchAccount(username: string, password: string, studentId: string | null = null) {
+  try {
+    await sql`
+      INSERT INTO scratch_accounts (username, password, student_id)
+      VALUES (${username}, ${password}, ${studentId});
+    `;
+    revalidatePath('/dashboard/scratch-accounts');
+  } catch (error) {
+    console.error('Error creating scratch account:', error);
+    throw new Error('Failed to create scratch account.');
+  }
+}
+
+export async function createRobloxAccount(username: string, password: string, studentId: string | null = null) {
+  try {
+    await sql`
+      INSERT INTO roblox_accounts (username, password, student_id)
+      VALUES (${username}, ${password}, ${studentId});
+    `;
+    revalidatePath('/dashboard/scratch-accounts');
+  } catch (error) {
+    console.error('Error creating roblox account:', error);
+    throw new Error('Failed to create roblox account.');
+  }
+}
+
+export async function createLaptopAssignment(laptopNumber: string, studentId: string) {
+  try {
+    await sql`
+      INSERT INTO laptop_assignments (laptop_number, student_id)
+      VALUES (${laptopNumber}, ${studentId});
+    `;
+    revalidatePath('/dashboard/scratch-accounts');
+  } catch (error) {
+    console.error('Error creating laptop assignment:', error);
+    throw new Error('Failed to create laptop assignment.');
+  }
+}
+
+export async function createStudentNote(studentId: string, content: string, creator: string) {
+  try {
+    await sql`
+      INSERT INTO student_notes (student_id, content, creator, date)
+      VALUES (${studentId}, ${content}, ${creator}, NOW());
+    `;
+    revalidatePath('/dashboard/students');
+  } catch (error) {
+    console.error('Error creating student note:', error);
+    throw new Error('Failed to create student note.');
+  }
+}
+
+export async function deleteStudentNote(noteId: string) {
+  try {
+    await sql`
+      DELETE FROM student_notes
+      WHERE id = ${noteId};
+    `;
+    revalidatePath('/dashboard/students');
+  } catch (error) {
+    console.error('Error deleting student note:', error);
+    throw new Error('Failed to delete student note.');
   }
 }

@@ -138,6 +138,15 @@ export type Absence = {
   date: Date;
 }
 
+
+export type StudentNote = {
+  id: string;
+  student_id: string;
+  content: string;
+  date: Date;
+  creator: string;
+};
+
 // Formatted Data for display in Tables
 
 export type DisplayEnrolment = {
@@ -171,6 +180,12 @@ export type StudentTableData = {
   customer_name: string | null;
   enrolled_courses: DisplayEnrolment[];
   pickup_days: Pickup[];
+  recent_note?: {
+    id: string;
+    content: string;
+    date: Date;
+    creator: string;
+  } | null;
 };
 
 export type ScheduleRow = {
@@ -179,6 +194,12 @@ export type ScheduleRow = {
   student_id: string;
   course_name: string;
   absent?: boolean;
+  recent_note?: {
+    id: string;
+    content: string;
+    date: Date;
+    creator: string;
+  } | null;
 };
 
 export type MakeupRow = {
@@ -187,6 +208,12 @@ export type MakeupRow = {
   student_id: string;
   course_name: string;
   date: Date;
+  recent_note?: {
+    id: string;
+    content: string;
+    date: Date;
+    creator: string;
+  } | null;
 }
 
 export type TrialRow = {
@@ -223,5 +250,10 @@ export type PickupListDisplay = {
   invoice_id: string;
   name: string;
   absent: boolean;
-
+  recent_note?: {
+    id: string;
+    content: string;
+    date: Date;
+    creator: string;
+  } | null;
 }

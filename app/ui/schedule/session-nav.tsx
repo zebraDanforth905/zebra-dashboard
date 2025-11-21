@@ -45,6 +45,14 @@ export default function SessionNav({
                 )}>
                   {s.student_count ?? 0}
                 </span>
+
+                {(s.absences? s.absences > 0: s.absences)&&
+                <span className={clsx(
+                  "grid h-7 w-7 place-items-center rounded-lg text-xs bg-red-400",
+                )}>
+                  -{s.absences ?? 0}
+                </span>
+                }
                 
                 {(s.makeup_count? s.makeup_count > 0: s.makeup_count) &&
                 <span className={clsx(

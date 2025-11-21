@@ -153,14 +153,16 @@ export default function SlipForm (props: { slip_info?: SlipInfo }) {
         <div className="mt-4 space-y-[-5px]">
           {otherFields.map((field, index) => (
             <div className="flex flex-row items-center gap-2" key={index}>
-              <input 
-                className={labelClass + " border-b border-gray-400 print:border-0"} 
+              <div className={labelClass + " border-b border-gray-400 print:border-0 flex flex-row"} >
+              <input
+              className="w-fit"
                 value={field.key}
                 onChange={(e) => updateField(index, 'key', e.target.value)}
                 placeholder="Field name"
                 type="text" 
-              />
-              <div className={labelClass}>:</div>
+              /> 
+              </div>
+     
               
               <input 
                 className={valueClass + " flex-1 border-b border-gray-400 print:border-0"} 

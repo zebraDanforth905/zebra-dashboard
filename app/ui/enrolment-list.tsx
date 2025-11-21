@@ -46,28 +46,35 @@ export default async function EnrolmentList(props: { query: string; userId: stri
         {enrolments.map((enrolment) => {
           // Format other_fields with proper ordering and labels
           const fields: string[] = [];
+          const processedKeys = new Set<string>();
           
           if (enrolment.other_fields) {
             // Add Scratch fields in order (Login then Password)
             if (enrolment.other_fields['Scratch Login']) {
               fields.push(`Scratch Login: ${enrolment.other_fields['Scratch Login']}`);
+              processedKeys.add('Scratch Login');
               if (enrolment.other_fields['Scratch Password']) {
                 fields.push(`Password: ${enrolment.other_fields['Scratch Password']}`);
+                processedKeys.add('Scratch Password');
               }
             }
             
             // Add Roblox fields in order (Username then Password)
             if (enrolment.other_fields['Roblox Login']) {
               fields.push(`Roblox Login: ${enrolment.other_fields['Roblox Login']}`);
+              processedKeys.add('Roblox Login');
               if (enrolment.other_fields['Roblox Password']) {
                 fields.push(`Password: ${enrolment.other_fields['Roblox Password']}`);
+                processedKeys.add('Roblox Password');
               }
             }
             
-            // Add Laptop Number if present
-            if (enrolment.other_fields['Laptop Number']) {
-              fields.push(`Laptop Number: ${enrolment.other_fields['Laptop Number']}`);
-            }
+            // Add any other fields (like Laptop # or custom fields)
+            Object.entries(enrolment.other_fields).forEach(([key, value]) => {
+              if (!processedKeys.has(key) && value) {
+                fields.push(`${key}: ${value}`);
+              }
+            });
           }
           
           const otherFieldsString = fields.join('\n');

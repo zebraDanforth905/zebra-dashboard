@@ -2,8 +2,10 @@
 import Link from "next/link";
 import clsx from "clsx";
 import { fetchPickupsForDay } from "@/app/lib/data";
-import PickupTable from "@/app/ui/schedule/pickup-table";
+import PickupTableWrapper from "@/app/ui/schedule/pickup-table-wrapper";
 import { PickupListDisplay } from "@/app/lib/definitions";
+import AddPickupButton from "@/app/ui/schedule/add-pickup-button";
+import { auth } from "@/auth";
 
 const SCHOOLS: PickupListDisplay["school_name"][] = ["Frankland", "Jackman"];
 
@@ -23,6 +25,9 @@ export default async function Page(props: {
   const params = await props.params;
   const searchParams = await props.searchParams
 
+  const session = await auth();
+  const currentUserName = session?.user?.name || 'Unknown User';
+
   const activeSchool: PickupListDisplay["school_name"] =
     SCHOOLS.includes(((searchParams)?.school as any) || "")
       ? (searchParams?.school as PickupListDisplay["school_name"])
@@ -32,15 +37,18 @@ export default async function Page(props: {
 
   return (
     <div className="space-y-4">
-      {/* Little school nav above the table */}
-      <div className="flex items-center">
-        <h1 className="text-sm font-semibold text-slate-800">
+      {/* Header with Add Pickup button */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold text-slate-800">
           Pickups for {params?.weekday}
         </h1>
+        <AddPickupButton defaultWeekday={params?.weekday} />
+      </div>
+
+      {/* School nav and stats */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
-            <div className="text-xs text-slate-500">
-              Total: <span className="font-semibold">{pickups.length}</span>
-            </div>
+          <div className="text-xs text-slate-500">
+            Total: <span className="font-semibold">{pickups.length}</span>
           </div>
         <div className="inline-flex rounded-full bg-slate-100 p-1">
           
@@ -66,7 +74,7 @@ export default async function Page(props: {
       </div>
       
 
-      <PickupTable day={params?.weekday ?? 'Friday'} pickups={pickups} />
+      <PickupTableWrapper day={params?.weekday ?? 'Friday'} pickups={pickups} currentUserName={currentUserName} />
     </div>
   );
 }

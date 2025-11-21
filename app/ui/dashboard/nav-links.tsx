@@ -9,7 +9,8 @@ const links = [
   { name: 'Schedule', href: '/dashboard/schedule' },
   { name: 'Billing', href: '/dashboard/billing' },
   { name: 'Students', href: '/dashboard/students' },
-  {name: 'Slips', href: '/dashboard/printable' },
+  { name: 'Slips', href: '/dashboard/printable' },
+  { name: 'Accounts', href: '/dashboard/scratch-accounts' },
 ];
 
 export default function NavLinks() {

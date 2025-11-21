@@ -2,7 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo } from './definitions';
+import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -178,17 +178,31 @@ export async function fetchFilteredStudentsTable(
         ) AS pickup_days
       FROM pickups p
       GROUP BY p.student_id
+    ),
+    latest_note AS (
+      SELECT DISTINCT ON (sn.student_id)
+        sn.student_id,
+        JSONB_BUILD_OBJECT(
+          'id', sn.id,
+          'content', sn.content,
+          'date', sn.date,
+          'creator', sn.creator
+        ) AS recent_note
+      FROM student_notes sn
+      ORDER BY sn.student_id, sn.date DESC
     )
     SELECT
       s.id::text                                 AS id,
       s.name                                     AS name,
       c.name                                     AS customer_name,
       COALESCE(ec.enrolled_courses, '[]'::jsonb) AS enrolled_courses,
-      COALESCE(pd.pickup_days, '[]'::jsonb)      AS pickup_days
+      COALESCE(pd.pickup_days, '[]'::jsonb)      AS pickup_days,
+      ln.recent_note                             AS recent_note
     FROM students s
     LEFT JOIN customers c ON c.id = s.customer_id
     LEFT JOIN ec ON ec.student_id = s.id
     LEFT JOIN pd ON pd.student_id = s.id
+    LEFT JOIN latest_note ln ON ln.student_id = s.id
     WHERE s.name ILIKE '%' || ${query} || '%' OR c.name ILIKE '%' || ${query} || '%'
     ORDER BY ${sql(sortBy)} 
     LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset};
@@ -300,18 +314,38 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
 
     // Join absences ON the specific date and project a boolean
     const students = await sql<ScheduleRow[]>`
+      WITH latest_note AS (
+        SELECT DISTINCT ON (sn.student_id)
+          sn.student_id,
+          sn.id,
+          sn.content,
+          sn.date,
+          sn.creator
+        FROM student_notes sn
+        ORDER BY sn.student_id, sn.date DESC
+      )
       SELECT
         e.id AS enrolment_id,
         s.name,
         s.id as student_id,
         crs.name AS course_name,
-        (abs.enrolment_id IS NOT NULL) AS absent
+        (abs.enrolment_id IS NOT NULL) AS absent,
+        CASE 
+          WHEN ln.id IS NOT NULL THEN json_build_object(
+            'id', ln.id,
+            'content', ln.content,
+            'date', ln.date,
+            'creator', ln.creator
+          )
+          ELSE NULL
+        END AS recent_note
       FROM students s
       JOIN enrolments e ON e.student_id = s.id
       JOIN courses crs ON crs.id = e.course_id
       LEFT JOIN absences abs
         ON abs.enrolment_id = e.id
        AND abs.date = ${target}::date
+      LEFT JOIN latest_note ln ON ln.student_id = s.id
       WHERE e.session_id = ${sessionId}
       ORDER BY s.name;
     `;
@@ -345,10 +379,35 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
   const target = Y(targetDate);
 
   const students = await sql<MakeupRow[]>`
-    SELECT m.id AS makeup_id, s.name, s.id as student_id, crs.name AS course_name, m.date
+    WITH latest_note AS (
+      SELECT DISTINCT ON (sn.student_id)
+        sn.student_id,
+        sn.id,
+        sn.content,
+        sn.date,
+        sn.creator
+      FROM student_notes sn
+      ORDER BY sn.student_id, sn.date DESC
+    )
+    SELECT 
+      m.id AS makeup_id, 
+      s.name, 
+      s.id as student_id, 
+      crs.name AS course_name, 
+      m.date,
+      CASE 
+        WHEN ln.id IS NOT NULL THEN json_build_object(
+          'id', ln.id,
+          'content', ln.content,
+          'date', ln.date,
+          'creator', ln.creator
+        )
+        ELSE NULL
+      END AS recent_note
     FROM students s
     JOIN makeups m ON m.student_id = s.id
     JOIN courses crs ON crs.id = m.course_id
+    LEFT JOIN latest_note ln ON ln.student_id = s.id
     WHERE m.session_id = ${sessionId} AND m.date = ${target}
     ORDER BY m.date;
   `;
@@ -395,6 +454,13 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
   'use cache'
   
   try {
+        // Calculate target date if not provided
+        let targetDate = date;
+        if (!targetDate) {
+          targetDate = nextOccurrenceOf(day);
+        }
+        const target = Y(targetDate);
+
         const sessions = await sql<Session[]>
         `
           SELECT
@@ -404,7 +470,8 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             s.end_time,
             COALESCE(ec.student_count, 0) AS student_count,
             COALESCE(mc.makeup_count, 0)  AS makeup_count,
-            COALESCE(tc.trial_count, 0)   AS trial_count
+            COALESCE(tc.trial_count, 0)   AS trial_count,
+            COALESCE(ac.absence_count, 0) AS absences
           FROM sessions s
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS student_count
@@ -415,12 +482,21 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             SELECT COUNT(*) AS makeup_count
             FROM makeups m
             WHERE m.session_id = s.id
+              AND m.date = ${target}
           ) mc ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS trial_count
             FROM trials t
             WHERE t.session_id = s.id
+              AND t.date = ${target}
           ) tc ON true
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS absence_count
+            FROM absences a
+            JOIN enrolments e ON e.id = a.enrolment_id
+            WHERE e.session_id = s.id
+              AND a.date = ${target}
+          ) ac ON true
           WHERE s.weekday = ${day}
           ORDER BY s.start_time;
         `;
@@ -492,10 +568,33 @@ export async function fetchPickupsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday'
 
 
     const pickups = await sql<PickupListDisplay[]>`
-      SELECT p.*, s.name AS name, CASE WHEN pa.id IS NOT NULL THEN true ELSE false END AS absent
+      WITH latest_note AS (
+        SELECT DISTINCT ON (sn.student_id)
+          sn.student_id,
+          sn.id,
+          sn.content,
+          sn.date,
+          sn.creator
+        FROM student_notes sn
+        ORDER BY sn.student_id, sn.date DESC
+      )
+      SELECT 
+        p.*, 
+        s.name AS name, 
+        CASE WHEN pa.id IS NOT NULL THEN true ELSE false END AS absent,
+        CASE 
+          WHEN ln.id IS NOT NULL THEN json_build_object(
+            'id', ln.id,
+            'content', ln.content,
+            'date', ln.date,
+            'creator', ln.creator
+          )
+          ELSE NULL
+        END AS recent_note
       FROM pickups p
       LEFT JOIN students s ON p.student_id = s.id
       LEFT JOIN pickup_absences pa ON p.id = pa.pickup_id AND pa.date = ${target}
+      LEFT JOIN latest_note ln ON ln.student_id = s.id
       WHERE p.weekday = ${weekday} AND p.school_name=${school_name??'frankland'}
       ORDER BY p.school_name, s.name;
     `
@@ -505,6 +604,33 @@ export async function fetchPickupsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday'
     throw new Error('Failed to fetch session students.');
   }
 
+}
+
+export async function fetchPickupAbsencesForStudent(studentId: string) {
+  try {
+    const absences = await sql<{
+      id: string;
+      pickup_id: string;
+      date: Date;
+      weekday: string;
+      school_name: string;
+    }[]>`
+      SELECT 
+        pa.id,
+        pa.pickup_id,
+        pa.date,
+        p.weekday,
+        p.school_name
+      FROM pickup_absences pa
+      JOIN pickups p ON p.id = pa.pickup_id
+      WHERE p.student_id = ${studentId}
+      ORDER BY pa.date DESC;
+    `;
+    return absences;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch pickup absences.');
+  }
 }
 
 export async function fetchSlipInfoById(userId: string) {
@@ -572,50 +698,122 @@ export async function fetchFilteredEnrolments(query: string) {
   }
 }
 
-export async function fetchFilteredScratchAccounts(query: string, unassignedOnly: boolean) {
+export async function fetchAllAccountsManagement(query: string, unassignedOnly: boolean, currentPage: number = 1) {
   try {
+    const offset = (currentPage - 1) * ITEMS_PER_PAGE;
     const accounts = await sql<{
       username: string;
       password: string;
       student_id: string | null;
       student_name: string | null;
+      account_type: string;
     }[]>`
       SELECT 
         scr.username,
         scr.password,
         scr.student_id,
-        s.name AS student_name
+        s.name AS student_name,
+        'scratch' AS account_type
       FROM scratch_accounts scr
       LEFT JOIN students s ON s.id = scr.student_id
       WHERE 
         (scr.username ILIKE ${`%${query}%`}
         OR s.name ILIKE ${`%${query}%`})
         ${unassignedOnly ? sql`AND scr.student_id IS NULL` : sql``}
-      ORDER BY scr.username
-      LIMIT 50;
+      
+      UNION ALL
+      
+      SELECT 
+        rob.username,
+        rob.password,
+        rob.student_id,
+        s.name AS student_name,
+        'roblox' AS account_type
+      FROM roblox_accounts rob
+      LEFT JOIN students s ON s.id = rob.student_id
+      WHERE 
+        (rob.username ILIKE ${`%${query}%`}
+        OR s.name ILIKE ${`%${query}%`})
+        ${unassignedOnly ? sql`AND rob.student_id IS NULL` : sql``}
+      
+      UNION ALL
+      
+      SELECT 
+        lap.laptop_number AS username,
+        '' AS password,
+        lap.student_id,
+        s.name AS student_name,
+        'laptop' AS account_type
+      FROM laptop_assignments lap
+      LEFT JOIN students s ON s.id = lap.student_id
+      WHERE 
+        (lap.laptop_number ILIKE ${`%${query}%`}
+        OR s.name ILIKE ${`%${query}%`})
+        ${unassignedOnly ? sql`AND lap.student_id IS NULL` : sql``}
+      
+      ORDER BY account_type, username
+      LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset};
     `;
     return accounts;
   } catch (error) {
     console.error('Database Error:', error);
-    throw new Error('Failed to fetch scratch accounts.');
+    throw new Error('Failed to fetch accounts.');
+  }
+}
+
+export async function fetchAccountsManagementPages(query: string, unassignedOnly: boolean) {
+  try {
+    const data = await sql<{ count: number }[]>`
+      SELECT COUNT(*) FROM (
+        SELECT username FROM scratch_accounts scr
+        LEFT JOIN students s ON s.id = scr.student_id
+        WHERE 
+          (scr.username ILIKE ${`%${query}%`}
+          OR s.name ILIKE ${`%${query}%`})
+          ${unassignedOnly ? sql`AND scr.student_id IS NULL` : sql``}
+        
+        UNION ALL
+        
+        SELECT username FROM roblox_accounts rob
+        LEFT JOIN students s ON s.id = rob.student_id
+        WHERE 
+          (rob.username ILIKE ${`%${query}%`}
+          OR s.name ILIKE ${`%${query}%`})
+          ${unassignedOnly ? sql`AND rob.student_id IS NULL` : sql``}
+        
+        UNION ALL
+        
+        SELECT laptop_number AS username FROM laptop_assignments lap
+        LEFT JOIN students s ON s.id = lap.student_id
+        WHERE 
+          (lap.laptop_number ILIKE ${`%${query}%`}
+          OR s.name ILIKE ${`%${query}%`})
+          ${unassignedOnly ? sql`AND lap.student_id IS NULL` : sql``}
+      ) AS combined;
+    `;
+
+    const totalPages = Math.ceil(Number(data[0].count) / ITEMS_PER_PAGE);
+    return totalPages;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch accounts page count.');
   }
 }
 
 export async function fetchStudentsForAssignment(query: string) {
   try {
+    console.log('Fetching students for assignment with query:', query);
     const students = await sql<{
       id: string;
       name: string;
-      email: string;
     }[]>`
       SELECT 
         id,
-        name,
-        email
+        name
       FROM students
       WHERE 
         name ILIKE ${`%${query}%`}
-        OR email ILIKE ${`%${query}%`}
+        OR id::text ILIKE ${`%${query}%`}
       ORDER BY name
       LIMIT 20;
     `;
@@ -623,6 +821,26 @@ export async function fetchStudentsForAssignment(query: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch students for assignment.');
+  }
+}
+
+export async function fetchStudentNotes(studentId: string) {
+  try {
+    const notes = await sql<StudentNote[]>`
+      SELECT 
+        id,
+        student_id,
+        content,
+        date,
+        creator
+      FROM student_notes
+      WHERE student_id = ${studentId}
+      ORDER BY date DESC;
+    `;
+    return notes;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch student notes.');
   }
 }
 

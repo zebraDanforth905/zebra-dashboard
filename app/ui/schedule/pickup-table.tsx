@@ -3,20 +3,28 @@
 
 import clsx from "clsx";
 import { PickupListDisplay } from "@/app/lib/definitions";
+import StudentNoteCell from "../students/student-note-cell";
 
 type Props = {
   day: PickupListDisplay["weekday"];
   pickups: PickupListDisplay[];
-  onMarkAbsence?: (pickupId: string) => void;
-  onViewAbsences?: (studentId: string) => void;
+  currentUserName: string;
+  onManageAbsences?: (pickupId: string) => void;
   onDelete?: (pickupId: string) => void;
 };
+
+function capitalizeSchoolName(schoolName: string): string {
+  return schoolName
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
 
 export default function PickupTable({
   day,
   pickups,
-  onMarkAbsence,
-  onViewAbsences,
+  currentUserName,
+  onManageAbsences,
   onDelete,
 }: Props) {
   return (
@@ -37,6 +45,7 @@ export default function PickupTable({
                 <th className="px-4 py-2 text-left">Teacher / Room</th>
                 <th className="px-4 py-2 text-left">Waiver</th>
                 <th className="px-4 py-2 text-left">Status</th>
+                <th className="px-4 py-2 text-left">Note</th>
                 <th className="px-4 py-2 text-right">Actions</th>
               </tr>
             </thead>
@@ -59,7 +68,7 @@ export default function PickupTable({
                   </td>
                   <td className="px-4 py-2 align-middle">
                     <div className="font-medium text-slate-800">
-                      {p.school_name}
+                      {capitalizeSchoolName(p.school_name)}
                     </div>
                   </td>
                   <td className="px-4 py-2 align-middle">
@@ -94,22 +103,24 @@ export default function PickupTable({
                       {p.absent ? "Marked absent" : "Expected"}
                     </span>
                   </td>
+                  <td className="px-4 py-2 align-middle">
+                    <StudentNoteCell 
+                      student={{ 
+                        id: p.student_id, 
+                        name: p.name,
+                        recent_note: p.recent_note || null
+                      } as any} 
+                      currentUserName={currentUserName} 
+                    />
+                  </td>
                   <td className="px-4 py-2 align-middle text-right">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => onMarkAbsence?.(p.id)}
-                        className="inline-flex items-center rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300 disabled:opacity-60"
+                        onClick={() => onManageAbsences?.(p.id)}
+                        className="inline-flex items-center rounded-xl border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100 focus:outline-none focus:ring-2 focus:ring-purple-300 disabled:opacity-60"
                       >
-                        Mark absence
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onViewAbsences?.(p.student_id)}
-                        className="inline-flex items-center rounded-xl border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 hover:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:opacity-60"
-                      >
-                        View absences
+                        Manage absences
                       </button>
 
                       <button
