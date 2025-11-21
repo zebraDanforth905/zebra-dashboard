@@ -34,14 +34,14 @@ export default async function Page(props: {
   const isToday = selectedDate.toDateString() === new Date().toDateString();
 
   return (
-    <div className="m-6">
+    <div className="m-3 md:m-6">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4 md:mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">
+          <h1 className="text-xl md:text-2xl font-semibold text-slate-900">
             {isToday ? "Today's Overview" : "Daily Overview"}
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-xs md:text-sm text-slate-500 mt-1">
             {summary.weekday}, {summary.date.toLocaleDateString('en-US', { 
               month: 'long', 
               day: 'numeric', 
@@ -49,77 +49,77 @@ export default async function Page(props: {
             })}
           </p>
         </div>
-        <Suspense fallback={<div className="h-10 w-48 bg-slate-100 rounded-lg animate-pulse" />}>
+        <Suspense fallback={<div className="h-10 w-full sm:w-48 bg-slate-100 rounded-lg animate-pulse" />}>
           <DateSelector />
         </Suspense>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4 mb-4 md:mb-6">
         {/* Students */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-50 rounded-lg">
-              <UserGroupIcon className="h-5 w-5 text-green-600" />
+        <div className="bg-white rounded-lg md:rounded-xl border border-slate-200 p-3 md:p-4 shadow-sm">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="p-1.5 md:p-2 bg-green-50 rounded-lg">
+              <UserGroupIcon className="h-4 w-4 md:h-5 md:w-5 text-green-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">Students</p>
-              <p className="text-2xl font-semibold text-slate-900">{summary.totals.totalStudents}</p>
+              <p className="text-xl md:text-2xl font-semibold text-slate-900">{summary.totals.totalStudents}</p>
             </div>
           </div>
         </div>
 
         {/* Absences */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-red-50 rounded-lg">
-              <XMarkIcon className="h-5 w-5 text-red-600" />
+        <div className="bg-white rounded-lg md:rounded-xl border border-slate-200 p-3 md:p-4 shadow-sm">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="p-1.5 md:p-2 bg-red-50 rounded-lg">
+              <XMarkIcon className="h-4 w-4 md:h-5 md:w-5 text-red-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">Absences</p>
-              <p className="text-2xl font-semibold text-slate-900">{summary.totals.totalAbsences}</p>
+              <p className="text-xl md:text-2xl font-semibold text-slate-900">{summary.totals.totalAbsences}</p>
             </div>
           </div>
         </div>
 
         {/* Trials */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-yellow-50 rounded-lg">
-              <StarIcon className="h-5 w-5 text-yellow-600" />
+        <div className="bg-white rounded-lg md:rounded-xl border border-slate-200 p-3 md:p-4 shadow-sm">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="p-1.5 md:p-2 bg-yellow-50 rounded-lg">
+              <StarIcon className="h-4 w-4 md:h-5 md:w-5 text-yellow-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">Trials</p>
-              <p className="text-2xl font-semibold text-slate-900">{summary.totals.totalTrials}</p>
+              <p className="text-xl md:text-2xl font-semibold text-slate-900">{summary.totals.totalTrials}</p>
             </div>
           </div>
         </div>
 
         {/* Makeups */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-sky-50 rounded-lg">
-              <ArrowPathIcon className="h-5 w-5 text-sky-600" />
+        <div className="bg-white rounded-lg md:rounded-xl border border-slate-200 p-3 md:p-4 shadow-sm">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="p-1.5 md:p-2 bg-sky-50 rounded-lg">
+              <ArrowPathIcon className="h-4 w-4 md:h-5 md:w-5 text-sky-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">Makeups</p>
-              <p className="text-2xl font-semibold text-slate-900">{summary.totals.totalMakeups}</p>
+              <p className="text-xl md:text-2xl font-semibold text-slate-900">{summary.totals.totalMakeups}</p>
             </div>
           </div>
         </div>
 
         {/* Pickups */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-50 rounded-lg">
-              <TruckIcon className="h-5 w-5 text-purple-600" />
+        <div className="bg-white rounded-lg md:rounded-xl border border-slate-200 p-3 md:p-4 shadow-sm">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="p-1.5 md:p-2 bg-purple-50 rounded-lg">
+              <TruckIcon className="h-4 w-4 md:h-5 md:w-5 text-purple-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">Pickups</p>
-              <p className="text-2xl font-semibold text-slate-900">
+              <p className="text-xl md:text-2xl font-semibold text-slate-900">
                 {summary.totals.totalPickups}
                 {summary.totals.pickupAbsences > 0 && (
-                  <span className="text-sm text-red-600 ml-1">
+                  <span className="text-xs md:text-sm text-red-600 ml-1">
                     (-{summary.totals.pickupAbsences})
                   </span>
                 )}
@@ -129,15 +129,15 @@ export default async function Page(props: {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Sessions List */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
+        <div className="bg-white rounded-lg md:rounded-xl border border-slate-200 shadow-sm">
+          <div className="px-3 md:px-4 py-2 md:py-3 border-b border-slate-200 bg-slate-50">
             <h2 className="text-sm font-semibold text-slate-800">Sessions</h2>
           </div>
           <div className="divide-y divide-slate-100">
             {summary.sessions.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-slate-500">
+              <p className="px-3 md:px-4 py-4 md:py-6 text-center text-xs md:text-sm text-slate-500">
                 No sessions today
               </p>
             ) : (
@@ -145,14 +145,14 @@ export default async function Page(props: {
                 <div key={session.id} className="border-b border-slate-100 last:border-0">
                   <Link
                     href={`/dashboard/schedule/${session.weekday}/${session.id}`}
-                    className="block px-4 py-3 hover:bg-slate-50 transition-colors"
+                    className="block px-3 md:px-4 py-2 md:py-3 hover:bg-slate-50 transition-colors"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-900">
                           {hhmm(session.start_time)}–{hhmm(session.end_time)}
                         </p>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
                             {session.student_count} students
                           </span>
@@ -173,7 +173,7 @@ export default async function Page(props: {
                           )}
                         </div>
                       </div>
-                      <svg className="h-5 w-5 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="h-5 w-5 text-slate-400 flex-shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
                     </div>
@@ -183,7 +183,7 @@ export default async function Page(props: {
                   {(session.absent_students && session.absent_students.length > 0) ||
                    (session.trial_students && session.trial_students.length > 0) ||
                    (session.makeup_students && session.makeup_students.length > 0) ? (
-                    <div className="px-4 pb-3 space-y-3">
+                    <div className="px-3 md:px-4 pb-2 md:pb-3 space-y-2 md:space-y-3">
                       {/* Absences */}
                       {session.absent_students && session.absent_students.length > 0 && (
                         <div>
@@ -234,13 +234,13 @@ export default async function Page(props: {
         </div>
 
         {/* Pickups List */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
+        <div className="bg-white rounded-lg md:rounded-xl border border-slate-200 shadow-sm">
+          <div className="px-3 md:px-4 py-2 md:py-3 border-b border-slate-200 bg-slate-50">
             <h2 className="text-sm font-semibold text-slate-800">Pickups</h2>
           </div>
           <div>
             {summary.pickups.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-slate-500">
+              <p className="px-3 md:px-4 py-4 md:py-6 text-center text-xs md:text-sm text-slate-500">
                 No pickups today
               </p>
             ) : (
@@ -257,8 +257,8 @@ export default async function Page(props: {
                 return Object.entries(pickupsBySchool).map(([school, pickups], schoolIndex) => (
                   <div key={school}>
                     {/* School Header */}
-                    <div className="px-4 py-2 bg-slate-100 border-b border-slate-200">
-                      <h3 className="text-sm font-semibold text-slate-700 capitalize">{school}</h3>
+                    <div className="px-3 md:px-4 py-2 bg-slate-100 border-b border-slate-200">
+                      <h3 className="text-xs md:text-sm font-semibold text-slate-700 capitalize">{school}</h3>
                     </div>
                     
                     {/* Pickups for this school */}
@@ -266,12 +266,12 @@ export default async function Page(props: {
                       {pickups.map((pickup) => (
                         <div
                           key={pickup.id}
-                          className={`px-4 py-3 ${pickup.absent ? 'opacity-40' : ''}`}
+                          className={`px-3 md:px-4 py-2 md:py-3 ${pickup.absent ? 'opacity-40' : ''}`}
                         >
                           <div className="flex items-center justify-between">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className={`text-sm font-medium ${pickup.absent ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className={`text-xs md:text-sm font-medium ${pickup.absent ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
                                   {pickup.name}
                                 </p>
                                 {pickup.absent && (
@@ -280,7 +280,7 @@ export default async function Page(props: {
                                   </span>
                                 )}
                               </div>
-                              <div className="flex items-center gap-2 mt-1">
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 {pickup.teacher_name && (
                                   <span className="text-xs text-slate-500">
                                     {pickup.teacher_name}

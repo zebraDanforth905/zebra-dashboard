@@ -104,6 +104,7 @@ export async function assignStudent(formData: FormData) {
 
   revalidatePath('/dashboard/billing/'+ formData.get('customer_id') +'/edit');
   revalidatePath('/dashboard/billing');
+  revalidateTag('schedule', 'max')
   
 }
 
@@ -124,6 +125,7 @@ export async function unassignStudent(id: string) {
     // After unassignment, revalidate the customer edit page to reflect changes
     revalidatePath('/dashboard/billing/'+ id +'/edit');
     revalidatePath('/dashboard/billing');
+    revalidateTag('schedule', 'max')
 }
 
 export async function scrapeEnrolmentNow(opts?: {

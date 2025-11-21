@@ -193,6 +193,7 @@ export type ScheduleRow = {
   name: string;
   student_id: string;
   course_name: string;
+  parent_name: string;
   absent?: boolean;
   recent_note?: {
     id: string;

@@ -36,17 +36,17 @@ export default async function Page(props: {
   const pickups = await fetchPickupsForDay(params?.weekday ?? 'Friday', activeSchool);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 md:space-y-4">
       {/* Header with Add Pickup button */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <h1 className="text-base md:text-lg font-semibold text-slate-800">
           Pickups for {params?.weekday}
         </h1>
         <AddPickupButton defaultWeekday={params?.weekday} />
       </div>
 
       {/* School nav and stats */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-3 md:px-4 py-2 md:py-3 border-b border-slate-200 bg-slate-50 rounded-lg">
           <div className="text-xs text-slate-500">
             Total: <span className="font-semibold">{pickups.length}</span>
           </div>

@@ -329,6 +329,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
         s.name,
         s.id as student_id,
         crs.name AS course_name,
+        c.name AS parent_name,
         (abs.enrolment_id IS NOT NULL) AS absent,
         CASE 
           WHEN ln.id IS NOT NULL THEN json_build_object(
@@ -342,6 +343,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
       FROM students s
       JOIN enrolments e ON e.student_id = s.id
       JOIN courses crs ON crs.id = e.course_id
+      LEFT JOIN customers c ON c.id = s.customer_id
       LEFT JOIN absences abs
         ON abs.enrolment_id = e.id
        AND abs.date = ${target}::date
