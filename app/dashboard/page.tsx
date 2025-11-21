@@ -55,20 +55,7 @@ export default async function Page(props: {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-        {/* Sessions */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-50 rounded-lg">
-              <CalendarIcon className="h-5 w-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Sessions</p>
-              <p className="text-2xl font-semibold text-slate-900">{summary.totals.totalSessions}</p>
-            </div>
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
         {/* Students */}
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
           <div className="flex items-center gap-3">
