@@ -1,3 +1,5 @@
+import { userAgent } from "next/server";
+import { email } from "zod";
 
 const users = [
   // {
@@ -11,7 +13,20 @@ const users = [
     name: 'Taite Cullen',
     email: 'cullenta125@gmail.com',
     password: 'taite123',
+    user_type: 'admin',
   },
+  {
+    name: 'Kyle Newbigging',
+    email: 'kyle.newbigging@gmail.com',
+    password: 'kyle1234!',
+    user_type: 'admin',
+  },
+  {
+    name: 'Amanda Donleavy',
+    email: 'amanda.donleavy@zebrarobotics.com',
+    password: 'amanda123!',
+    user_type: 'admin',
+  }
 ];
 
 const customers= [

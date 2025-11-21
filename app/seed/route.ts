@@ -133,8 +133,8 @@ export async function GET() {
         const hashed = await bcrypt.hash(u.password, 10);
 
         await tx`
-          INSERT INTO users (name, email, password)
-          VALUES (${u.name}, ${u.email}, ${hashed})
+          INSERT INTO users (name, email, password, user_type)
+          VALUES (${u.name}, ${u.email}, ${hashed}, ${(u as any).user_type || 'user'})
           ON CONFLICT (id) DO NOTHING;
         `;
       }
