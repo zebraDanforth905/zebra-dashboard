@@ -33,7 +33,7 @@ export default function SideNav() {
       {/* Brand strip with gradient */}
       <Link
         className="mb-2 block overflow-hidden rounded-xl bg-gradient-to-r from-sky-600 via-sky-600 to-emerald-500 p-4 shadow-sm md:h-40"
-        href="/"
+        href="/dashboard"
       >
         <div className="relative h-20 md:h-32">
           <div className="pointer-events-none absolute inset-0 opacity-20">

@@ -108,3 +108,4 @@ export function nextOccurrenceOf(weekday: Weekday, from = new Date()): Date {
   dt.setDate(dt.getDate() + delta);
   return dt;
 }
+export function hhmm(t: string) { return t?.slice(0,5); }

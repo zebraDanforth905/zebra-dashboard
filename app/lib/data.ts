@@ -844,3 +844,157 @@ export async function fetchStudentNotes(studentId: string) {
   }
 }
 
+export async function fetchTodaySummary(date?: Date) {
+  'use cache'
+  try {
+    cacheTag('schedule')
+    
+    const today = date || new Date();
+    const weekday = WEEKDAYS[today.getDay()];
+    const target = Y(today);
+
+    // Get all sessions for today with detailed lists
+    const sessions = await sql<(Session & {
+      absent_students?: { name: string; course: string }[];
+      trial_students?: { name: string; course: string }[];
+      makeup_students?: { name: string; course: string }[];
+    })[]>`
+      SELECT
+        s.id,
+        s.weekday,
+        s.start_time,
+        s.end_time,
+        COALESCE(ec.student_count, 0)::int AS student_count,
+        COALESCE(mc.makeup_count, 0)::int  AS makeup_count,
+        COALESCE(tc.trial_count, 0)::int   AS trial_count,
+        COALESCE(ac.absence_count, 0)::int AS absences,
+        COALESCE(absent_list.students, '[]'::json) AS absent_students,
+        COALESCE(trial_list.students, '[]'::json) AS trial_students,
+        COALESCE(makeup_list.students, '[]'::json) AS makeup_students
+      FROM sessions s
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS student_count
+        FROM enrolments e
+        WHERE e.session_id = s.id
+      ) ec ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS makeup_count
+        FROM makeups m
+        WHERE m.session_id = s.id
+          AND m.date = ${target}
+      ) mc ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS trial_count
+        FROM trials t
+        WHERE t.session_id = s.id
+          AND t.date = ${target}
+      ) tc ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS absence_count
+        FROM absences a
+        JOIN enrolments e ON e.id = a.enrolment_id
+        WHERE e.session_id = s.id
+          AND a.date = ${target}
+      ) ac ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('name', st.name, 'course', c.name)) AS students
+        FROM absences a
+        JOIN enrolments e ON e.id = a.enrolment_id
+        JOIN students st ON st.id = e.student_id
+        JOIN courses c ON c.id = e.course_id
+        WHERE e.session_id = s.id AND a.date = ${target}
+      ) absent_list ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('name', t.name, 'course', c.name)) AS students
+        FROM trials t
+        JOIN courses c ON c.id = t.course_id
+        WHERE t.session_id = s.id AND t.date = ${target}
+      ) trial_list ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('name', st.name, 'course', c.name)) AS students
+        FROM makeups m
+        JOIN students st ON st.id = m.student_id
+        JOIN courses c ON c.id = m.course_id
+        WHERE m.session_id = s.id AND m.date = ${target}
+      ) makeup_list ON true
+      WHERE s.weekday = ${weekday}
+      ORDER BY s.start_time;
+    `;
+
+    // Get pickups for today
+    const pickups = await sql<PickupListDisplay[]>`
+      WITH latest_note AS (
+        SELECT DISTINCT ON (sn.student_id)
+          sn.student_id,
+          sn.id,
+          sn.content,
+          sn.date,
+          sn.creator
+        FROM student_notes sn
+        ORDER BY sn.student_id, sn.date DESC
+      )
+      SELECT 
+        p.*, 
+        s.name AS name, 
+        CASE WHEN pa.id IS NOT NULL THEN true ELSE false END AS absent,
+        CASE 
+          WHEN ln.id IS NOT NULL THEN json_build_object(
+            'id', ln.id,
+            'content', ln.content,
+            'date', ln.date,
+            'creator', ln.creator
+          )
+          ELSE NULL
+        END AS recent_note
+      FROM pickups p
+      JOIN students s ON s.id = p.student_id
+      LEFT JOIN pickup_absences pa ON pa.pickup_id = p.id AND pa.date = ${target}
+      LEFT JOIN latest_note ln ON ln.student_id = s.id
+      WHERE LOWER(p.weekday) = ${weekday.toLowerCase()}
+      ORDER BY p.school_name, s.name;
+    `;
+
+    // Calculate totals - ensure they're numbers
+    const totalStudents = sessions.reduce((sum, s) => sum + Number(s.student_count || 0), 0);
+    const totalAbsences = sessions.reduce((sum, s) => sum + Number(s.absences || 0), 0);
+    const totalTrials = sessions.reduce((sum, s) => sum + Number(s.trial_count || 0), 0);
+    const totalMakeups = sessions.reduce((sum, s) => sum + Number(s.makeup_count || 0), 0);
+
+    console.log('fetchTodaySummary debug:', {
+      target,
+      weekday,
+      sessionsCount: sessions.length,
+      firstSession: sessions[0] ? {
+        id: sessions[0].id,
+        time: `${sessions[0].start_time}-${sessions[0].end_time}`,
+        absences: sessions[0].absences,
+        absent_students: sessions[0].absent_students,
+        trial_students: sessions[0].trial_students,
+        makeup_students: sessions[0].makeup_students,
+      } : null
+    });
+
+    const totals = {
+      totalSessions: sessions.length,
+      totalStudents,
+      totalAbsences,
+      totalTrials,
+      totalMakeups,
+      totalPickups: pickups.length,
+      pickupAbsences: pickups.filter(p => p.absent).length,
+    };
+
+    return {
+      sessions,
+      pickups,
+      totals,
+      weekday,
+      date: today,
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch today summary.');
+  }
+}
+
+
