@@ -55,43 +55,42 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
         {makeups.map((student) => (
           <div
             key={student.makeup_id + student.name}
-            className="flex flex-col gap-2 px-3 md:px-4 py-2 text-sm bg-sky-50"
+            className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm bg-sky-50"
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-slate-900 truncate">
-                    {student.name}
-                  </span>
-                  <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800">
-                    Makeup
-                  </span>
-                </div>
-                <div className="text-xs text-slate-500 truncate">
-                  {student.course_name}
-                </div>
-                <div className="text-[11px] text-slate-400">
-                  {formatDate(student.date)}
-                </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-slate-900 truncate">
+                  {student.name}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800">
+                  Makeup
+                </span>
               </div>
+              <div className="text-xs text-slate-500 truncate">
+                {student.course_name}
+              </div>
+              <div className="text-[11px] text-slate-400">
+                {formatDate(student.date)}
+              </div>
+            </div>
 
+            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
+              <div className="w-full md:min-w-[250px]">
+                <StudentNoteCell 
+                  student={{ 
+                    id: student.student_id, 
+                    name: student.name,
+                    recent_note: student.recent_note || null
+                  } as any} 
+                  currentUserName={currentUserName} 
+                />
+              </div>
               <Link
                 href={`/dashboard/students/${student.student_id}/edit`}
                 className="inline-flex items-center rounded-xl border border-sky-500 px-2.5 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-300 flex-shrink-0"
               >
                 Edit
               </Link>
-            </div>
-
-            <div className="w-full">
-              <StudentNoteCell 
-                student={{ 
-                  id: student.student_id, 
-                  name: student.name,
-                  recent_note: student.recent_note || null
-                } as any} 
-                currentUserName={currentUserName} 
-              />
             </div>
           </div>
         ))}
@@ -101,49 +100,48 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
           <div
             key={student.enrolment_id}
             className={clsx(
-              "flex flex-col gap-2 px-3 md:px-4 py-2 text-sm",
+              "flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm",
               student.absent ? "bg-rose-50" : "bg-white"
             )}
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-slate-900 truncate">
-                    {student.name}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-slate-900 truncate">
+                  {student.name}
+                </span>
+                {student.parent_name && (
+                  <span className="text-xs text-slate-400 truncate">
+                    ({student.parent_name})
                   </span>
-                  {student.parent_name && (
-                    <span className="text-xs text-slate-400 truncate">
-                      ({student.parent_name})
-                    </span>
-                  )}
-                  {student.absent && (
-                    <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">
-                      Absent
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-500 truncate">
-                  {student.course_name}
-                </div>
+                )}
+                {student.absent && (
+                  <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">
+                    Absent
+                  </span>
+                )}
               </div>
+              <div className="text-xs text-slate-500 truncate">
+                {student.course_name}
+              </div>
+            </div>
 
+            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
+              <div className="w-full md:min-w-[250px]">
+                <StudentNoteCell 
+                  student={{ 
+                    id: student.student_id, 
+                    name: student.name,
+                    recent_note: student.recent_note || null
+                  } as any} 
+                  currentUserName={currentUserName} 
+                />
+              </div>
               <Link
                 href={`/dashboard/students/${student.student_id}/edit`}
                 className="inline-flex items-center rounded-xl border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-300 flex-shrink-0"
               >
                 Edit
               </Link>
-            </div>
-
-            <div className="w-full">
-              <StudentNoteCell 
-                student={{ 
-                  id: student.student_id, 
-                  name: student.name,
-                  recent_note: student.recent_note || null
-                } as any} 
-                currentUserName={currentUserName} 
-              />
             </div>
           </div>
         ))}
