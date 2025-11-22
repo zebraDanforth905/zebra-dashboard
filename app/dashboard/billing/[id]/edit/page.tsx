@@ -12,6 +12,7 @@ import CustomerSearchList from "@/app/ui/billing/customer-search-list";
 import RecurringInvoiceForm from "@/app/ui/billing/recurring-invoice-form";
 import { createRecurringInvoice } from "@/app/lib/actions";
 import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
+import EditCustomerName from "@/app/ui/billing/edit-customer-name";
 
 import { NewInvoiceButton, UnassignStudentButton } from "@/app/ui/buttons";
 
@@ -34,9 +35,18 @@ export default async function Page(props: {
       <CustomerSearchList query={query} id={id} />
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm ring-1 ring-slate-100 p-4">
-        <h1 className="text-2xl font-semibold text-slate-800 mb-4">
-          {customer ? customer.name : "Customer Not Found"}
-        </h1>
+        {customer ? (
+          <EditCustomerName 
+            customerId={customer.id}
+            initialName={customer.name}
+            initialEmail={customer.email}
+          />
+        ) : (
+          <h1 className="text-2xl font-semibold text-slate-800 mb-4">
+            Customer Not Found
+          </h1>
+        )}
+        
         <h2 className="text-lg font-medium text-slate-700 mb-2">Students:</h2>
 
           {customer && customer.students.length > 0 ? (

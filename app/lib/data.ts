@@ -11,7 +11,7 @@ const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"] as const;
 type Weekday = typeof WEEKDAYS[number];
 
-const ITEMS_PER_PAGE = 10;
+const ITEMS_PER_PAGE = 6;
 
 export async function fetchFilteredCustomers(
   query: string,
@@ -53,6 +53,23 @@ export async function fetchFilteredCustomers(
             AVG(amount) FILTER (WHERE status='scheduled') AS regular_payment_amount
         FROM payments GROUP BY customer_id 
         ),
+        crp AS (
+          SELECT customer_id, amount, next_payment, description
+          FROM (
+            SELECT
+              customer_id,
+              amount,
+              next_payment,
+              description,
+              ROW_NUMBER() OVER (
+                PARTITION BY customer_id
+                ORDER BY next_payment ASC
+              ) AS rn
+            FROM converge_recurring_payments
+            WHERE next_payment >= CURRENT_DATE
+          ) x
+          WHERE rn = 1
+        ),
         stu AS (
         SELECT
             customer_id,
@@ -71,12 +88,16 @@ export async function fetchFilteredCustomers(
         rec.next_invoice_date,
         rec.next_invoice_amount,
         pay.regular_payment_amount,
+        crp.amount AS next_recurring_payment_amount,
+        crp.next_payment AS next_recurring_payment_date,
+        crp.description AS next_recurring_payment_description,
         COALESCE(stu.students, '[]'::jsonb) AS students
         FROM customers c
         LEFT JOIN inv ON inv.customer_id = c.id
         LEFT JOIN pay ON pay.customer_id = c.id
         LEFT JOIN stu ON stu.customer_id = c.id
         LEFT JOIN rec ON rec.customer_id = c.id
+        LEFT JOIN crp ON crp.customer_id = c.id
         WHERE (c.name ILIKE '%' || ${query} || '%' OR c.email ILIKE '%' || ${query} || '%')
         ORDER BY ${sql(sortBy)} DESC
         LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset};
@@ -119,6 +140,49 @@ export async function fetchUnnassignedStudents(query: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch unassigned students.');
+  }
+}
+
+export async function fetchUnassignedStudentsWithEnrolments() {
+  try {
+    const students = await sql<{ 
+      id: string; 
+      name: string;
+      enrolments: Array<{
+        id: string;
+        course_name: string;
+        weekday: string;
+        start_time: string;
+        end_time: string;
+      }>;
+    }[]>`
+      SELECT 
+        s.id,
+        s.name,
+        COALESCE(
+          JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+              'id', e.id,
+              'course_name', crs.name,
+              'weekday', sess.weekday,
+              'start_time', sess.start_time,
+              'end_time', sess.end_time
+            ) ORDER BY sess.weekday, sess.start_time
+          ) FILTER (WHERE e.id IS NOT NULL),
+          '[]'::jsonb
+        ) AS enrolments
+      FROM students s
+      INNER JOIN enrolments e ON s.id = e.student_id
+      INNER JOIN courses crs ON e.course_id = crs.id
+      INNER JOIN sessions sess ON e.session_id = sess.id
+      WHERE s.customer_id IS NULL
+      GROUP BY s.id, s.name
+      ORDER BY s.name;
+    `
+    return students;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch unassigned students with enrolments.');
   }
 }
 

@@ -670,3 +670,247 @@ export async function deleteStudentNote(noteId: string) {
     throw new Error('Failed to delete student note.');
   }
 }
+
+type CSVRow = {
+  'Recurring ID': string;
+  'Amount': string;
+  'Billing Cycle': string;
+  'Last Name': string;
+  'Email': string;
+  'Phone': string;
+  'Exp Date': string;
+  'Start Date': string;
+  'Last Payment': string;
+  'Next Payment': string;
+  'Description': string;
+};
+
+type UnmatchedRecurring = {
+  recurring_id: string;
+  amount: number;
+  billing_cycle: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  exp_date: Date | null;
+  start_date: Date | null;
+  last_payment: Date | null;
+  next_payment: Date | null;
+  description: string;
+};
+
+export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ success: boolean; unmatched: UnmatchedRecurring[] }> {
+  try {
+    // Parse CSV content
+    const lines = csvContent.trim().split('\n');
+    const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+    
+    const unmatched: UnmatchedRecurring[] = [];
+    const recurringIdsInCSV: string[] = [];
+    let matchedCount = 0;
+
+    // Process each row
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+
+      // Parse CSV row (handle quoted fields)
+      const values: string[] = [];
+      let currentValue = '';
+      let insideQuotes = false;
+      
+      for (let char of lines[i]) {
+        if (char === '"') {
+          insideQuotes = !insideQuotes;
+        } else if (char === ',' && !insideQuotes) {
+          values.push(currentValue.trim());
+          currentValue = '';
+        } else {
+          currentValue += char;
+        }
+      }
+      values.push(currentValue.trim()); // Add last value
+
+      // Create row object
+      const row: any = {};
+      headers.forEach((header, idx) => {
+        row[header] = values[idx] || '';
+      });
+
+      const recurringId = row['Recurring ID'];
+      recurringIdsInCSV.push(recurringId);
+
+      // Parse dates (MM/YY format for exp_date, dates in other formats)
+      const parseExpDate = (dateStr: string): Date | null => {
+        if (!dateStr || !dateStr.trim()) return null;
+        try {
+          const [month, year] = dateStr.split('/');
+          const date = new Date(2000 + parseInt(year), parseInt(month) - 1, 1);
+          return isNaN(date.getTime()) ? null : date;
+        } catch {
+          return null;
+        }
+      };
+
+      const parseDate = (dateStr: string): Date | null => {
+        if (!dateStr || !dateStr.trim()) return null;
+        try {
+          const date = new Date(dateStr);
+          return isNaN(date.getTime()) ? null : date;
+        } catch {
+          return null;
+        }
+      };
+
+      const paymentData = {
+        amount: parseFloat(row['Amount']) || 0,
+        billing_cycle: row['Billing Cycle'],
+        last_name: row['Last Name'],
+        email: row['Email'],
+        phone: row['Phone'],
+        exp_date: parseExpDate(row['Exp Date']),
+        start_date: parseDate(row['Start Date']),
+        last_payment: parseDate(row['Last Payment']),
+        next_payment: parseDate(row['Next Payment']),
+        recurring_id: recurringId,
+        description: row['Description'],
+      };
+
+      // Check if this recurring_id already exists in the database
+      const existing = await sql`
+        SELECT customer_id FROM converge_recurring_payments
+        WHERE recurring_id = ${recurringId};
+      `;
+
+      if (existing.length > 0) {
+        // Recurring ID exists - update the row with new data, keeping the same customer_id
+        try {
+          await sql`
+            UPDATE converge_recurring_payments
+            SET 
+              amount = ${paymentData.amount},
+              billing_cycle = ${paymentData.billing_cycle},
+              last_name = ${paymentData.last_name},
+              email = ${paymentData.email},
+              phone = ${paymentData.phone},
+              exp_date = ${paymentData.exp_date},
+              start_date = ${paymentData.start_date},
+              last_payment = ${paymentData.last_payment},
+              next_payment = ${paymentData.next_payment},
+              description = ${paymentData.description}
+            WHERE recurring_id = ${recurringId};
+          `;
+          matchedCount++;
+        } catch (rowError) {
+          console.error(`Error updating recurring_id ${recurringId}:`, rowError);
+          unmatched.push(paymentData);
+        }
+      } else {
+        // Recurring ID doesn't exist - add to unmatched list for user to assign
+        unmatched.push(paymentData);
+      }
+    }
+
+    // Delete any recurring payments that are NOT in the CSV (cancelled/ended subscriptions)
+    if (recurringIdsInCSV.length > 0) {
+      try {
+        // Use UNNEST to properly handle array in NOT IN clause
+        const deleteResult = await sql`
+          DELETE FROM converge_recurring_payments
+          WHERE recurring_id NOT IN (
+            SELECT UNNEST(${recurringIdsInCSV}::text[])
+          )
+          RETURNING recurring_id;
+        `;
+        console.log(`Deleted ${deleteResult.length} recurring payments not in CSV`);
+      } catch (deleteError) {
+        console.error('Error deleting old recurring payments:', deleteError);
+      }
+    }
+
+    console.log(`Updated ${matchedCount} recurring payments, ${unmatched.length} unmatched`);
+    revalidatePath('/dashboard/billing');
+    
+    return { success: true, unmatched };
+  } catch (error) {
+    console.error('Error uploading recurring payments CSV:', error);
+    throw new Error('Failed to upload recurring payments CSV.');
+  }
+}
+
+export async function assignRecurringPaymentToCustomer(recurringId: string, customerId: string, paymentData: UnmatchedRecurring) {
+  try {
+    // Insert the new recurring payment for this customer
+    // (no UNIQUE constraint on customer_id, so customers can have multiple recurring payments)
+    await sql`
+      INSERT INTO converge_recurring_payments (
+        recurring_id, customer_id, amount, billing_cycle, last_name, 
+        email, phone, exp_date, start_date, last_payment, next_payment, description
+      ) VALUES (
+        ${recurringId}, ${customerId}, ${paymentData.amount}, ${paymentData.billing_cycle},
+        ${paymentData.last_name}, ${paymentData.email}, ${paymentData.phone},
+        ${paymentData.exp_date}, ${paymentData.start_date}, ${paymentData.last_payment},
+        ${paymentData.next_payment}, ${paymentData.description}
+      );
+    `;
+
+    revalidatePath('/dashboard/billing');
+  } catch (error) {
+    console.error('Error assigning recurring payment:', error);
+    throw new Error('Failed to assign recurring payment to customer.');
+  }
+}
+
+export async function createCustomer(name: string, email: string): Promise<{ id: string; name: string; email: string }> {
+  try {
+    if (!name || !name.trim()) {
+      throw new Error('Customer name is required');
+    }
+
+    const result = await sql<{ id: string; name: string; email: string }[]>`
+      INSERT INTO customers (name, email)
+      VALUES (${name.trim()}, ${email?.trim() || ''})
+      RETURNING id, name, email
+    `;
+
+    revalidatePath('/dashboard/billing');
+    return result[0];
+  } catch (error) {
+    console.error('Error creating customer:', error);
+    throw new Error('Failed to create customer.');
+  }
+}
+
+export async function assignStudentToCustomer(studentId: string, customerId: string) {
+  try {
+    await sql`
+      UPDATE students
+      SET customer_id = ${customerId}
+      WHERE id = ${studentId};
+    `;
+
+    revalidatePath('/dashboard/billing');
+  } catch (error) {
+    console.error('Error assigning student to customer:', error);
+    throw new Error('Failed to assign student to customer.');
+  }
+}
+
+export async function updateCustomer(customerId: string, name: string, email: string) {
+  try {
+    if (!name || !name.trim()) {
+      throw new Error('Customer name is required');
+    }
+
+    await sql`
+      UPDATE customers
+      SET name = ${name.trim()}, email = ${email?.trim() || ''}
+      WHERE id = ${customerId};
+    `;
+
+    revalidatePath('/dashboard/billing');
+    revalidatePath(`/dashboard/billing/${customerId}/edit`);
+  } catch (error) {
+    console.error('Error updating customer:', error);
+    throw new Error('Failed to update customer.');
+  }
+}

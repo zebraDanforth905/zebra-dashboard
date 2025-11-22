@@ -60,7 +60,17 @@ export default async function CustomerTable({ query, currentPage, sortBy, incDec
                     )}
                   </td>
                   <td className="relative px-2 py-2.5 text-right text-slate-700">
-                    
+                    {c.next_recurring_payment_date ? (
+                      <div className="flex flex-col items-end">
+                        <span className="font-medium">${Number(c.next_recurring_payment_amount).toFixed(2)}</span>
+                        <span className="text-xs text-slate-500">{formatDate(c.next_recurring_payment_date)}</span>
+                        {c.next_recurring_payment_description && (
+                          <span className="text-xs text-slate-400 italic">{c.next_recurring_payment_description}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-slate-400 italic text-xs">—</span>
+                    )}
                   </td>
                   <td className="relative px-2 py-2.5">
                   

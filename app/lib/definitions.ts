@@ -14,9 +14,21 @@ export type Customer = {
   id: string;
   name: string;
   email: string;
-  converge_setup_amount: number;
-  converge_setup_date: number;
-  converge_setup_desc: string;
+}
+
+export type ConvergeRecurringPayment = {
+    amount: number;
+    billing_cycle: string;
+    last_name: string;
+    email: string;
+    phone: string;
+    exp_date: Date;
+    start_date: Date;
+    last_payment: Date;
+    next_payment: Date;
+    recurring_id: string;
+    description: string;
+    customer_id: string;
 }
 
 export type Student = {
@@ -165,6 +177,9 @@ export type CustomerTableData = {
   next_invoice_date: Date | null;
   next_invoice_amount: number;
   regular_payment_amount: number;
+  next_recurring_payment_amount: number | null;
+  next_recurring_payment_date: Date | null;
+  next_recurring_payment_description: string | null;
   students: Student[];
 }
 

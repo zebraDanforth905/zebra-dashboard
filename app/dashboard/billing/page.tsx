@@ -2,8 +2,13 @@ import CustomerTable from "@/app/ui/billing/customer-table";
 import Search from "@/app/ui/search";
 import { Suspense } from "react";
 import Pagination from "@/app/ui/pagination";
-import { fetchCustomerPages } from "@/app/lib/data";
+import { fetchCustomerPages, fetchUnassignedStudentsWithEnrolments } from "@/app/lib/data";
+import { auth } from "@/auth";
+import RecurringCSVUpload from "@/app/ui/billing/recurring-csv-upload";
+import UnassignedStudents from "@/app/ui/billing/unassigned-students";
+import postgres from 'postgres';
 
+const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 export default async function Page(props: {
   searchParams?: Promise<{
@@ -21,21 +26,44 @@ export default async function Page(props: {
   const incDec = searchParams?.incDec || true;
   const totalPages = await fetchCustomerPages(query);
 
-  return (
-    <div className="m-6">
-      <div className="flex w-full items-center justify-between">
-        <h1 className={`text-2xl`}>Customers</h1>
-      </div>
+  // Check if user is admin
+  const session = await auth();
+  const isAdmin = (session?.user as any)?.user_type === 'admin';
 
-      <div className="my-4 flex items-center justify-between gap-2 md:mt-8">
-        <Search placeholder="Search invoices..." />
-        {/* <CreateInvoice /> */}
-      </div>
-       <Suspense key={query + currentPage}>
-        <CustomerTable query={query} currentPage={currentPage} sortBy={sortBy} incDec={incDec} />
-      </Suspense>
-      <div className="mt-5 flex w-full justify-center">
-        <Pagination totalPages={totalPages} />
+  // Fetch all customers for the CSV upload component and unassigned students
+  const customers = isAdmin ? await sql<{ id: string; name: string; email: string }[]>`
+    SELECT id, name, email FROM customers ORDER BY name;
+  ` : [];
+
+  const unassignedStudents = isAdmin ? await fetchUnassignedStudentsWithEnrolments() : [];
+
+  return (
+    <div className="m-3 md:m-6 space-y-6">
+      {/* CSV Upload Section - Admin Only */}
+      {isAdmin && (
+        <RecurringCSVUpload customers={customers} />
+      )}
+
+      {/* Unassigned Students Section - Admin Only */}
+      {isAdmin && unassignedStudents.length > 0 && (
+        <UnassignedStudents students={unassignedStudents} customers={customers} />
+      )}
+
+      {/* Customers Section */}
+      <div>
+        <div className="flex w-full items-center justify-between">
+          <h1 className="text-xl md:text-2xl font-semibold">Customers</h1>
+        </div>
+
+        <div className="my-4 flex items-center justify-between gap-2 md:mt-8">
+          <Search placeholder="Search customers..." />
+        </div>
+        <Suspense key={query + currentPage}>
+          <CustomerTable query={query} currentPage={currentPage} sortBy={sortBy} incDec={incDec} />
+        </Suspense>
+        <div className="mt-5 flex w-full justify-center">
+          <Pagination totalPages={totalPages} />
+        </div>
       </div>
     </div>
   );
