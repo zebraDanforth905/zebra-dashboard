@@ -99,6 +99,28 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
 
         const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));    // ints
         const keepSessions: string[] = keys.map(([, sessionId]) => sessionId);  // uuids
+        
+        // First, delete absences for enrolments that will be deleted
+        await tx`
+            WITH keep AS (
+                SELECT *
+                FROM UNNEST(${keepStudents}::int[], ${keepSessions}::uuid[])
+                AS t(student_id, session_id)
+            )
+            DELETE FROM absences
+            WHERE enrolment_id IN (
+                SELECT e.id
+                FROM enrolments e
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM keep k
+                    WHERE k.student_id = e.student_id
+                    AND k.session_id = e.session_id
+                )
+            );
+        `;
+        
+        // Then delete the enrolments
         await tx`
             WITH keep AS (
                 SELECT *
