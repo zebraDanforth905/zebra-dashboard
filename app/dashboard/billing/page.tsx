@@ -47,11 +47,7 @@ export default async function Page(props: {
         <RecurringCSVUpload customers={customers} />
       )}
 
-      {/* Unassigned Students Section - Admin Only */}
-      {isAdmin && unassignedStudents.length > 0 && (
-        <UnassignedStudents students={unassignedStudents} customers={customers} />
-      )}
-
+      
       {/* Customers Section */}
       <div>
         <div className="flex w-full items-center justify-between">
@@ -69,6 +65,12 @@ export default async function Page(props: {
           <Pagination totalPages={totalPages} />
         </div>
       </div>
+
+      {/* Unassigned Students Section - Admin Only */}
+      {isAdmin && unassignedStudents.length > 0 && (
+        <UnassignedStudents students={unassignedStudents} customers={customers} />
+      )}
+
     </div>
   );
 }
