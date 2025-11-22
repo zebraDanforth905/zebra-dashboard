@@ -914,3 +914,18 @@ export async function updateCustomer(customerId: string, name: string, email: st
     throw new Error('Failed to update customer.');
   }
 }
+
+export async function toggleCustomerQBO(customerId: string, currentValue: boolean) {
+  try {
+    await sql`
+      UPDATE customers
+      SET set_up_qbo = ${!currentValue}
+      WHERE id = ${customerId};
+    `;
+
+    revalidatePath('/dashboard/billing');
+  } catch (error) {
+    console.error('Error toggling QBO status:', error);
+    throw new Error('Failed to toggle QBO status.');
+  }
+}

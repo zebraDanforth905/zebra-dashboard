@@ -14,6 +14,7 @@ export type Customer = {
   id: string;
   name: string;
   email: string;
+  setup_up_qbo?: boolean;
 }
 
 export type ConvergeRecurringPayment = {
@@ -173,6 +174,7 @@ export type CustomerTableData = {
   id: string;
   name: string;
   email: string;
+  set_up_qbo?: boolean;
   total_due: number;
   next_invoice_date: Date | null;
   next_invoice_amount: number;

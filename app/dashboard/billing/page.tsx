@@ -6,6 +6,7 @@ import { fetchCustomerPages, fetchUnassignedStudentsWithEnrolments } from "@/app
 import { auth } from "@/auth";
 import RecurringCSVUpload from "@/app/ui/billing/recurring-csv-upload";
 import UnassignedStudents from "@/app/ui/billing/unassigned-students";
+import QBOFilter from "@/app/ui/billing/qbo-filter";
 import postgres from 'postgres';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
@@ -17,6 +18,7 @@ export default async function Page(props: {
     page?: string;
     sortBy?: string;
     incDec?: boolean;
+    qboFilter?: string;
   }>;
 }) {
   const searchParams = await props.searchParams;
@@ -24,7 +26,8 @@ export default async function Page(props: {
   const currentPage = Number(searchParams?.page) || 1;
   const sortBy = searchParams?.sortBy || 'c.name';
   const incDec = searchParams?.incDec || true;
-  const totalPages = await fetchCustomerPages(query);
+  const qboFilter = searchParams?.qboFilter;
+  const totalPages = await fetchCustomerPages(query, qboFilter);
 
   // Check if user is admin
   const session = await auth();
@@ -57,9 +60,10 @@ export default async function Page(props: {
 
         <div className="my-4 flex items-center justify-between gap-2 md:mt-8">
           <Search placeholder="Search customers..." />
+          <QBOFilter />
         </div>
-        <Suspense key={query + currentPage}>
-          <CustomerTable query={query} currentPage={currentPage} sortBy={sortBy} incDec={incDec} />
+        <Suspense key={query + currentPage + qboFilter}>
+          <CustomerTable query={query} currentPage={currentPage} sortBy={sortBy} incDec={incDec} qboFilter={qboFilter} />
         </Suspense>
         <div className="mt-5 flex w-full justify-center">
           <Pagination totalPages={totalPages} />

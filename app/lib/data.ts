@@ -18,9 +18,20 @@ export async function fetchFilteredCustomers(
   currentPage: number,
   sortBy: string,
   incDec: boolean,
+  qboFilter?: string,
 ) {
 
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+  
+  // Build WHERE clause based on filters
+  let whereConditions = sql`(c.name ILIKE '%' || ${query} || '%' OR c.email ILIKE '%' || ${query} || '%')`;
+  
+  if (qboFilter === 'setup') {
+    whereConditions = sql`${whereConditions} AND c.set_up_qbo = true`;
+  } else if (qboFilter === 'not-setup') {
+    whereConditions = sql`${whereConditions} AND (c.set_up_qbo = false OR c.set_up_qbo IS NULL)`;
+  }
+  
   try {
     const customers = await sql<CustomerTableData[]>`
     WITH inv AS (
@@ -84,6 +95,7 @@ export async function fetchFilteredCustomers(
         c.id,
         c.name,
         c.email,
+        c.set_up_qbo,
         COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0) AS total_due,
         rec.next_invoice_date,
         rec.next_invoice_amount,
@@ -98,7 +110,7 @@ export async function fetchFilteredCustomers(
         LEFT JOIN stu ON stu.customer_id = c.id
         LEFT JOIN rec ON rec.customer_id = c.id
         LEFT JOIN crp ON crp.customer_id = c.id
-        WHERE (c.name ILIKE '%' || ${query} || '%' OR c.email ILIKE '%' || ${query} || '%')
+        WHERE ${whereConditions}
         ORDER BY ${sql(sortBy)} DESC
         LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset};
         `
@@ -112,13 +124,19 @@ export async function fetchFilteredCustomers(
   }
 }
 
-export async function fetchCustomerPages(query: string) {
+export async function fetchCustomerPages(query: string, qboFilter?: string) {
   try {
+    let whereConditions = sql`(customers.name ILIKE ${`%${query}%`} OR customers.email ILIKE ${`%${query}%`})`;
+    
+    if (qboFilter === 'setup') {
+      whereConditions = sql`${whereConditions} AND customers.set_up_qbo = true`;
+    } else if (qboFilter === 'not-setup') {
+      whereConditions = sql`${whereConditions} AND (customers.set_up_qbo = false OR customers.set_up_qbo IS NULL)`;
+    }
+    
     const data = await sql`SELECT COUNT(*)
     FROM customers
-    WHERE
-      customers.name ILIKE ${`%${query}%`} OR
-      customers.email ILIKE ${`%${query}%`}
+    WHERE ${whereConditions}
   `;
 
     const totalPages = Math.ceil(Number(data[0].count) / ITEMS_PER_PAGE);
