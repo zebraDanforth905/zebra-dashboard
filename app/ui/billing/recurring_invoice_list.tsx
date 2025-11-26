@@ -23,10 +23,12 @@ type Props = {
 export default function RecurringInvoiceTable({ customerId, initialInvoices }: Props) {
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
 
+  
   const editingInvoice = editingInvoiceId
     ? initialInvoices.find((inv) => inv.id === editingInvoiceId)
     : null;
 
+  
   if (!initialInvoices.length) {
     return (
       <div>
@@ -120,8 +122,8 @@ export default function RecurringInvoiceTable({ customerId, initialInvoices }: P
           invoice={{
             id: editingInvoice.id,
             amount: editingInvoice.amount,
-            day_of_month: editingInvoice.day_of_month,
-            every: editingInvoice.every,
+            day_of_month: Number(editingInvoice.day_of_month),
+            every: Number(editingInvoice.every),
             start_date: editingInvoice.start_date,
             end_after: editingInvoice.end_after,
             description: editingInvoice.description,

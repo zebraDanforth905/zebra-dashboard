@@ -979,6 +979,8 @@ export async function fetchRecurringInvoicesByCustomer(customerId: string){
       WHERE customer_id = ${customerId}
       ORDER BY next_date;
     `
+
+   
     return recurring;
   }catch (error){
     console.error('Database Error: ', error);
