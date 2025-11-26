@@ -54,10 +54,15 @@ export default function RecurringInvoiceTable({ customerId, initialInvoices }: P
 
           <tbody className="divide-y divide-slate-100">
             {initialInvoices.map((inv) => {
-              const dayOfMonthSuffix = 
-                inv.day_of_month === 1 ? 'st' :
-                inv.day_of_month === 2 ? 'nd' :
-                inv.day_of_month === 3 ? 'rd' : 'th';
+              const getDaySuffix = (day: number) => {
+                if (day >= 11 && day <= 13) return 'th';
+                const lastDigit = day % 10;
+                if (lastDigit === 1) return 'st';
+                if (lastDigit === 2) return 'nd';
+                if (lastDigit === 3) return 'rd';
+                return 'th';
+              };
+              const dayOfMonthSuffix = getDaySuffix(inv.day_of_month);
 
               return (
                 <tr key={inv.id}>

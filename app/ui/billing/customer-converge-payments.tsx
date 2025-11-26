@@ -1,4 +1,5 @@
 import { formatDate } from '@/app/lib/utils';
+import clsx from 'clsx';
 
 interface ConvergePayment {
   recurring_id: string;
@@ -32,7 +33,7 @@ export default function CustomerConvergePayments({ payments }: CustomerConvergeP
     <div className="space-y-3">
       {payments.map((payment) => {
         const isExpiringSoon = payment.exp_date && new Date(payment.exp_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        
+        const isExpired = payment.exp_date && new Date(payment.exp_date) < new Date();
         return (
           <div key={payment.recurring_id} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
             <div className="flex items-start justify-between mb-2">
@@ -45,8 +46,8 @@ export default function CustomerConvergePayments({ payments }: CustomerConvergeP
                 )}
               </div>
               {isExpiringSoon && (
-                <span className="inline-flex px-2 py-0.5 text-[10px] font-medium rounded-full bg-orange-50 text-orange-700 border border-orange-200">
-                  Expiring Soon
+                <span className={clsx("inline-flex px-2 py-0.5 text-[10px] font-medium rounded-full ", isExpired ? "bg-red-50 text-red-700 border border-red-200" : "bg-orange-50 text-orange-700 border border-orange-200")}>
+                  {isExpired ? 'Expired' : 'Expiring Soon'}
                 </span>
               )}
             </div>
