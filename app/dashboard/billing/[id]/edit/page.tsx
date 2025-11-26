@@ -5,12 +5,13 @@ import AddStudentButton from "@/app/ui/billing/add-student-button";
 
 // app/dashboard/billing/[id]/edit/page.tsx
 import Link from "next/link";
-import { fetchCustomerById, fetchRecurringInvoicesByCustomer, fetchUnnassignedStudents, fetchCustomerInvoices } from "@/app/lib/data";
+import { fetchCustomerById, fetchRecurringInvoicesByCustomer, fetchCustomerInvoices, fetchCustomerStudentsEnrolments } from "@/app/lib/data";
 import CustomerSearchList from "@/app/ui/billing/customer-search-list";
 import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
 import EditCustomerName from "@/app/ui/billing/edit-customer-name";
 import { UnassignStudentButton } from "@/app/ui/buttons";
 import InvoiceTable from "@/app/ui/billing/invoice-table";
+import CustomerStudentsSummary from "@/app/ui/billing/customer-students-summary";
 
 export default async function Page(props: {
   params: Promise<{ id: string }>;
@@ -24,8 +25,8 @@ export default async function Page(props: {
 
   const customer = await fetchCustomerById(id || " ");
   const invoices = await fetchRecurringInvoicesByCustomer(id);
-  const unassignedStudents = await fetchUnnassignedStudents(''); // Fetch all unassigned students
   const customerInvoices = await fetchCustomerInvoices(id); // Fetch customer invoices
+  const studentsEnrolments = await fetchCustomerStudentsEnrolments(id); // Fetch enrolments and pickups
 
 
   return (
@@ -47,35 +48,15 @@ export default async function Page(props: {
         
         <h2 className="text-lg font-medium text-slate-700 mb-2">Students:</h2>
 
-          {customer && customer.students.length > 0 ? (
-            customer.students.map((student) => (
-              <div key={student.id} className="flex items-center justify-between border-b border-slate-200">
-              <Link
-                
-                href={`/dashboard/students/${student.id}/edit`}
-                className="block"
-              >
-
-              <div key={student.id} className="py-2 px-4 last:border-0 flex justify-between">
-                <div>
-                  <div className="font-medium text-slate-800">{student.name}</div>
-                </div>
-              </div>
-              
-              </Link>
-
-              <UnassignStudentButton id={student.id} />
-               </div>
-            ))
-          ) : (
-            <div className="text-sm text-slate-500 px-2 py-2">No students enrolled.</div>
-          )}
-        <AddStudentButton customerId={id || ''} allStudents={unassignedStudents} />
+        <AddStudentButton customerId={id || ''} />
+        
+        <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Student Activities:</h2>
+        <CustomerStudentsSummary students={studentsEnrolments} />
+        
         <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Recurring Invoices:</h2>
           
         <RecurringInvoiceTable customerId={id} initialInvoices={invoices} />
 
-        <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Manual Invoices:</h2>
         <InvoiceTable customerId={id} initialInvoices={customerInvoices} />
         
       </section>

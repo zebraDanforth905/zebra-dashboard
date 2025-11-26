@@ -11,27 +11,41 @@ type Student = {
 
 type Props = {
   customerId: string;
-  allStudents: Student[];
 };
 
-export default function AddStudentButton({ customerId, allStudents }: Props) {
+export default function AddStudentButton({ customerId }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Filter students based on search term
+  // Fetch students based on search term
   useEffect(() => {
     if (searchTerm.trim().length === 0) {
       setFilteredStudents([]);
-    } else {
-      const filtered = allStudents.filter(student =>
-        student.name.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-      setFilteredStudents(filtered.slice(0, 10)); // Limit to 10 results
+      return;
     }
-  }, [searchTerm, allStudents]);
+
+    const fetchStudents = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`/api/unassigned-students?query=${encodeURIComponent(searchTerm)}`);
+        if (response.ok) {
+          const students = await response.json();
+          setFilteredStudents(students.slice(0, 10)); // Limit to 10 results
+        }
+      } catch (error) {
+        console.error('Error fetching students:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(fetchStudents, 300);
+    return () => clearTimeout(debounceTimer);
+  }, [searchTerm]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -94,7 +108,11 @@ export default function AddStudentButton({ customerId, allStudents }: Props) {
           {/* Results */}
           {searchTerm.length > 0 && (
             <div className="max-h-48 overflow-y-auto border border-slate-200 rounded">
-              {filteredStudents.length > 0 ? (
+              {isLoading ? (
+                <div className="px-2 py-3 text-xs text-slate-500 text-center">
+                  Loading...
+                </div>
+              ) : filteredStudents.length > 0 ? (
                 <ul className="divide-y divide-slate-100">
                   {filteredStudents.map((student) => (
                     <li key={student.id}>

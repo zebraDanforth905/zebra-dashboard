@@ -371,6 +371,99 @@ export async function fetchCustomerById(customerId: string | "") {
   }
 }
 
+export async function fetchCustomerStudentsEnrolments(customerId: string) {
+  try {
+    const result = await sql<Array<{
+      student_id: string;
+      student_name: string;
+      enrolments: Array<{
+        course_name: string;
+        weekday: string;
+        start_time: string;
+        end_time: string;
+      }>;
+      pickups: Array<{
+        weekday: string;
+        school_name: string;
+      }>;
+    }>>`
+      SELECT 
+        s.id AS student_id,
+        s.name AS student_name,
+        COALESCE(
+          JSON_AGG(
+            DISTINCT JSONB_BUILD_OBJECT(
+              'course_name', c.name,
+              'weekday', ses.weekday,
+              'start_time', ses.start_time,
+              'end_time', ses.end_time
+            )
+          ) FILTER (WHERE e.id IS NOT NULL),
+          '[]'
+        ) AS enrolments,
+        COALESCE(
+          JSON_AGG(
+            DISTINCT JSONB_BUILD_OBJECT(
+              'weekday', p.weekday,
+              'school_name', p.school_name
+            )
+          ) FILTER (WHERE p.id IS NOT NULL),
+          '[]'
+        ) AS pickups
+      FROM students s
+      LEFT JOIN enrolments e ON e.student_id = s.id
+      LEFT JOIN courses c ON c.id = e.course_id
+      LEFT JOIN sessions ses ON ses.id = e.session_id
+      LEFT JOIN pickups p ON p.student_id = s.id
+      WHERE s.customer_id = ${customerId}
+      GROUP BY s.id, s.name
+      ORDER BY s.name
+    `;
+    
+    return result;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch customer students enrolments.');
+  }
+}
+
+export async function fetchExpiringCards() {
+  try {
+    // Fetch cards expiring in the next 60 days
+    const result = await sql<Array<{
+      recurring_id: string;
+      customer_id: string;
+      customer_name: string;
+      customer_email: string;
+      exp_date: string;
+      amount: string;
+      billing_cycle: string;
+      days_until_expiry: number;
+    }>>`
+      SELECT 
+        crp.recurring_id,
+        crp.customer_id,
+        c.name AS customer_name,
+        c.email AS customer_email,
+        crp.exp_date,
+        crp.amount,
+        crp.billing_cycle,
+        (crp.exp_date - CURRENT_DATE) AS days_until_expiry
+      FROM converge_recurring_payments crp
+      JOIN customers c ON c.id = crp.customer_id
+      WHERE crp.exp_date IS NOT NULL
+        AND crp.exp_date <= CURRENT_DATE + INTERVAL '60 days'
+        AND crp.exp_date >= CURRENT_DATE
+      ORDER BY crp.exp_date ASC
+    `;
+    
+    return result;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch expiring cards.');
+  }
+}
+
 
 const Y = (d: Date) => d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
 

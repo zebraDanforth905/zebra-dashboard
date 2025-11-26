@@ -121,18 +121,28 @@ export async function unassignStudent(id: string) {
   if (!id) return; 
   
   try {
+    // First, get the customer_id before unassigning
+    const result = await sql<{ customer_id: string }[]>`
+      SELECT customer_id FROM students WHERE id = ${Number(id)}
+    `;
+    const customerId = result[0]?.customer_id;
+    
+    // Now unassign the student
     await sql`
       UPDATE students
         SET customer_id = NULL
         WHERE id = ${Number(id)}
       ;`;
+      
+    // Revalidate the customer's edit page if they had a customer
+    if (customerId) {
+      revalidatePath(`/dashboard/billing/${customerId}/edit`);
+    }
+    revalidatePath('/dashboard/billing');
+    revalidateTag('schedule', 'max');
     } catch (error) {
       console.error('Error unassigning student:', error);
     }
-    // After unassignment, revalidate the customer edit page to reflect changes
-    revalidatePath('/dashboard/billing/'+ id +'/edit');
-    revalidatePath('/dashboard/billing');
-    revalidateTag('schedule', 'max')
 }
 
 export async function scrapeEnrolmentNow(opts?: {
@@ -893,8 +903,7 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
       const parseExpDate = (dateStr: string): Date | null => {
         if (!dateStr || !dateStr.trim()) return null;
         try {
-          const [month, year] = dateStr.split('/');
-          const date = new Date(2000 + parseInt(year), parseInt(month) - 1, 1);
+          const date = new Date(2000 + parseInt(dateStr.substring(dateStr.length - 2)), parseInt(dateStr.substring(0, dateStr.length-2)) - 1, 1);
           return isNaN(date.getTime()) ? null : date;
         } catch {
           return null;

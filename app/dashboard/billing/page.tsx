@@ -2,11 +2,12 @@ import CustomerTable from "@/app/ui/billing/customer-table";
 import Search from "@/app/ui/search";
 import { Suspense } from "react";
 import Pagination from "@/app/ui/pagination";
-import { fetchCustomerPages, fetchUnassignedStudentsWithEnrolments } from "@/app/lib/data";
+import { fetchCustomerPages, fetchUnassignedStudentsWithEnrolments, fetchExpiringCards } from "@/app/lib/data";
 import { auth } from "@/auth";
 import CSVUploadSection from "@/app/ui/billing/csv-upload-section";
 import UnassignedStudents from "@/app/ui/billing/unassigned-students";
 import QBOFilter from "@/app/ui/billing/qbo-filter";
+import ExpiringCardsAlert from "@/app/ui/billing/expiring-cards-alert";
 import postgres from 'postgres';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
@@ -40,8 +41,16 @@ export default async function Page(props: {
 
   const unassignedStudents = isAdmin ? await fetchUnassignedStudentsWithEnrolments() : [];
 
+  // Fetch expiring cards
+  const expiringCards = await fetchExpiringCards();
+
   return (
     <div className="m-2 md:m-4 space-y-3">
+      {/* Expiring Cards Alert */}
+      {expiringCards.length > 0 && (
+        <ExpiringCardsAlert expiringCards={expiringCards} />
+      )}
+
       {/* CSV Upload Section - Admin Only */}
       {isAdmin && (
         <CSVUploadSection customers={customers} />
