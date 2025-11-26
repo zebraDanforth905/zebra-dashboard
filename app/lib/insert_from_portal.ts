@@ -41,7 +41,7 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
   await sql.begin(async (tx) => {
 
     for (const r of rows) {
-      console.log(r.student_id, r.name, r.day, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date);
+      console.log(r.student_id, r.name, r.day, r.start_date, r.end_date, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date);
       const sessionId = await getSessionId(tx, r.day, r.start_time, r.end_time);
 
       // student
@@ -83,10 +83,10 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
         seenRegular = true;
         seenEnroll.add(`${r.student_id}|${sessionId}`);
         await tx`
-          INSERT INTO enrolments (student_id, course_id, session_id)
-          VALUES (${r.student_id}, ${r.course_code}, ${sessionId})
+          INSERT INTO enrolments (student_id, course_id, session_id, start_date, end_date)
+          VALUES (${r.student_id}, ${r.course_code}, ${sessionId}, ${r.start_date}::date, ${r.end_date}::date)
           ON CONFLICT (student_id, session_id) DO UPDATE
-            SET course_id = EXCLUDED.course_id;
+            SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date;
         `;
       }
     }

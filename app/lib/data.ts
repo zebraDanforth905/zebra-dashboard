@@ -144,22 +144,32 @@ export async function fetchFilteredCustomers(
         ),
         stu AS (
         SELECT
-            s.customer_id,
+            student_agg.customer_id,
             COALESCE(
-            JSONB_AGG(
-              JSONB_BUILD_OBJECT(
-                'id', s.id, 
-                'name', s.name,
-                'has_activity', CASE WHEN (e.id IS NOT NULL OR p.id IS NOT NULL) THEN true ELSE false END
-              ) ORDER BY s.name
-            ),
-            '[]'::jsonb
+              JSONB_AGG(
+                JSONB_BUILD_OBJECT(
+                  'id', student_agg.id, 
+                  'name', student_agg.name,
+                  'has_activity', student_agg.has_activity,
+                  'has_upcoming_start', student_agg.has_upcoming_start
+                ) ORDER BY student_agg.name
+              ),
+              '[]'::jsonb
             ) AS students,
-            COUNT(*) FILTER (WHERE e.id IS NOT NULL OR p.id IS NOT NULL) AS active_students_count
-        FROM students s
-        LEFT JOIN enrolments e ON e.student_id = s.id
-        LEFT JOIN pickups p ON p.student_id = s.id
-        GROUP BY s.customer_id
+            COUNT(*) FILTER (WHERE student_agg.has_activity = true) AS active_students_count
+        FROM (
+          SELECT
+            s.id,
+            s.customer_id,
+            s.name,
+            CASE WHEN (COUNT(e.id) > 0 OR COUNT(p.id) > 0) THEN true ELSE false END AS has_activity,
+            CASE WHEN (MIN(e.start_date) FILTER (WHERE e.start_date > CURRENT_DATE) IS NOT NULL) THEN true ELSE false END AS has_upcoming_start
+          FROM students s
+          LEFT JOIN enrolments e ON e.student_id = s.id
+          LEFT JOIN pickups p ON p.student_id = s.id
+          GROUP BY s.id, s.customer_id, s.name
+        ) student_agg
+        GROUP BY student_agg.customer_id
         ),
         latest_customer_note AS (
           SELECT DISTINCT ON (cn.customer_id)
@@ -596,7 +606,8 @@ export async function fetchCustomerStudentsEnrolments(customerId: string) {
               'course_name', c.name,
               'weekday', ses.weekday,
               'start_time', ses.start_time,
-              'end_time', ses.end_time
+              'end_time', ses.end_time,
+              'start_date', e.start_date
             )
           ) FILTER (WHERE e.id IS NOT NULL),
           '[]'
@@ -794,6 +805,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
        AND abs.date = ${target}::date
       LEFT JOIN latest_note ln ON ln.student_id = s.id
       WHERE e.session_id = ${sessionId}
+        AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
       ORDER BY s.name;
     `;
 

@@ -30,6 +30,8 @@ export function normalizeEnrolmentRows(rows: any[]) {
   return rows.flatMap((r) => {
 
     const day = (r.day || "").toString().trim(); // "Monday"
+    const start_date = (r.start_date || "").toString().trim(); // "YYYY-MM-DD"
+    const end_date = (r.end_date ? r.end_date.toString().trim() : null);     // "YYYY-MM-DD"
     const start = toHMS(r.start_time);
     const end   = toHMS(r.end_time);
     const full  = (r.student_name).toString().trim()
@@ -45,6 +47,8 @@ export function normalizeEnrolmentRows(rows: any[]) {
 
     return [{
         day: day,
+        start_date: start_date,
+        end_date: end_date,
         start_time: start,
         end_time: end,
         student_id: Number(sid),

@@ -128,7 +128,9 @@ export default async function CustomerTable({
                           <span 
                             key={s.id} 
                             className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium border ${
-                              s.has_activity
+                              s.has_upcoming_start
+                                ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                : s.has_activity
                                 ? 'bg-blue-50 text-blue-700 border-blue-100'
                                 : 'bg-slate-50 text-slate-500 border-slate-200'
                             }`}

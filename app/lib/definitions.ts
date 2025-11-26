@@ -37,6 +37,7 @@ export type Student = {
   name: string;
   customer_id: string;
   has_activity?: boolean;
+  has_upcoming_start?: boolean;
 }
 
 export type Invoice = {
@@ -179,6 +180,7 @@ export type DisplayEnrolment = {
   weekday: string;
   start_time: string;
   end_time: string;
+  start_date?: string;
 }
 
 export type CustomerTableData = {

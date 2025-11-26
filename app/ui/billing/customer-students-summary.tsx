@@ -5,6 +5,7 @@ interface Enrolment {
   weekday: string;
   start_time: string;
   end_time: string;
+  start_date?: string;
 }
 
 interface Pickup {
@@ -49,14 +50,26 @@ export default function CustomerStudentsSummary({ students }: CustomerStudentsSu
                 <div className="space-y-1">
                   {student.enrolments
                     .sort((a, b) => weekdayOrder.indexOf(a.weekday) - weekdayOrder.indexOf(b.weekday))
-                    .map((enrolment, idx) => (
-                      <div key={idx} className="text-xs bg-blue-50 rounded px-2 py-1.5">
-                        <div className="font-medium">{enrolment.course_name}</div>
-                        <div className="text-gray-600">
-                          {enrolment.weekday} • {enrolment.start_time} - {enrolment.end_time}
+                    .map((enrolment, idx) => {
+                      const hasUpcomingStart = enrolment.start_date && new Date(enrolment.start_date) > new Date();
+                      return (
+                        <div key={idx} className={`text-xs rounded px-2 py-1.5 ${hasUpcomingStart ? 'bg-yellow-50' : 'bg-blue-50'}`}>
+                          <div className="font-medium">{enrolment.course_name}</div>
+                          <div className="text-gray-600">
+                            {enrolment.weekday} • {enrolment.start_time} - {enrolment.end_time}
+                          </div>
+                          {enrolment.start_date && (
+                            <div className={`text-[11px] mt-0.5 ${hasUpcomingStart ? 'text-yellow-700 font-medium' : 'text-gray-500'}`}>
+                              Starts: {new Date(enrolment.start_date).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric'
+                              })}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                 </div>
               ) : (
                 <div className="text-xs text-gray-400 italic">No enrolments</div>
