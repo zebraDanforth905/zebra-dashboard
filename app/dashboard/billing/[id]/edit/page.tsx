@@ -5,13 +5,17 @@ import AddStudentButton from "@/app/ui/billing/add-student-button";
 
 // app/dashboard/billing/[id]/edit/page.tsx
 import Link from "next/link";
-import { fetchCustomerById, fetchRecurringInvoicesByCustomer, fetchCustomerInvoices, fetchCustomerStudentsEnrolments } from "@/app/lib/data";
+import { fetchCustomerById, fetchRecurringInvoicesByCustomer, fetchCustomerInvoices, fetchCustomerStudentsEnrolments, fetchCustomerPayments, fetchCustomerConvergePayments, fetchCustomerNotes } from "@/app/lib/data";
 import CustomerSearchList from "@/app/ui/billing/customer-search-list";
 import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
 import EditCustomerName from "@/app/ui/billing/edit-customer-name";
 import { UnassignStudentButton } from "@/app/ui/buttons";
 import InvoiceTable from "@/app/ui/billing/invoice-table";
 import CustomerStudentsSummary from "@/app/ui/billing/customer-students-summary";
+import CustomerPaymentsTable from "@/app/ui/billing/customer-payments-table";
+import CustomerConvergePayments from "@/app/ui/billing/customer-converge-payments";
+import CustomerNotesSection from "@/app/ui/billing/customer-notes-section";
+import { auth } from "@/auth";
 
 export default async function Page(props: {
   params: Promise<{ id: string }>;
@@ -23,10 +27,16 @@ export default async function Page(props: {
   const studentQuery = searchParams?.studentQuery || '';
   const query = searchParams?.query || '';
 
+  const session = await auth();
+  const currentUserName = session?.user?.name || 'Unknown User';
+
   const customer = await fetchCustomerById(id || " ");
   const invoices = await fetchRecurringInvoicesByCustomer(id);
   const customerInvoices = await fetchCustomerInvoices(id); // Fetch customer invoices
   const studentsEnrolments = await fetchCustomerStudentsEnrolments(id); // Fetch enrolments and pickups
+  const payments = await fetchCustomerPayments(id); // Fetch payments
+  const convergePayments = await fetchCustomerConvergePayments(id); // Fetch converge recurring payments
+  const customerNotes = await fetchCustomerNotes(id); // Fetch customer notes
 
 
   return (
@@ -46,6 +56,13 @@ export default async function Page(props: {
           </h1>
         )}
         
+        <CustomerNotesSection 
+          customerId={id} 
+          customerName={customer?.name || 'Unknown Customer'}
+          notes={customerNotes}
+          currentUserName={currentUserName}
+        />
+        
         <h2 className="text-lg font-medium text-slate-700 mb-2">Students:</h2>
 
         <AddStudentButton customerId={id || ''} />
@@ -58,6 +75,12 @@ export default async function Page(props: {
         <RecurringInvoiceTable customerId={id} initialInvoices={invoices} />
 
         <InvoiceTable customerId={id} initialInvoices={customerInvoices} />
+        
+        <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Payments:</h2>
+        <CustomerPaymentsTable customerId={id} initialPayments={payments} />
+        
+        <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Converge Recurring Payments:</h2>
+        <CustomerConvergePayments payments={convergePayments} />
         
       </section>
     </div>

@@ -2,7 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote } from './definitions';
+import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -19,6 +19,12 @@ export async function fetchFilteredCustomers(
   sortBy: string,
   incDec: boolean,
   qboFilter?: string,
+  balanceFilter?: string,
+  studentsFilter?: string,
+  paymentsFilter?: string,
+  recurringPaymentsFilter?: string,
+  scheduledInvoicesFilter?: string,
+  paymentMatchFilter?: string,
 ) {
   'use cache'
   cacheTag('customers');
@@ -33,6 +39,54 @@ export async function fetchFilteredCustomers(
     whereConditions = sql`${whereConditions} AND c.set_up_qbo = true`;
   } else if (qboFilter === 'not-setup') {
     whereConditions = sql`${whereConditions} AND (c.set_up_qbo = false OR c.set_up_qbo IS NULL)`;
+  }
+  
+  // Build HAVING clause for aggregated filters
+  let havingConditions = sql`TRUE`;
+  
+  if (balanceFilter === 'has-balance') {
+    havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) > 0`;
+  } else if (balanceFilter === 'no-balance') {
+    havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) <= 0`;
+  }
+  
+  if (studentsFilter === 'has-students') {
+    havingConditions = sql`${havingConditions} AND JSONB_ARRAY_LENGTH(COALESCE(stu.students, '[]'::jsonb)) > 0`;
+  } else if (studentsFilter === 'no-students') {
+    havingConditions = sql`${havingConditions} AND JSONB_ARRAY_LENGTH(COALESCE(stu.students, '[]'::jsonb)) = 0`;
+  } else if (studentsFilter === 'has-active-students') {
+    havingConditions = sql`${havingConditions} AND stu.active_students_count > 0`;
+  } else if (studentsFilter === 'no-active-students') {
+    havingConditions = sql`${havingConditions} AND (stu.active_students_count = 0 OR stu.active_students_count IS NULL)`;
+  }
+  
+  if (paymentsFilter === 'has-recurring') {
+    havingConditions = sql`${havingConditions} AND crp.next_payment IS NOT NULL`;
+  } else if (paymentsFilter === 'has-invoices') {
+    havingConditions = sql`${havingConditions} AND rec.next_invoice_date IS NOT NULL`;
+  } else if (paymentsFilter === 'no-upcoming') {
+    havingConditions = sql`${havingConditions} AND crp.next_payment IS NULL AND rec.next_invoice_date IS NULL`;
+  }
+  
+  if (recurringPaymentsFilter === 'has-next-payment') {
+    havingConditions = sql`${havingConditions} AND crp.next_payment IS NOT NULL`;
+  } else if (recurringPaymentsFilter === 'no-next-payment') {
+    havingConditions = sql`${havingConditions} AND crp.next_payment IS NULL`;
+  }
+  
+  if (scheduledInvoicesFilter === 'has-next-invoice') {
+    havingConditions = sql`${havingConditions} AND rec.next_invoice_date IS NOT NULL`;
+  } else if (scheduledInvoicesFilter === 'no-next-invoice') {
+    havingConditions = sql`${havingConditions} AND rec.next_invoice_date IS NULL`;
+  }
+  
+  if (paymentMatchFilter === 'match') {
+    havingConditions = sql`${havingConditions} AND crp.next_payment = rec.next_invoice_date AND (crp.amount * 100)::INTEGER = rec.next_invoice_amount`;
+  } else if (paymentMatchFilter === 'mismatch') {
+    havingConditions = sql`${havingConditions} AND (
+      (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NOT NULL) AND
+      (crp.next_payment != rec.next_invoice_date OR (crp.amount * 100)::INTEGER != rec.next_invoice_amount)
+    )`;
   }
   
   try {
@@ -90,13 +144,34 @@ export async function fetchFilteredCustomers(
         ),
         stu AS (
         SELECT
-            customer_id,
+            s.customer_id,
             COALESCE(
-            JSONB_AGG(JSONB_BUILD_OBJECT('id', id, 'name', name) ORDER BY name),
+            JSONB_AGG(
+              JSONB_BUILD_OBJECT(
+                'id', s.id, 
+                'name', s.name,
+                'has_activity', CASE WHEN (e.id IS NOT NULL OR p.id IS NOT NULL) THEN true ELSE false END
+              ) ORDER BY s.name
+            ),
             '[]'::jsonb
-            ) AS students
-        FROM students
-        GROUP BY customer_id
+            ) AS students,
+            COUNT(*) FILTER (WHERE e.id IS NOT NULL OR p.id IS NOT NULL) AS active_students_count
+        FROM students s
+        LEFT JOIN enrolments e ON e.student_id = s.id
+        LEFT JOIN pickups p ON p.student_id = s.id
+        GROUP BY s.customer_id
+        ),
+        latest_customer_note AS (
+          SELECT DISTINCT ON (cn.customer_id)
+            cn.customer_id,
+            JSONB_BUILD_OBJECT(
+              'id', cn.id,
+              'content', cn.content,
+              'date', cn.date,
+              'creator', cn.creator
+            ) AS recent_note
+          FROM customer_notes cn
+          ORDER BY cn.customer_id, cn.date DESC
         )
         SELECT
         c.id,
@@ -110,14 +185,17 @@ export async function fetchFilteredCustomers(
         crp.amount AS next_recurring_payment_amount,
         crp.next_payment AS next_recurring_payment_date,
         crp.description AS next_recurring_payment_description,
-        COALESCE(stu.students, '[]'::jsonb) AS students
+        COALESCE(stu.students, '[]'::jsonb) AS students,
+        lcn.recent_note
         FROM customers c
         LEFT JOIN inv ON inv.customer_id = c.id
         LEFT JOIN pay ON pay.customer_id = c.id
         LEFT JOIN stu ON stu.customer_id = c.id
         LEFT JOIN rec ON rec.customer_id = c.id
         LEFT JOIN crp ON crp.customer_id = c.id
+        LEFT JOIN latest_customer_note lcn ON lcn.customer_id = c.id
         WHERE ${whereConditions}
+          AND (${havingConditions})
         ORDER BY ${sql(sortBy)} DESC
         LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset};
         `
@@ -131,20 +209,142 @@ export async function fetchFilteredCustomers(
   }
 }
 
-export async function fetchCustomerPages(query: string, qboFilter?: string) {
+export async function fetchCustomerPages(
+  query: string, 
+  qboFilter?: string,
+  balanceFilter?: string,
+  studentsFilter?: string,
+  paymentsFilter?: string,
+  recurringPaymentsFilter?: string,
+  scheduledInvoicesFilter?: string,
+  paymentMatchFilter?: string
+) {
   try {
-    let whereConditions = sql`(customers.name ILIKE ${`%${query}%`} OR customers.email ILIKE ${`%${query}%`})`;
+    // Build base WHERE conditions - use 'c' alias for consistency
+    let whereConditions = sql`(c.name ILIKE ${`%${query}%`} OR c.email ILIKE ${`%${query}%`})`;
     
     if (qboFilter === 'setup') {
-      whereConditions = sql`${whereConditions} AND customers.set_up_qbo = true`;
+      whereConditions = sql`${whereConditions} AND c.set_up_qbo = true`;
     } else if (qboFilter === 'not-setup') {
-      whereConditions = sql`${whereConditions} AND (customers.set_up_qbo = false OR customers.set_up_qbo IS NULL)`;
+      whereConditions = sql`${whereConditions} AND (c.set_up_qbo = false OR c.set_up_qbo IS NULL)`;
     }
     
-    const data = await sql`SELECT COUNT(*)
-    FROM customers
-    WHERE ${whereConditions}
-  `;
+    // If we have filters that require aggregation, use a subquery
+    if (balanceFilter || studentsFilter || paymentsFilter || recurringPaymentsFilter || scheduledInvoicesFilter || paymentMatchFilter) {
+      let havingConditions = sql`TRUE`;
+      
+      if (balanceFilter === 'has-balance') {
+        havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) > 0`;
+      } else if (balanceFilter === 'no-balance') {
+        havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) <= 0`;
+      }
+      
+      if (studentsFilter === 'has-students') {
+        havingConditions = sql`${havingConditions} AND JSONB_ARRAY_LENGTH(COALESCE(stu.students, '[]'::jsonb)) > 0`;
+      } else if (studentsFilter === 'no-students') {
+        havingConditions = sql`${havingConditions} AND JSONB_ARRAY_LENGTH(COALESCE(stu.students, '[]'::jsonb)) = 0`;
+      } else if (studentsFilter === 'has-active-students') {
+        havingConditions = sql`${havingConditions} AND stu.active_students_count > 0`;
+      } else if (studentsFilter === 'no-active-students') {
+        havingConditions = sql`${havingConditions} AND (stu.active_students_count = 0 OR stu.active_students_count IS NULL)`;
+      }
+      
+      if (paymentsFilter === 'has-recurring') {
+        havingConditions = sql`${havingConditions} AND crp.next_payment IS NOT NULL`;
+      } else if (paymentsFilter === 'has-invoices') {
+        havingConditions = sql`${havingConditions} AND rec.next_invoice_date IS NOT NULL`;
+      } else if (paymentsFilter === 'no-upcoming') {
+        havingConditions = sql`${havingConditions} AND crp.next_payment IS NULL AND rec.next_invoice_date IS NULL`;
+      }
+      
+      if (recurringPaymentsFilter === 'has-next-payment') {
+        havingConditions = sql`${havingConditions} AND crp.next_payment IS NOT NULL`;
+      } else if (recurringPaymentsFilter === 'no-next-payment') {
+        havingConditions = sql`${havingConditions} AND crp.next_payment IS NULL`;
+      }
+      
+      if (scheduledInvoicesFilter === 'has-next-invoice') {
+        havingConditions = sql`${havingConditions} AND rec.next_invoice_date IS NOT NULL`;
+      } else if (scheduledInvoicesFilter === 'no-next-invoice') {
+        havingConditions = sql`${havingConditions} AND rec.next_invoice_date IS NULL`;
+      }
+      
+      if (paymentMatchFilter === 'match') {
+        havingConditions = sql`${havingConditions} AND crp.next_payment = rec.next_invoice_date AND (crp.amount * 100)::INTEGER = rec.next_invoice_amount`;
+      } else if (paymentMatchFilter === 'mismatch') {
+        havingConditions = sql`${havingConditions} AND (
+          (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NOT NULL) AND
+          (crp.next_payment != rec.next_invoice_date OR (crp.amount * 100)::INTEGER != rec.next_invoice_amount)
+        )`;
+      }
+      
+      const data = await sql`
+        WITH inv AS (
+          SELECT customer_id, COALESCE(SUM(amount), 0) AS sum_invoices
+          FROM invoices 
+          GROUP BY customer_id
+        ),
+        pay AS (
+          SELECT customer_id, COALESCE(SUM(amount) FILTER (WHERE status='submitted'),0) AS sum_payments
+          FROM payments GROUP BY customer_id 
+        ),
+        crp AS (
+          SELECT customer_id, amount, next_payment
+          FROM (
+            SELECT
+              customer_id,
+              amount,
+              next_payment,
+              ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY next_payment ASC) AS rn
+            FROM converge_recurring_payments
+            WHERE next_payment >= CURRENT_DATE
+          ) x
+          WHERE rn = 1
+        ),
+        rec AS (
+          SELECT customer_id, next_invoice_date, next_invoice_amount
+          FROM (
+            SELECT
+              customer_id,
+              (next_date)::date AS next_invoice_date,
+              SUM(amount) AS next_invoice_amount,
+              ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY (next_date)::date ASC) AS rn
+            FROM recurring_invoices
+            GROUP BY customer_id, (next_date)::date
+          ) x
+          WHERE rn = 1
+        ),
+        stu AS (
+          SELECT
+            s.customer_id,
+            COALESCE(JSONB_AGG(JSONB_BUILD_OBJECT('id', s.id, 'name', s.name) ORDER BY s.name), '[]'::jsonb) AS students,
+            COUNT(*) FILTER (WHERE e.id IS NOT NULL OR p.id IS NOT NULL) AS active_students_count
+          FROM students s
+          LEFT JOIN enrolments e ON e.student_id = s.id
+          LEFT JOIN pickups p ON p.student_id = s.id
+          GROUP BY s.customer_id
+        )
+        SELECT COUNT(DISTINCT c.id)
+        FROM customers c
+        LEFT JOIN inv ON inv.customer_id = c.id
+        LEFT JOIN pay ON pay.customer_id = c.id
+        LEFT JOIN stu ON stu.customer_id = c.id
+        LEFT JOIN rec ON rec.customer_id = c.id
+        LEFT JOIN crp ON crp.customer_id = c.id
+        WHERE ${whereConditions}
+          AND (${havingConditions})
+      `;
+      
+      const totalPages = Math.ceil(Number(data[0].count) / ITEMS_PER_PAGE);
+      return totalPages;
+    }
+    
+    // Simple query without aggregation filters - use 'c' alias
+    const data = await sql`
+      SELECT COUNT(*)
+      FROM customers c
+      WHERE ${whereConditions}
+    `;
 
     const totalPages = Math.ceil(Number(data[0].count) / ITEMS_PER_PAGE);
     return totalPages;
@@ -453,7 +653,6 @@ export async function fetchExpiringCards() {
       JOIN customers c ON c.id = crp.customer_id
       WHERE crp.exp_date IS NOT NULL
         AND crp.exp_date <= CURRENT_DATE + INTERVAL '60 days'
-        AND crp.exp_date >= CURRENT_DATE
       ORDER BY crp.exp_date ASC
     `;
     
@@ -461,6 +660,70 @@ export async function fetchExpiringCards() {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch expiring cards.');
+  }
+}
+
+export async function fetchCustomerPayments(customerId: string) {
+  try {
+    const result = await sql<Array<{
+      id: string;
+      customer_id: string;
+      amount: number;
+      date: string;
+      status: string;
+      description: string;
+    }>>`
+      SELECT id, customer_id, amount, date, status, comment AS description
+      FROM payments
+      WHERE customer_id = ${customerId}
+      ORDER BY date DESC
+    `;
+    
+    return result;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch customer payments.');
+  }
+}
+
+export async function fetchCustomerConvergePayments(customerId: string) {
+  try {
+    const result = await sql<Array<{
+      recurring_id: string;
+      customer_id: string;
+      amount: string;
+      billing_cycle: string;
+      last_name: string;
+      email: string;
+      phone: string;
+      exp_date: string;
+      start_date: string;
+      last_payment: string;
+      next_payment: string;
+      description: string;
+    }>>`
+      SELECT 
+        recurring_id,
+        customer_id,
+        amount,
+        billing_cycle,
+        last_name,
+        email,
+        phone,
+        exp_date,
+        start_date,
+        last_payment,
+        next_payment,
+        description
+      FROM converge_recurring_payments
+      WHERE customer_id = ${customerId}
+      ORDER BY next_payment DESC NULLS LAST
+    `;
+    
+    return result;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch customer converge payments.');
   }
 }
 
@@ -1025,6 +1288,26 @@ export async function fetchStudentNotes(studentId: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch student notes.');
+  }
+}
+
+export async function fetchCustomerNotes(customerId: string) {
+  try {
+    const notes = await sql<CustomerNote[]>`
+      SELECT 
+        id,
+        customer_id,
+        content,
+        date,
+        creator
+      FROM customer_notes
+      WHERE customer_id = ${customerId}
+      ORDER BY date DESC;
+    `;
+    return notes;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch customer notes.');
   }
 }
 

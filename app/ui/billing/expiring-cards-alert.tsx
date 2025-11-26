@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { formatDate } from '@/app/lib/utils';
+
 
 interface ExpiringCard {
   recurring_id: string;
@@ -27,10 +29,10 @@ export default function ExpiringCardsAlert({ expiringCards }: ExpiringCardsAlert
   const warning = expiringCards.filter(card => card.days_until_expiry > 7 && card.days_until_expiry <= 30);
   const upcoming = expiringCards.filter(card => card.days_until_expiry > 30);
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-  };
+//   const formatDate = (dateString: string) => {
+//     const date = new Date(dateString);
+//     return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+//   };
 
   const renderCardGroup = (cards: ExpiringCard[], title: string, bgColor: string, textColor: string, borderColor: string) => {
     if (cards.length === 0) return null;

@@ -6,7 +6,8 @@ import { fetchCustomerPages, fetchUnassignedStudentsWithEnrolments, fetchExpirin
 import { auth } from "@/auth";
 import CSVUploadSection from "@/app/ui/billing/csv-upload-section";
 import UnassignedStudents from "@/app/ui/billing/unassigned-students";
-import QBOFilter from "@/app/ui/billing/qbo-filter";
+import CustomerFilters from "@/app/ui/billing/customer-filters";
+import ActiveFilters from "@/app/ui/billing/active-filters";
 import ExpiringCardsAlert from "@/app/ui/billing/expiring-cards-alert";
 import postgres from 'postgres';
 
@@ -20,6 +21,12 @@ export default async function Page(props: {
     sortBy?: string;
     incDec?: boolean;
     qboFilter?: string;
+    balanceFilter?: string;
+    studentsFilter?: string;
+    paymentsFilter?: string;
+    recurringPaymentsFilter?: string;
+    scheduledInvoicesFilter?: string;
+    paymentMatchFilter?: string;
   }>;
 }) {
   const searchParams = await props.searchParams;
@@ -28,7 +35,22 @@ export default async function Page(props: {
   const sortBy = searchParams?.sortBy || 'c.name';
   const incDec = searchParams?.incDec || true;
   const qboFilter = searchParams?.qboFilter;
-  const totalPages = await fetchCustomerPages(query, qboFilter);
+  const balanceFilter = searchParams?.balanceFilter;
+  const studentsFilter = searchParams?.studentsFilter;
+  const paymentsFilter = searchParams?.paymentsFilter;
+  const recurringPaymentsFilter = searchParams?.recurringPaymentsFilter;
+  const scheduledInvoicesFilter = searchParams?.scheduledInvoicesFilter;
+  const paymentMatchFilter = searchParams?.paymentMatchFilter;
+  const totalPages = await fetchCustomerPages(
+    query, 
+    qboFilter, 
+    balanceFilter, 
+    studentsFilter, 
+    paymentsFilter,
+    recurringPaymentsFilter,
+    scheduledInvoicesFilter,
+    paymentMatchFilter
+  );
 
   // Check if user is admin
   const session = await auth();
@@ -65,10 +87,28 @@ export default async function Page(props: {
 
         <div className="my-2 flex items-center justify-between gap-2 md:mt-4">
           <Search placeholder="Search customers..." />
-          <QBOFilter />
+          <CustomerFilters />
         </div>
-        <Suspense key={query + currentPage + qboFilter}>
-          <CustomerTable query={query} currentPage={currentPage} sortBy={sortBy} incDec={incDec} qboFilter={qboFilter} />
+        
+        {/* Active Filters Display */}
+        <div className="mb-2">
+          <ActiveFilters />
+        </div>
+        
+        <Suspense key={query + currentPage + qboFilter + balanceFilter + studentsFilter + paymentsFilter + recurringPaymentsFilter + scheduledInvoicesFilter + paymentMatchFilter}>
+          <CustomerTable 
+            query={query} 
+            currentPage={currentPage} 
+            sortBy={sortBy} 
+            incDec={incDec} 
+            qboFilter={qboFilter}
+            balanceFilter={balanceFilter}
+            studentsFilter={studentsFilter}
+            paymentsFilter={paymentsFilter}
+            recurringPaymentsFilter={recurringPaymentsFilter}
+            scheduledInvoicesFilter={scheduledInvoicesFilter}
+            paymentMatchFilter={paymentMatchFilter}
+          />
         </Suspense>
         <div className="mt-3 flex w-full justify-center">
           <Pagination totalPages={totalPages} />

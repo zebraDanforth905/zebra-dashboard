@@ -831,6 +831,34 @@ export async function deleteStudentNote(noteId: string) {
   }
 }
 
+export async function createCustomerNote(customerId: string, content: string, creator: string) {
+  try {
+    await sql`
+      INSERT INTO customer_notes (customer_id, content, creator)
+      VALUES (${customerId}, ${content}, ${creator});
+    `;
+    revalidatePath('/dashboard/billing');
+    revalidatePath(`/dashboard/billing/${customerId}/edit`);
+  } catch (error) {
+    console.error('Error creating customer note:', error);
+    throw new Error('Failed to create customer note.');
+  }
+}
+
+export async function deleteCustomerNote(noteId: string, customerId: string) {
+  try {
+    await sql`
+      DELETE FROM customer_notes
+      WHERE id = ${noteId};
+    `;
+    revalidatePath('/dashboard/billing');
+    revalidatePath(`/dashboard/billing/${customerId}/edit`);
+  } catch (error) {
+    console.error('Error deleting customer note:', error);
+    throw new Error('Failed to delete customer note.');
+  }
+}
+
 type CSVRow = {
   'Recurring ID': string;
   'Amount': string;

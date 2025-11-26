@@ -9,12 +9,52 @@ import Link from 'next/link';
 import { ClickableRow } from '../clickable-row';
 import { formatDate } from '@/app/lib/utils';
 import QBOToggle from './qbo-toggle';
+import CustomerNoteCell from './customer-note-cell';
+import { auth } from '@/auth';
 
-export default async function CustomerTable({ query, currentPage, sortBy, incDec, qboFilter }: { query: string; currentPage: number; sortBy: string; incDec:boolean; qboFilter?: string; }) { 
+export default async function CustomerTable({ 
+  query, 
+  currentPage, 
+  sortBy, 
+  incDec, 
+  qboFilter,
+  balanceFilter,
+  studentsFilter,
+  paymentsFilter,
+  recurringPaymentsFilter,
+  scheduledInvoicesFilter,
+  paymentMatchFilter
+}: { 
+  query: string; 
+  currentPage: number; 
+  sortBy: string; 
+  incDec: boolean; 
+  qboFilter?: string;
+  balanceFilter?: string;
+  studentsFilter?: string;
+  paymentsFilter?: string;
+  recurringPaymentsFilter?: string;
+  scheduledInvoicesFilter?: string;
+  paymentMatchFilter?: string;
+}) { 
     
     
+    const session = await auth();
+    const currentUserName = session?.user?.name || 'Unknown User';
     
-    const customers = await fetchFilteredCustomers(query, currentPage, sortBy, incDec, qboFilter);
+    const customers = await fetchFilteredCustomers(
+      query, 
+      currentPage, 
+      sortBy, 
+      incDec, 
+      qboFilter,
+      balanceFilter,
+      studentsFilter,
+      paymentsFilter,
+      recurringPaymentsFilter,
+      scheduledInvoicesFilter,
+      paymentMatchFilter
+    );
     
   
     return (
@@ -31,12 +71,13 @@ export default async function CustomerTable({ query, currentPage, sortBy, incDec
               <th className="px-1.5 py-1.5 font-medium text-right"><Sorter sortString='rec.next_invoice_date'>Next Invoice</Sorter></th>
               <th className="px-1.5 py-1.5 font-medium text-right"><Sorter sortString='pay.next_payment_date'>Next Payment</Sorter></th>
               <th className="px-1.5 py-1.5 font-medium">Student(s)</th>
+              <th className="px-1.5 py-1.5 font-medium">Notes</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {customers.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-3 py-4 text-center text-xs text-slate-500">
+                <td colSpan={9} className="px-3 py-4 text-center text-xs text-slate-500">
                   No customers found.
                 </td>
               </tr>
@@ -84,7 +125,14 @@ export default async function CustomerTable({ query, currentPage, sortBy, incDec
                     {c.students && c.students.length > 0 ? (
                       <div className="flex flex-wrap gap-0.5">
                         {c.students.map((s: Student) => (
-                          <span key={s.id} className="inline-flex items-center rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 border border-blue-100">
+                          <span 
+                            key={s.id} 
+                            className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium border ${
+                              s.has_activity
+                                ? 'bg-blue-50 text-blue-700 border-blue-100'
+                                : 'bg-slate-50 text-slate-500 border-slate-200'
+                            }`}
+                          >
                             {s.name}
                           </span>
                         ))}
@@ -93,6 +141,9 @@ export default async function CustomerTable({ query, currentPage, sortBy, incDec
                       <span className="text-slate-400 italic text-[10px]">No students</span>
                     )}
                     
+                  </td>
+                  <td className="relative px-1.5 py-1.5 z-10">
+                    <CustomerNoteCell customer={c} currentUserName={currentUserName} />
                   </td>
                   
                 </ClickableRow>

@@ -36,6 +36,7 @@ export type Student = {
   id:string;
   name: string;
   customer_id: string;
+  has_activity?: boolean;
 }
 
 export type Invoice = {
@@ -162,6 +163,14 @@ export type StudentNote = {
   creator: string;
 };
 
+export type CustomerNote = {
+  id: string;
+  customer_id: string;
+  content: string;
+  date: Date;
+  creator: string;
+};
+
 // Formatted Data for display in Tables
 
 export type DisplayEnrolment = {
@@ -185,6 +194,12 @@ export type CustomerTableData = {
   next_recurring_payment_date: Date | null;
   next_recurring_payment_description: string | null;
   students: Student[];
+  recent_note?: {
+    id: string;
+    content: string;
+    date: Date;
+    creator: string;
+  } | null;
 }
 
 export type CustomerListData = {
