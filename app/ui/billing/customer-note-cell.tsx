@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CustomerTableData } from '@/app/lib/definitions';
 import CustomerNotesModal from './customer-notes-modal';
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline';
@@ -55,13 +56,14 @@ export default function CustomerNoteCell({ customer, currentUserName }: Props) {
         </button>
       )}
 
-      {showModal && (
+      {showModal && typeof document !== 'undefined' && createPortal(
         <CustomerNotesModal
           customerId={customer.id}
           customerName={customer.name}
           currentUserName={currentUserName}
           onClose={() => setShowModal(false)}
-        />
+        />,
+        document.body
       )}
     </>
   );
