@@ -167,18 +167,18 @@ export default function UnassignedStudents({ students: initialStudents, customer
   }
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-      <div className="px-4 py-3 border-b border-slate-200">
-        <h3 className="text-base font-semibold text-slate-900">
+    <div className="bg-white rounded-lg border border-slate-200 shadow-sm">
+      <div className="px-3 py-2 border-b border-slate-200">
+        <h3 className="text-sm font-semibold text-slate-900">
           Unassigned Students ({students.length})
         </h3>
-        <p className="text-xs text-slate-600 mt-1">
+        <p className="text-[10px] text-slate-600 mt-0.5">
           Students with enrolments who need to be assigned to a customer
         </p>
       </div>
 
       {message && (
-        <div className={`mx-4 mt-4 p-3 rounded-lg text-sm ${
+        <div className={`mx-3 mt-2 p-2 rounded text-xs ${
           message.type === 'success' 
             ? 'bg-green-50 text-green-800 border border-green-200' 
             : 'bg-red-50 text-red-800 border border-red-200'
@@ -187,21 +187,21 @@ export default function UnassignedStudents({ students: initialStudents, customer
         </div>
       )}
 
-      <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
+      <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
         {students.map((student) => {
           const filteredCustomers = getFilteredCustomers(student.id);
           const searchTerm = searchTerms[student.id] || '';
           const isAssigning = assigning[student.id] || false;
           
           return (
-            <div key={student.id} className="p-3 hover:bg-slate-50">
-              <div className="flex flex-col gap-3">
+            <div key={student.id} className="p-2 hover:bg-slate-50">
+              <div className="flex flex-col gap-2">
                 {/* Top row: Student Info, Search, and Actions */}
-                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
                   {/* Student Info */}
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-slate-900">{student.name}</div>
-                    <div className="text-xs text-slate-500">ID: {student.id}</div>
+                    <div className="font-medium text-xs text-slate-900">{student.name}</div>
+                    <div className="text-[10px] text-slate-500">ID: {student.id}</div>
                   </div>
 
                   {/* Customer Search/Select */}
@@ -232,20 +232,20 @@ export default function UnassignedStudents({ students: initialStudents, customer
                           setShowDropdowns(prev => ({ ...prev, [student.id]: true }));
                         }
                       }}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      className="w-full px-2 py-1 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
                     />
                     
                     {/* Autocomplete dropdown */}
                     {showDropdowns[student.id] && filteredCustomers.length > 0 && (
-                      <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-40 overflow-y-auto">
                         {filteredCustomers.map((customer) => (
                           <button
                             key={customer.id}
                             onClick={() => selectCustomer(student.id, customer.id, customer.name)}
-                            className="w-full px-3 py-2 text-left text-sm hover:bg-sky-50 focus:bg-sky-50 focus:outline-none border-b border-slate-100 last:border-b-0"
+                            className="w-full px-2 py-1.5 text-left text-xs hover:bg-sky-50 focus:bg-sky-50 focus:outline-none border-b border-slate-100 last:border-b-0"
                           >
                             <div className="font-medium text-slate-900">{customer.name}</div>
-                            <div className="text-xs text-slate-500">{customer.email}</div>
+                            <div className="text-[10px] text-slate-500">{customer.email}</div>
                           </button>
                         ))}
                       </div>
@@ -253,17 +253,17 @@ export default function UnassignedStudents({ students: initialStudents, customer
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="flex gap-2">
+                  <div className="flex gap-1.5">
                     <button
                       onClick={() => openNewCustomerModal(student.id)}
-                      className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      className="px-2 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 focus:outline-none focus:ring-1 focus:ring-sky-500"
                     >
                       New
                     </button>
                     <button
                       onClick={() => handleAssign(student.id)}
                       disabled={!selectedCustomers[student.id] || isAssigning}
-                      className="px-4 py-2 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-3 py-1 text-xs font-medium text-white bg-sky-600 rounded hover:bg-sky-700 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isAssigning ? 'Assigning...' : 'Assign'}
                     </button>
@@ -272,11 +272,11 @@ export default function UnassignedStudents({ students: initialStudents, customer
 
                 {/* Enrolments/Pickups */}
                 {student.enrolments && student.enrolments.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-0.5">
                     {student.enrolments.map((enrolment) => (
                       <span 
                         key={enrolment.id} 
-                        className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 border border-blue-100"
+                        className="inline-flex items-center rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 border border-blue-100"
                       >
                         {enrolment.course_name} - {enrolment.weekday} {enrolment.start_time}
                       </span>

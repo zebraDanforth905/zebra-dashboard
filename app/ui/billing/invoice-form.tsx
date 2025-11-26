@@ -1,26 +1,23 @@
 'use client';
 
 import { useState } from 'react';
-import { PlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { createRecurringInvoice, updateRecurringInvoice, deleteRecurringInvoice } from '@/app/lib/actions';
+import { PlusIcon, PencilIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { createInvoice, updateInvoice, deleteInvoice } from '@/app/lib/actions';
 
-type RecurringInvoiceData = {
+type InvoiceData = {
   id: string;
   amount: number;
-  day_of_month: number;
-  every: number;
-  start_date: string | Date;
-  end_after: number | null;
+  date: string | Date;
   description: string;
 };
 
 type Props = {
   customerId: string;
-  invoice?: RecurringInvoiceData | null;
+  invoice?: InvoiceData | null;
   onClose?: () => void;
 };
 
-export default function RecurringInvoiceForm({ customerId, invoice, onClose }: Props) {
+export default function InvoiceForm({ customerId, invoice, onClose }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -36,13 +33,6 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
     return new Date(date).toISOString().split('T')[0];
   };
 
-  // Options for day of month
-  const dayOptions: number[] = Array.from({ length: 28 }, (_, i) => i + 1);
-  dayOptions.push(-1);
-
-  // Options for every N months
-  const everyOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setIsSubmitting(true);
@@ -51,36 +41,36 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
       const formData = new FormData(e.currentTarget);
       
       if (isEditMode) {
-        await updateRecurringInvoice(formData);
+        await updateInvoice(formData);
       } else {
-        await createRecurringInvoice(formData);
+        await createInvoice(formData);
       }
       
       // Close form and reset
       setIsOpen(false);
       if (onClose) onClose();
     } catch (error) {
-      console.error('Error saving recurring invoice:', error);
-      alert('Failed to save recurring invoice. Please try again.');
+      console.error('Error saving invoice:', error);
+      alert('Failed to save invoice. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   }
 
   async function handleDelete() {
-    if (!invoice || !confirm('Are you sure you want to delete this recurring invoice?')) return;
+    if (!invoice || !confirm('Are you sure you want to delete this invoice?')) return;
 
     setIsDeleting(true);
     try {
       const formData = new FormData();
       formData.append('id', invoice.id);
-      await deleteRecurringInvoice(formData);
+      await deleteInvoice(formData);
       
       setIsOpen(false);
       if (onClose) onClose();
     } catch (error) {
-      console.error('Error deleting recurring invoice:', error);
-      alert('Failed to delete recurring invoice. Please try again.');
+      console.error('Error deleting invoice:', error);
+      alert('Failed to delete invoice. Please try again.');
     } finally {
       setIsDeleting(false);
     }
@@ -96,7 +86,7 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
     return (
       <div className="bg-white border border-slate-300 rounded-lg shadow-lg p-3 mt-2">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-slate-900">Edit Recurring Invoice</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Edit Invoice</h3>
           <button
             onClick={handleClose}
             className="text-slate-400 hover:text-slate-600"
@@ -126,76 +116,15 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">
-              Day of Month *
-            </label>
-            <select
-              name="day_of_month"
-              defaultValue={invoice.day_of_month}
-              required
-              className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
-            >
-              {dayOptions.map((d) => (
-                <option key={d} value={d}>
-                  {d === -1 ? 'Last day of month' : d}
-                </option>
-              ))}
-            </select>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">
-              Use "Last day of month" to automatically adjust for 28–31 day months.
-            </span>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Repeat Every *
-            </label>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-600">Every</span>
-              <select
-                name="every"
-                defaultValue={invoice.every}
-                className="w-20 px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
-              >
-                {everyOptions.map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-              <span className="text-xs text-slate-600">month(s)</span>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Start Date *
+              Date *
             </label>
             <input
               type="date"
-              name="start_date"
+              name="date"
               required
-              defaultValue={getDateString(invoice.start_date)}
+              defaultValue={getDateString(invoice.date)}
               className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
             />
-            <span className="text-[10px] text-slate-500 mt-0.5 block">
-              First invoice won't occur before this date.
-            </span>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              End After (occurrences)
-            </label>
-            <input
-              type="number"
-              name="end_after"
-              min="1"
-              step="1"
-              placeholder="Optional"
-              defaultValue={invoice.end_after || ''}
-              className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
-            />
-            <span className="text-[10px] text-slate-500 mt-0.5 block">
-              Leave blank for no automatic end.
-            </span>
           </div>
 
           <div>
@@ -250,12 +179,12 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
           className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-sky-600 bg-sky-50 border border-sky-200 rounded hover:bg-sky-100 transition-colors"
         >
           <PlusIcon className="h-3.5 w-3.5" />
-          New Recurring Invoice
+          New Invoice
         </button>
       ) : (
         <div className="bg-white border border-slate-300 rounded-lg shadow-lg p-3">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-slate-900">New Recurring Invoice</h3>
+            <h3 className="text-sm font-semibold text-slate-900">New Invoice</h3>
             <button
               onClick={() => setIsOpen(false)}
               className="text-slate-400 hover:text-slate-600"
@@ -284,75 +213,15 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
 
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
-                Day of Month *
-              </label>
-              <select
-                name="day_of_month"
-                defaultValue="1"
-                required
-                className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
-              >
-                {dayOptions.map((d) => (
-                  <option key={d} value={d}>
-                    {d === -1 ? 'Last day of month' : d}
-                  </option>
-                ))}
-              </select>
-              <span className="text-[10px] text-slate-500 mt-0.5 block">
-                Use "Last day of month" to automatically adjust for 28–31 day months.
-              </span>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Repeat Every *
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-600">Every</span>
-                <select
-                  name="every"
-                  defaultValue="1"
-                  className="w-20 px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
-                >
-                  {everyOptions.map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-                <span className="text-xs text-slate-600">month(s)</span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Start Date *
+                Date *
               </label>
               <input
                 type="date"
-                name="start_date"
+                name="date"
                 required
                 defaultValue={today}
                 className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
               />
-              <span className="text-[10px] text-slate-500 mt-0.5 block">
-                First invoice won't occur before this date.
-              </span>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                End After (occurrences)
-              </label>
-              <input
-                type="number"
-                name="end_after"
-                min="1"
-                step="1"
-                placeholder="Optional"
-                className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
-              />
-              <span className="text-[10px] text-slate-500 mt-0.5 block">
-                Leave blank for no automatic end.
-              </span>
             </div>
 
             <div>
@@ -373,7 +242,7 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
                 disabled={isSubmitting}
                 className="flex-1 px-3 py-1.5 text-sm font-medium text-white bg-sky-600 rounded hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isSubmitting ? 'Creating...' : 'Create Recurring Invoice'}
+                {isSubmitting ? 'Creating...' : 'Create Invoice'}
               </button>
               <button
                 type="button"

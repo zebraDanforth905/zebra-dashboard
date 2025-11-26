@@ -35,6 +35,13 @@ const NewRecurringInvoiceFormSchema = z.object({
 }
 )
 
+const InvoiceFormSchema = z.object({
+  customer_id: z.string(),
+  amount: z.coerce.number(),
+  date: z.coerce.date(),
+  description: z.string(),
+})
+
 const skipNextDateFormSchema = z.object({
   invoiceId: z.string(),
   nextDate: z.coerce.date(),
@@ -195,16 +202,18 @@ export async function createRecurringInvoice(formData: FormData) {
     description: formData.get('description')
   });
 
-
-
-  const next_date = start_date > localMidnightFromISODate((new Date()).toLocaleDateString()) ? start_date : computeNextDate({
-                                                              startDate: start_date,
-                                                              dayOfMonth: day_of_month,
-                                                              every: every
-                                                            });
-
+  // Get today's date at midnight for comparison
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   
-                                                            const amount_in_cents = amount*100;
+  // If start_date is in the future, use it as next_date; otherwise compute the next occurrence
+  const next_date = start_date >= today ? start_date : computeNextDate({
+    startDate: start_date,
+    dayOfMonth: day_of_month,
+    every: every
+  });
+  
+  const amount_in_cents = amount * 100;
 
   console.log(`creating invoice ${description} ending after ${end_after} occurences`)
 
@@ -246,7 +255,6 @@ export async function createRecurringInvoice(formData: FormData) {
   // Revalidate any pages that list recurring invoices
   revalidatePath("/dashboard/billing/[id]/edit");
   revalidatePath("/dashboard/billing");
-  redirect(`/dashboard/billing/${customer_id}/edit`);
 
   return rows[0];
 }
@@ -264,8 +272,41 @@ export async function updateRecurringInvoice(formData: FormData) {
     end_after: formData.get('end_after'),
     description: formData.get('description')
   });
-  const amount_in_cents = amount*100;
+  
+  const amount_in_cents = amount * 100;
+  
   try {
+    // Fetch the existing invoice to check if start_date changed
+    const existingInvoice = await sql<RecurringInvoice[]>`
+      SELECT start_date, next_date FROM recurring_invoices WHERE id = ${id}
+    `;
+    
+    if (existingInvoice.length === 0) {
+      throw new Error('Recurring invoice not found');
+    }
+    
+    const oldStartDate = new Date(existingInvoice[0].start_date);
+    oldStartDate.setHours(0, 0, 0, 0);
+    
+    const newStartDate = new Date(start_date);
+    newStartDate.setHours(0, 0, 0, 0);
+    
+    // Only recalculate next_date if start_date has changed
+    let next_date = existingInvoice[0].next_date;
+    
+    if (oldStartDate.getTime() !== newStartDate.getTime()) {
+      // Get today's date at midnight for comparison
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      // If start_date is in the future, use it as next_date; otherwise compute the next occurrence
+      next_date = start_date >= today ? start_date : computeNextDate({
+        startDate: start_date,
+        dayOfMonth: day_of_month,
+        every: every
+      });
+    }
+    
     await sql`
     UPDATE recurring_invoices
       SET
@@ -274,18 +315,89 @@ export async function updateRecurringInvoice(formData: FormData) {
         day_of_month = ${day_of_month},
         every = ${every},
         start_date = ${start_date},
+        next_date = ${next_date},
         end_after = ${end_after == 0? null : end_after},
         description = ${description ?? null}
       WHERE id = ${id};
     `;
   } catch (error) {
     console.error('Error updating recurring invoice:', error);
+    throw new Error('Failed to update recurring invoice.');
   }
   revalidatePath("/dashboard/billing/[id]/edit");
   revalidatePath("/dashboard/billing");
-  redirect(`/dashboard/billing/${customer_id}/edit`);
 }
 
+export async function createInvoice(formData: FormData){
+  const {customer_id, amount, date, description} = InvoiceFormSchema.parse({
+    customer_id: formData.get('customer_id'),
+    amount: formData.get('amount'),
+    date: formData.get('date'),
+    description: formData.get('description')
+  });
+
+  const amount_in_cents = Math.round(amount * 100);
+
+  try {
+    await sql`
+      INSERT INTO invoices (customer_id, amount, date, description)
+      VALUES (${customer_id}, ${amount_in_cents}, ${date}, ${description})
+    `;
+    
+    revalidatePath('/dashboard/billing/[id]/edit');
+    revalidatePath('/dashboard/billing');
+  } catch (error) {
+    console.error('Error creating invoice:', error);
+    throw new Error('Failed to create invoice.');
+  }
+}
+
+export async function updateInvoice(formData: FormData){
+  const {id, customer_id, amount, date, description} = InvoiceFormSchema.extend({
+    id: z.string()
+  }).parse({
+    id: formData.get('id'),
+    customer_id: formData.get('customer_id'),
+    amount: formData.get('amount'),
+    date: formData.get('date'),
+    description: formData.get('description')
+  });
+
+  const amount_in_cents = Math.round(amount * 100);
+
+  try {
+    await sql`
+      UPDATE invoices
+      SET amount = ${amount_in_cents},
+          date = ${date},
+          description = ${description}
+      WHERE id = ${id}
+    `;
+    
+    revalidatePath('/dashboard/billing/[id]/edit');
+    revalidatePath('/dashboard/billing');
+  } catch (error) {
+    console.error('Error updating invoice:', error);
+    throw new Error('Failed to update invoice.');
+  }
+}
+
+export async function deleteInvoice(formData: FormData){
+  const id = z.string().parse(formData.get('id'));
+  
+  try {
+    await sql`
+      DELETE FROM invoices
+      WHERE id = ${id};
+    `;
+    
+    revalidatePath('/dashboard/billing/[id]/edit');
+    revalidatePath('/dashboard/billing');
+  } catch (error) {
+    console.error('Error deleting invoice:', error);
+    throw new Error('Failed to delete invoice.');
+  }
+}
 const deleteRecurringInvoiceFormSchema = z.object({
   id: z.string()
 });
@@ -330,6 +442,44 @@ export async function skipNextDate(formData: FormData){
     console.error('error skipping date: ', error);
   }
 
+}
+
+export async function generateInvoiceFromRecurring(formData: FormData) {
+  const recurringInvoiceId = z.string().parse(formData.get('recurringInvoiceId'));
+  
+  try {
+    // Fetch the recurring invoice
+    const recurringInvoices = await sql<RecurringInvoice[]>`
+      SELECT id, customer_id, amount, day_of_month, every, next_date, description, end_after
+      FROM recurring_invoices
+      WHERE id = ${recurringInvoiceId}
+    `;
+    
+    if (recurringInvoices.length === 0) {
+      throw new Error('Recurring invoice not found');
+    }
+    
+    const recurring = recurringInvoices[0];
+    
+    // Create a regular invoice with the next_date, amount, and description
+    await sql`
+      INSERT INTO invoices (customer_id, amount, date, description)
+      VALUES (${recurring.customer_id}, ${recurring.amount}, ${recurring.next_date}, ${recurring.description})
+    `;
+    
+    // Create FormData to call skipNextDate
+    const skipFormData = new FormData();
+    skipFormData.append('invoiceId', recurring.id);
+    skipFormData.append('nextDate', recurring.next_date.toString());
+    skipFormData.append('dayOfMonth', recurring.day_of_month.toString());
+    skipFormData.append('every', recurring.every.toString());
+    
+    // Call skipNextDate to update the recurring invoice's next_date
+    await skipNextDate(skipFormData);
+  } catch (error) {
+    console.error('Error generating invoice from recurring:', error);
+    throw new Error('Failed to generate invoice.');
+  }
 }
 
 
@@ -928,4 +1078,191 @@ export async function toggleCustomerQBO(customerId: string, currentValue: boolea
     console.error('Error toggling QBO status:', error);
     throw new Error('Failed to toggle QBO status.');
   }
+}
+
+type UnmatchedPayment = {
+  customer_full_name: string;
+  amount: number;
+  transaction_date: Date;
+  description: string;
+  transaction_id: string;
+};
+
+export async function uploadSettledBatchCSV(csvContent: string): Promise<{ matched: number; unmatched: UnmatchedPayment[] }> {
+  try {
+    const lines = csvContent.trim().split('\n');
+    if (lines.length === 0) {
+      throw new Error('CSV file is empty');
+    }
+
+    // Parse CSV header
+    const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+    
+    // Find column indices
+    const nameIdx = headers.indexOf('Customer Full Name');
+    const amountIdx = headers.indexOf('Amount');
+    const dateIdx = headers.indexOf('Transaction Date');
+    const descIdx = headers.indexOf('Description');
+    const txnIdIdx = headers.indexOf('Transaction ID');
+    const statusIdx = headers.indexOf('Transaction Status');
+
+    if (nameIdx === -1 || amountIdx === -1 || dateIdx === -1) {
+      throw new Error('CSV is missing required columns');
+    }
+
+    const unmatched: UnmatchedPayment[] = [];
+    let matched = 0;
+
+    // Process each row
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+
+      // Parse CSV line with quote handling
+      const fields: string[] = [];
+      let currentField = '';
+      let inQuotes = false;
+
+      for (let j = 0; j < line.length; j++) {
+        const char = line[j];
+        
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          fields.push(currentField.trim());
+          currentField = '';
+        } else {
+          currentField += char;
+        }
+      }
+      fields.push(currentField.trim());
+
+      const customerName = fields[nameIdx]?.replace(/"/g, '').trim();
+      const amountStr = fields[amountIdx]?.replace(/"/g, '').trim();
+      const dateStr = fields[dateIdx]?.replace(/"/g, '').trim();
+      const description = fields[descIdx]?.replace(/"/g, '').trim() || '';
+      const transactionId = fields[txnIdIdx]?.replace(/"/g, '').trim() || '';
+      const status = fields[statusIdx]?.replace(/"/g, '').trim();
+
+      if (!customerName || !amountStr || !dateStr || status !== 'Settled') continue;
+
+      const amount = Math.round(parseFloat(amountStr) * 100); // Convert to cents
+      const transactionDate = new Date(dateStr);
+
+      if (isNaN(amount) || isNaN(transactionDate.getTime())) continue;
+
+      // Try to match customer by name (fuzzy matching)
+      const customers = await sql<{ id: string; name: string }[]>`
+        SELECT id, name 
+        FROM customers 
+        WHERE LOWER(name) = LOWER(${customerName})
+        LIMIT 1;
+      `;
+
+      if (customers.length > 0) {
+        // Match found - insert payment
+        await sql`
+          INSERT INTO payments (customer_id, amount, date, status)
+          VALUES (${customers[0].id}, ${amount}, ${transactionDate}, 'submitted')
+          ON CONFLICT DO NOTHING;
+        `;
+        matched++;
+      } else {
+        // No match - add to unmatched list
+        unmatched.push({
+          customer_full_name: customerName,
+          amount,
+          transaction_date: transactionDate,
+          description,
+          transaction_id: transactionId
+        });
+      }
+    }
+
+    revalidatePath('/dashboard/billing');
+    return { matched, unmatched };
+  } catch (error) {
+    console.error('Error uploading settled batch CSV:', error);
+    throw new Error('Failed to upload settled batch CSV.');
+  }
+}
+
+export async function assignPaymentToCustomer(customerId: string, paymentData: UnmatchedPayment) {
+  try {
+    await sql`
+      INSERT INTO payments (customer_id, amount, date, status)
+      VALUES (${customerId}, ${paymentData.amount}, ${paymentData.transaction_date}, 'submitted')
+      ON CONFLICT DO NOTHING;
+    `;
+
+    revalidatePath('/dashboard/billing');
+  } catch (error) {
+    console.error('Error assigning payment:', error);
+    throw new Error('Failed to assign payment to customer.');
+  }
+}
+
+export async function currentDateCheckRecurringInvoices() {
+   try {
+      // Log current date for debugging
+      const currentDateCheck = await sql`SELECT CURRENT_DATE`;
+      console.log('Database CURRENT_DATE:', currentDateCheck);
+      
+      // Fetch all recurring invoices where next_date is exactly today
+      const invoices = await sql<Array<{
+        id: string;
+        customer_id: string;
+        description: string;
+        amount: number;
+        next_date: Date;
+      }>>`
+        SELECT id, customer_id, description, amount, next_date, DATE(next_date) as next_date_only
+        FROM recurring_invoices
+        WHERE DATE(next_date) < CURRENT_DATE
+      `;
+  
+      
+      console.log(`Found ${invoices.length} recurring invoices to process.`);
+      console.log('Invoices:', JSON.stringify(invoices, null, 2));
+      
+      const generated = [];
+      const errors = [];
+      
+      // Generate an invoice for each recurring invoice that's due today
+      for (const invoice of invoices) {
+        try {
+  
+          const formData = new FormData();
+          formData.append('recurringInvoiceId', invoice.id);
+          
+          await generateInvoiceFromRecurring(formData);
+          
+          generated.push({
+            id: invoice.id,
+            customer_id: invoice.customer_id,
+            description: invoice.description,
+            amount: invoice.amount
+          });
+        } catch (error: any) {
+          errors.push({
+            id: invoice.id,
+            error: String(error?.message ?? error)
+          });
+        }
+      }
+      
+      return ({
+        ok: true,
+        processed: invoices.length,
+        generated: generated.length,
+        errors: errors.length,
+        details: {
+          generated,
+          errors
+        }
+      });
+      
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message ?? e) }
+    }
 }

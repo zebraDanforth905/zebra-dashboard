@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import Pagination from "@/app/ui/pagination";
 import { fetchCustomerPages, fetchUnassignedStudentsWithEnrolments } from "@/app/lib/data";
 import { auth } from "@/auth";
-import RecurringCSVUpload from "@/app/ui/billing/recurring-csv-upload";
+import CSVUploadSection from "@/app/ui/billing/csv-upload-section";
 import UnassignedStudents from "@/app/ui/billing/unassigned-students";
 import QBOFilter from "@/app/ui/billing/qbo-filter";
 import postgres from 'postgres';
@@ -41,27 +41,27 @@ export default async function Page(props: {
   const unassignedStudents = isAdmin ? await fetchUnassignedStudentsWithEnrolments() : [];
 
   return (
-    <div className="m-3 md:m-6 space-y-6">
+    <div className="m-2 md:m-4 space-y-3">
       {/* CSV Upload Section - Admin Only */}
       {isAdmin && (
-        <RecurringCSVUpload customers={customers} />
+        <CSVUploadSection customers={customers} />
       )}
 
       
       {/* Customers Section */}
       <div>
         <div className="flex w-full items-center justify-between">
-          <h1 className="text-xl md:text-2xl font-semibold">Customers</h1>
+          <h1 className="text-lg md:text-xl font-semibold">Customers</h1>
         </div>
 
-        <div className="my-4 flex items-center justify-between gap-2 md:mt-8">
+        <div className="my-2 flex items-center justify-between gap-2 md:mt-4">
           <Search placeholder="Search customers..." />
           <QBOFilter />
         </div>
         <Suspense key={query + currentPage + qboFilter}>
           <CustomerTable query={query} currentPage={currentPage} sortBy={sortBy} incDec={incDec} qboFilter={qboFilter} />
         </Suspense>
-        <div className="mt-5 flex w-full justify-center">
+        <div className="mt-3 flex w-full justify-center">
           <Pagination totalPages={totalPages} />
         </div>
       </div>

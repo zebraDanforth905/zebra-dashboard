@@ -1,20 +1,16 @@
 
 import React from "react";
 
-import AddStudentForm from "@/app/ui/billing/add-student";  
+import AddStudentButton from "@/app/ui/billing/add-student-button";  
 
 // app/dashboard/billing/[id]/edit/page.tsx
 import Link from "next/link";
-import clsx from "clsx";
-import { fetchCustomerById, fetchCustomersList, fetchRecurringInvoicesByCustomer } from "@/app/lib/data";
-import Search from "@/app/ui/search";
+import { fetchCustomerById, fetchRecurringInvoicesByCustomer, fetchUnnassignedStudents, fetchCustomerInvoices } from "@/app/lib/data";
 import CustomerSearchList from "@/app/ui/billing/customer-search-list";
-import RecurringInvoiceForm from "@/app/ui/billing/recurring-invoice-form";
-import { createRecurringInvoice } from "@/app/lib/actions";
 import RecurringInvoiceTable from "@/app/ui/billing/recurring_invoice_list";
 import EditCustomerName from "@/app/ui/billing/edit-customer-name";
-
-import { NewInvoiceButton, UnassignStudentButton } from "@/app/ui/buttons";
+import { UnassignStudentButton } from "@/app/ui/buttons";
+import InvoiceTable from "@/app/ui/billing/invoice-table";
 
 export default async function Page(props: {
   params: Promise<{ id: string }>;
@@ -28,6 +24,8 @@ export default async function Page(props: {
 
   const customer = await fetchCustomerById(id || " ");
   const invoices = await fetchRecurringInvoicesByCustomer(id);
+  const unassignedStudents = await fetchUnnassignedStudents(''); // Fetch all unassigned students
+  const customerInvoices = await fetchCustomerInvoices(id); // Fetch customer invoices
 
 
   return (
@@ -72,11 +70,13 @@ export default async function Page(props: {
           ) : (
             <div className="text-sm text-slate-500 px-2 py-2">No students enrolled.</div>
           )}
-        <AddStudentForm query={studentQuery} customer_id={id||''}/>
+        <AddStudentButton customerId={id || ''} allStudents={unassignedStudents} />
         <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Recurring Invoices:</h2>
           
-        <NewInvoiceButton id={id} />
-        <RecurringInvoiceTable invoices={invoices}></RecurringInvoiceTable>
+        <RecurringInvoiceTable customerId={id} initialInvoices={invoices} />
+
+        <h2 className="text-lg font-medium text-slate-700 mt-6 mb-2">Manual Invoices:</h2>
+        <InvoiceTable customerId={id} initialInvoices={customerInvoices} />
         
       </section>
     </div>

@@ -43,6 +43,7 @@ export type Invoice = {
   customer_id: string;
   amount: number;
   date: string;
+  description: string;
 };
 
 export type RecurringInvoice = {
@@ -63,6 +64,7 @@ export type Payment = {
   amount: number;
   date: string;
   status: 'submitted' | 'requires attention';
+  comment: string | null;
 }
 
 export type Session = {
@@ -247,6 +249,8 @@ export type RecurringInvoiceListData = {
   day_of_month: number;
   every: number;
   next_date: Date;
+  start_date: Date;
+  end_after: number | null;
   description: string;
 }
 
@@ -274,4 +278,11 @@ export type PickupListDisplay = {
     date: Date;
     creator: string;
   } | null;
+}
+
+export type InvoiceTableData = {
+    id: string;
+    amount: number;
+    date: Date;
+    description: string;
 }

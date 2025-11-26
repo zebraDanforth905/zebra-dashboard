@@ -1,6 +1,6 @@
 // app/api/admin/scrape-now/route.ts
 import { NextResponse } from "next/server";
-import { scrapeEnrolmentNow } from "@/app/lib/actions";
+import { currentDateCheckRecurringInvoices, scrapeEnrolmentNow } from "@/app/lib/actions";
 import { revalidateTag } from "next/cache";
 
 
@@ -8,7 +8,11 @@ export async function GET() {
   try {
 
     const result = await scrapeEnrolmentNow();
+    const result2 = await currentDateCheckRecurringInvoices();
+    
+    console.log("running the endpoint: ", result, result2);
     revalidateTag('schedule', 'max')
+    revalidateTag('invoices', 'max')
 
     return NextResponse.json(result, { headers: { } });
     

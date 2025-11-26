@@ -2,7 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote } from './definitions';
+import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -20,7 +20,10 @@ export async function fetchFilteredCustomers(
   incDec: boolean,
   qboFilter?: string,
 ) {
-
+  'use cache'
+  cacheTag('customers');
+  cacheTag('invoices');
+  cacheTag('schedules');
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
   
   // Build WHERE clause based on filters
@@ -35,9 +38,13 @@ export async function fetchFilteredCustomers(
   try {
     const customers = await sql<CustomerTableData[]>`
     WITH inv AS (
-        SELECT customer_id, COALESCE(SUM(amount),0) AS sum_invoices,
-        MIN(amount) AS next_invoice_amount
-        FROM invoices GROUP BY customer_id
+        SELECT 
+          customer_id, 
+          COALESCE(SUM(amount) FILTER (WHERE date <= CURRENT_DATE), 0) AS sum_invoices,
+          MIN(date) FILTER (WHERE date > CURRENT_DATE) AS next_invoice_date,
+          MIN(amount) FILTER (WHERE date > CURRENT_DATE) AS next_invoice_amount
+        FROM invoices 
+        GROUP BY customer_id
         ),
         rec AS (  
           SELECT customer_id, next_invoice_date, day_sum AS next_invoice_amount
@@ -611,7 +618,7 @@ export async function fetchCustomersList(query: string) {
 export async function fetchRecurringInvoicesByCustomer(customerId: string){
   try {
     const recurring = await sql<RecurringInvoiceListData[]>`
-      SELECT id, amount, every, day_of_month, next_date, description
+      SELECT id, amount, every, day_of_month, next_date, start_date, end_after, description
       FROM recurring_invoices r
       WHERE customer_id = ${customerId}
       ORDER BY next_date;
@@ -1081,4 +1088,23 @@ export async function fetchTodaySummary(date?: Date) {
   }
 }
 
-
+export async function fetchCustomerInvoices(customerId: string) {
+  'use cache'
+  try {
+    cacheTag('invoices');
+    const invoices = await sql<InvoiceTableData[]>`
+      SELECT
+        id,
+        amount,
+        date,
+        description
+      FROM invoices
+      WHERE customer_id = ${customerId}
+      ORDER BY date DESC;
+    `;
+    return invoices;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch customer invoices.');
+  }
+}
