@@ -958,6 +958,11 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
               AND a.date = ${target}
           ) ac ON true
           WHERE s.weekday = ${day}
+            AND (
+              COALESCE(ec.student_count, 0) > 0
+              OR COALESCE(mc.makeup_count, 0) > 0
+              OR COALESCE(tc.trial_count, 0) > 0
+            )
           ORDER BY s.start_time;
         `;
         return sessions;

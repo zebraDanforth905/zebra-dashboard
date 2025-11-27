@@ -189,6 +189,20 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
             );
             `;
     }
+
+    // Delete sessions with no students (no enrolments, trials, or makeups)
+    await tx`
+      DELETE FROM sessions s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM enrolments e WHERE e.session_id = s.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM trials t WHERE t.session_id = s.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM makeups m WHERE m.session_id = s.id
+      );
+    `;
   });
 
   return { inserted: rows.length, updated: 0, seen: rows.length };
