@@ -295,6 +295,11 @@ export default async function Page(props: {
                                   </>
                                 )}
                               </div>
+                              {pickup.comment && (
+                                <div className="mt-1 text-xs text-slate-600 italic">
+                                  {pickup.comment}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>

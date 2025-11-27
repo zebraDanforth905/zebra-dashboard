@@ -13,7 +13,7 @@ type Props = {
 export default function StudentNoteCell({ student, currentUserName }: Props) {
   const [showModal, setShowModal] = useState(false);
 
-  const truncateNote = (content: string, maxLength: number = 50) => {
+  const truncateNote = (content: string, maxLength: number = 80) => {
     if (content.length <= maxLength) return content;
     return content.substring(0, maxLength) + '...';
   };
@@ -27,7 +27,7 @@ export default function StudentNoteCell({ student, currentUserName }: Props) {
             e.stopPropagation();
             setShowModal(true);
           }}
-          className="text-gray-400 hover:text-gray-600 text-xs italic"
+          className="text-gray-400 hover:bg-gray-50 text-xs italic px-4 py-2 block w-full text-left"
         >
           Add note...
         </button>
@@ -38,13 +38,13 @@ export default function StudentNoteCell({ student, currentUserName }: Props) {
             e.stopPropagation();
             setShowModal(true);
           }}
-          className="text-left hover:bg-blue-50 rounded p-1 -m-1 transition-colors group w-full"
+          className="text-left hover:bg-blue-50 px-4 py-2 transition-colors block w-full"
         >
           <div className="flex items-start gap-2">
             <ChatBubbleLeftIcon className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm text-gray-900 truncate">{truncateNote(student.recent_note.content)}</p>
-              <p className="text-xs text-gray-500">
+              <p className="text-sm text-gray-900 break-words">{truncateNote(student.recent_note.content)}</p>
+              <p className="text-xs text-gray-500 break-words">
                 {new Date(student.recent_note.date).toLocaleDateString('en-US', {
                   month: 'short',
                   day: 'numeric'

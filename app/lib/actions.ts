@@ -55,8 +55,9 @@ const pickupFormSchema = z.object({
   weekday: z.string(),
   waiver_signed: z.coerce.boolean(),
   school_name: z.string(),
-  teacher_name: z.string(),
-  room_number: z.string()
+  teacher_name: z.string().optional(),
+  room_number: z.string().optional(),
+  comment: z.string().optional()
 });
 
 function nextDay(d: Date){
@@ -545,14 +546,15 @@ export async function addPickup(formData: FormData){
 }
 
 export async function updatePickup(formData: FormData){
-  const {id, studentId, weekday, waiver_signed, school_name, teacher_name, room_number} = pickupFormSchema.parse({
+  const {id, studentId, weekday, waiver_signed, school_name, teacher_name, room_number, comment} = pickupFormSchema.parse({
     id: formData.get('id'),
     studentId: formData.get('studentId'),
     weekday: formData.get('weekday'),
     waiver_signed: formData.get('waiver_signed'),
     school_name: formData.get('school_name'),
     teacher_name: formData.get('teacher_name'),
-    room_number: formData.get('room_number')
+    room_number: formData.get('room_number'),
+    comment: formData.get('comment')
   }); 
   try {
     await sql`
@@ -562,8 +564,9 @@ export async function updatePickup(formData: FormData){
         weekday = ${weekday},
         waiver_signed = ${waiver_signed},
         school_name = ${school_name},
-        teacher_name = ${teacher_name},
-        room_number = ${room_number}
+        teacher_name = ${teacher_name || null},
+        room_number = ${room_number || null},
+        comment = ${comment || null}
       WHERE id = ${id};
     `;
 

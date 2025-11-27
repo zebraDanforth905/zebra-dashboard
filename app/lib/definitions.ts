@@ -131,6 +131,7 @@ export type Pickup = {
   teacher_name: string;
   room_number: number;
   invoice_id: string;
+  comment?: string;
 }
 
 export type Trial = {
@@ -289,6 +290,7 @@ export type PickupListDisplay = {
   invoice_id: string;
   name: string;
   absent: boolean;
+  comment?: string;
   recent_note?: {
     id: string;
     content: string;

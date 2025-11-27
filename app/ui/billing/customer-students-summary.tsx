@@ -11,6 +11,7 @@ interface Enrolment {
 interface Pickup {
   weekday: string;
   school_name: string;
+  comment?: string;
 }
 
 interface StudentSummary {
@@ -87,6 +88,9 @@ export default function CustomerStudentsSummary({ students }: CustomerStudentsSu
                       <div key={idx} className="text-xs bg-green-50 rounded px-2 py-1.5">
                         <div className="font-medium">{pickup.weekday}</div>
                         <div className="text-gray-600">{pickup.school_name}</div>
+                        {pickup.comment && (
+                          <div className="text-gray-500 italic text-[11px] mt-0.5">{pickup.comment}</div>
+                        )}
                       </div>
                     ))}
                 </div>

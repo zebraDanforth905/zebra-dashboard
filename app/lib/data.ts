@@ -616,7 +616,8 @@ export async function fetchCustomerStudentsEnrolments(customerId: string) {
           JSON_AGG(
             DISTINCT JSONB_BUILD_OBJECT(
               'weekday', p.weekday,
-              'school_name', p.school_name
+              'school_name', p.school_name,
+              'comment', p.comment
             )
           ) FILTER (WHERE p.id IS NOT NULL),
           '[]'
