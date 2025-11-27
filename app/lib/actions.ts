@@ -1317,9 +1317,7 @@ const CreateUserSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   email: z.string().email('Invalid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  user_type: z.enum(['admin', 'user'], {
-    errorMap: () => ({ message: 'User type must be either admin or user' })
-  }),
+  user_type: z.enum(['admin', 'user'], { message: 'User type must be either admin or user' }),
 });
 
 const UpdatePasswordSchema = z.object({
@@ -1374,7 +1372,7 @@ export async function createUser(formData: FormData) {
     if (!validatedFields.success) {
       return { 
         ok: false, 
-        error: validatedFields.error.errors[0]?.message || 'Invalid input' 
+        error: validatedFields.error.toString() || 'Invalid input' 
       };
     }
 
@@ -1471,7 +1469,7 @@ export async function updatePassword(formData: FormData) {
     if (!validatedFields.success) {
       return { 
         ok: false, 
-        error: validatedFields.error.errors[0]?.message || 'Invalid input' 
+        error: validatedFields.error.toString() || 'Invalid input' 
       };
     }
 
