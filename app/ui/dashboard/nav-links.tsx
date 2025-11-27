@@ -7,17 +7,26 @@ import clsx from 'clsx';
 // Central link registry (db-backed later if desired)
 const links = [
   { name: 'Schedule', href: '/dashboard/schedule' },
-  { name: 'Billing', href: '/dashboard/billing' },
+  { name: 'Billing', href: '/dashboard/billing', adminOnly: true },
   { name: 'Students', href: '/dashboard/students' },
   { name: 'Slips', href: '/dashboard/printable' },
   { name: 'Accounts', href: '/dashboard/scratch-accounts' },
+  { name: 'Admin', href: '/dashboard/admin/users', adminOnly: true },
+  { name: 'Settings', href: '/dashboard/settings' },
 ];
 
-export default function NavLinks() {
+export default function NavLinks({ userType }: { userType?: string }) {
   const pathname = usePathname();
+  const isAdmin = userType === 'admin';
+
   return (
     <>
       {links.map((link) => {
+        // Skip admin-only links for non-admin users
+        if (link.adminOnly && !isAdmin) {
+          return null;
+        }
+
         const active = pathname === link.href;
         return (
           <Link

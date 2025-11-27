@@ -16,6 +16,8 @@ import { formatDate } from './utils';
 import { localMidnightFromISODate } from './utils';
 
 import { ymd } from './utils';
+import bcrypt from 'bcrypt';
+import { auth } from '@/auth';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -1306,3 +1308,203 @@ export async function currentDateCheckRecurringInvoices() {
       return { ok: false, error: String(e?.message ?? e) }
     }
 }
+
+// ==========================================
+// USER MANAGEMENT ACTIONS (Admin only)
+// ==========================================
+
+const CreateUserSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  user_type: z.enum(['admin', 'user'], {
+    errorMap: () => ({ message: 'User type must be either admin or user' })
+  }),
+});
+
+const UpdatePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(6, 'New password must be at least 6 characters'),
+});
+
+/**
+ * Get all users (admin only)
+ */
+export async function getAllUsers() {
+  try {
+    const session = await auth();
+    if ((session?.user as any)?.user_type !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const users = await sql<Array<{
+      id: string;
+      name: string;
+      email: string;
+      user_type: string;
+    }>>`
+      SELECT id, name, email, user_type 
+      FROM users 
+      ORDER BY name ASC
+    `;
+
+    return { ok: true, users };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+/**
+ * Create a new user (admin only, cannot create admin users)
+ */
+export async function createUser(formData: FormData) {
+  try {
+    const session = await auth();
+    if ((session?.user as any)?.user_type !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const validatedFields = CreateUserSchema.safeParse({
+      name: formData.get('name'),
+      email: formData.get('email'),
+      password: formData.get('password'),
+      user_type: formData.get('user_type'),
+    });
+
+    if (!validatedFields.success) {
+      return { 
+        ok: false, 
+        error: validatedFields.error.errors[0]?.message || 'Invalid input' 
+      };
+    }
+
+    const { name, email, password, user_type } = validatedFields.data;
+
+    // Prevent creating admin users
+    if (user_type === 'admin') {
+      return { ok: false, error: 'Cannot create admin users through this interface' };
+    }
+
+    // Check if user already exists
+    const existingUser = await sql`
+      SELECT id FROM users WHERE email = ${email}
+    `;
+
+    if (existingUser.length > 0) {
+      return { ok: false, error: 'User with this email already exists' };
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create the user
+    await sql`
+      INSERT INTO users (name, email, password, user_type)
+      VALUES (${name}, ${email}, ${hashedPassword}, ${user_type})
+    `;
+
+    revalidatePath('/dashboard/admin/users');
+    return { ok: true, message: 'User created successfully' };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+/**
+ * Delete a user (admin only, cannot delete admin users)
+ */
+export async function deleteUser(formData: FormData) {
+  try {
+    const session = await auth();
+    if ((session?.user as any)?.user_type !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const userId = formData.get('userId') as string;
+    if (!userId) {
+      return { ok: false, error: 'User ID is required' };
+    }
+
+    // Check if user exists and get their type
+    const user = await sql<Array<{ user_type: string }>>`
+      SELECT user_type FROM users WHERE id = ${userId}
+    `;
+
+    if (user.length === 0) {
+      return { ok: false, error: 'User not found' };
+    }
+
+    // Prevent deleting admin users
+    if (user[0].user_type === 'admin') {
+      return { ok: false, error: 'Cannot delete admin users' };
+    }
+
+    // Delete the user
+    await sql`
+      DELETE FROM users WHERE id = ${userId}
+    `;
+
+    revalidatePath('/dashboard/admin/users');
+    return { ok: true, message: 'User deleted successfully' };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+/**
+ * Update current user's password (any authenticated user)
+ */
+export async function updatePassword(formData: FormData) {
+  try {
+    const session = await auth();
+    const userId = (session?.user as any)?.id;
+
+    if (!userId) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const validatedFields = UpdatePasswordSchema.safeParse({
+      currentPassword: formData.get('currentPassword'),
+      newPassword: formData.get('newPassword'),
+    });
+
+    if (!validatedFields.success) {
+      return { 
+        ok: false, 
+        error: validatedFields.error.errors[0]?.message || 'Invalid input' 
+      };
+    }
+
+    const { currentPassword, newPassword } = validatedFields.data;
+
+    // Get the user's current password hash
+    const user = await sql<Array<{ password: string }>>`
+      SELECT password FROM users WHERE id = ${userId}
+    `;
+
+    if (user.length === 0) {
+      return { ok: false, error: 'User not found' };
+    }
+
+    // Verify current password
+    const passwordMatch = await bcrypt.compare(currentPassword, user[0].password);
+    if (!passwordMatch) {
+      return { ok: false, error: 'Current password is incorrect' };
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password
+    await sql`
+      UPDATE users 
+      SET password = ${hashedPassword}
+      WHERE id = ${userId}
+    `;
+
+    return { ok: true, message: 'Password updated successfully' };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+

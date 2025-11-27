@@ -1,10 +1,13 @@
 import SideNav from '../ui/dashboard/sidenav';
 import MobileNav from '../ui/dashboard/mobile-nav';
 import { Metadata } from 'next';
-import { signOut } from '@/auth';
+import { signOut, auth } from '@/auth';
 
 
-export default function Layout({ children }: { children: React.ReactNode }) {
+export default async function Layout({ children }: { children: React.ReactNode }) {
+  const session = await auth();
+  const userType = (session?.user as any)?.user_type;
+
   async function handleSignOut() {
     'use server';
     await signOut({ redirectTo: '/' });
@@ -19,7 +22,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       
       {/* Desktop sidebar - only visible on medium+ screens */}
       <div className="hidden md:block w-64 flex-none print:hidden">
-        <SideNav />
+        <SideNav userType={userType} />
       </div>
       
       <div className="flex-grow overflow-y-auto print:p-0 print:overflow-visible print:h-auto">{children}</div>

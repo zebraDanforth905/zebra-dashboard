@@ -14,6 +14,34 @@ export async function middleware(request: NextRequest) {
     return NextResponse.rewrite(new URL('/dashboard/schedule', request.url))
   }
 
+  // Protect admin routes - admin access only
+  if (request.nextUrl.pathname.startsWith('/dashboard/admin')) {
+    console.log('Middleware - Admin route access check:', {
+      path: request.nextUrl.pathname,
+      hasAuthSecret: !!process.env.AUTH_SECRET,
+    });
+    
+    const token = await getToken({ 
+      req: request, 
+      secret: process.env.AUTH_SECRET as string,
+      secureCookie: process.env.NODE_ENV === 'production',
+    });
+    
+    console.log('Middleware - Admin access check:', {
+      path: request.nextUrl.pathname,
+      hasToken: !!token,
+      userType: (token as any)?.user_type,
+      email: (token as any)?.email,
+    });
+    
+    if ((token as any)?.user_type !== 'admin') {
+      console.log('Access denied - user_type is not admin, redirecting to dashboard');
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+    
+    console.log('Access granted - user is admin');
+  }
+
   if (request.nextUrl.pathname.startsWith('/dashboard/billing')){
     console.log('Middleware - Environment check:', {
       hasAuthSecret: !!process.env.AUTH_SECRET,

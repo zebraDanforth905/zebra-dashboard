@@ -27,7 +27,7 @@ function BrandMark() {
   );
 }
 
-export default function SideNav() {
+export default function SideNav({ userType }: { userType?: string }) {
   return (
     <div className="flex h-full flex-col px-3 py-4 md:px-2">
       {/* Brand strip with gradient */}
@@ -48,7 +48,7 @@ export default function SideNav() {
 
       {/* Links + filler + signout */}
       <div className="flex grow flex-row justify-between space-x-2 md:flex-col md:space-x-0 md:space-y-2">
-        <NavLinks />
+        <NavLinks userType={userType} />
 
         <div className="hidden h-auto w-full grow bg-white md:block" />
         <form
