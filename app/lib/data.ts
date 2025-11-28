@@ -874,7 +874,8 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
       m.id AS makeup_id, 
       s.name, 
       s.id as student_id, 
-      crs.name AS course_name, 
+      crs.name AS course_name,
+      c.name AS parent_name,
       m.date,
       CASE 
         WHEN ln.id IS NOT NULL THEN json_build_object(
@@ -888,6 +889,7 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
     FROM students s
     JOIN makeups m ON m.student_id = s.id
     JOIN courses crs ON crs.id = m.course_id
+    LEFT JOIN customers c ON c.id = s.customer_id
     LEFT JOIN latest_note ln ON ln.student_id = s.id
     WHERE m.session_id = ${sessionId} AND m.date = ${target}
     ORDER BY m.date;

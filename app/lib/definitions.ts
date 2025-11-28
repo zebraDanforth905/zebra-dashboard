@@ -253,6 +253,7 @@ export type MakeupRow = {
   name: string;
   student_id: string;
   course_name: string;
+  parent_name: string;
   date: Date;
   recent_note?: {
     id: string;

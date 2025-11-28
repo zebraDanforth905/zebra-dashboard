@@ -72,6 +72,11 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
                 <span className="font-medium text-slate-900 truncate">
                   {student.name}
                 </span>
+                {student.parent_name && (
+                  <span className="text-xs text-slate-400 truncate">
+                    ({student.parent_name})
+                  </span>
+                )}
                 <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800">
                   Makeup
                 </span>
