@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { assignStudentToCustomer, createCustomer } from '@/app/lib/actions';
+import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 
 type Enrolment = {
   id: string;
@@ -29,6 +30,7 @@ type Props = {
 };
 
 export default function UnassignedStudents({ students: initialStudents, customers: initialCustomers }: Props) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const [students, setStudents] = useState(initialStudents);
   const [customers, setCustomers] = useState(initialCustomers);
   const [selectedCustomers, setSelectedCustomers] = useState<Record<string, string>>({});
@@ -168,27 +170,39 @@ export default function UnassignedStudents({ students: initialStudents, customer
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 shadow-sm">
-      <div className="px-3 py-2 border-b border-slate-200">
-        <h3 className="text-sm font-semibold text-slate-900">
-          Unassigned Students ({students.length})
-        </h3>
-        <p className="text-[10px] text-slate-600 mt-0.5">
-          Students with enrolments who need to be assigned to a customer
-        </p>
-      </div>
-
-      {message && (
-        <div className={`mx-3 mt-2 p-2 rounded text-xs ${
-          message.type === 'success' 
-            ? 'bg-green-50 text-green-800 border border-green-200' 
-            : 'bg-red-50 text-red-800 border border-red-200'
-        }`}>
-          {message.text}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-slate-50 transition-colors rounded-t-lg"
+      >
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">
+            Unassigned Students ({students.length})
+          </h3>
+          <p className="text-[10px] text-slate-600 mt-0.5">
+            Students with enrolments who need to be assigned to a customer
+          </p>
         </div>
-      )}
+        {isExpanded ? (
+          <ChevronUpIcon className="h-5 w-5 text-slate-400 flex-shrink-0" />
+        ) : (
+          <ChevronDownIcon className="h-5 w-5 text-slate-400 flex-shrink-0" />
+        )}
+      </button>
 
-      <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto">
-        {students.map((student) => {
+      {isExpanded && (
+        <>
+          {message && (
+            <div className={`mx-3 mt-2 p-2 rounded text-xs ${
+              message.type === 'success' 
+                ? 'bg-green-50 text-green-800 border border-green-200' 
+                : 'bg-red-50 text-red-800 border border-red-200'
+            }`}>
+              {message.text}
+            </div>
+          )}
+
+          <div className="divide-y divide-slate-100 max-h-[300px] overflow-y-auto border-t border-slate-200">
+            {students.map((student) => {
           const filteredCustomers = getFilteredCustomers(student.id);
           const searchTerm = searchTerms[student.id] || '';
           const isAssigning = assigning[student.id] || false;
@@ -288,6 +302,8 @@ export default function UnassignedStudents({ students: initialStudents, customer
           );
         })}
       </div>
+        </>
+      )}
 
       {/* New Customer Modal */}
       {showModal && (

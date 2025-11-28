@@ -74,6 +74,11 @@ export default async function Page(props: {
         <ExpiringCardsAlert expiringCards={expiringCards} currentUserName={currentUserName} />
       )}
 
+      {/* Unassigned Students Section - Admin Only */}
+      {isAdmin && unassignedStudents.length > 0 && (
+        <UnassignedStudents students={unassignedStudents} customers={customers} />
+      )}
+
       {/* CSV Upload Section - Admin Only */}
       {isAdmin && (
         <CSVUploadSection customers={customers} />
@@ -116,10 +121,7 @@ export default async function Page(props: {
         </div>
       </div>
 
-      {/* Unassigned Students Section - Admin Only */}
-      {isAdmin && unassignedStudents.length > 0 && (
-        <UnassignedStudents students={unassignedStudents} customers={customers} />
-      )}
+      
 
     </div>
   );
