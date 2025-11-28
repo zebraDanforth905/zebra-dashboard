@@ -152,6 +152,27 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
                 SELECT *
                 FROM UNNEST(${keepSessions}::uuid[], ${keepNames}::text[], ${keepDate}::date[])
                 AS t(session_id, name, date)  -- zip pairs correctly
+            ),
+            trials_to_delete AS (
+                SELECT e.id
+                FROM trials e
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM keep k
+                    WHERE k.name = e.name
+                    AND k.session_id = e.session_id
+                    AND k.date = e.date
+                )
+            )
+            DELETE FROM trial_notes
+            WHERE trial_id IN (SELECT id FROM trials_to_delete);
+            `;
+
+        await tx`
+            WITH keep AS (
+                SELECT *
+                FROM UNNEST(${keepSessions}::uuid[], ${keepNames}::text[], ${keepDate}::date[])
+                AS t(session_id, name, date)  -- zip pairs correctly
             )
             DELETE FROM trials e
             WHERE NOT EXISTS (
