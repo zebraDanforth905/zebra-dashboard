@@ -816,7 +816,9 @@ export async function createStudentNote(studentId: string, content: string, crea
       INSERT INTO student_notes (student_id, content, creator, date)
       VALUES (${studentId}, ${content}, ${creator}, NOW());
     `;
+    revalidateTag('studentsnotes', 'max');
     revalidatePath('/dashboard/students');
+    
   } catch (error) {
     console.error('Error creating student note:', error);
     throw new Error('Failed to create student note.');
@@ -829,7 +831,9 @@ export async function deleteStudentNote(noteId: string) {
       DELETE FROM student_notes
       WHERE id = ${noteId};
     `;
+    revalidateTag('studentsnotes', 'max');
     revalidatePath('/dashboard/students');
+   
   } catch (error) {
     console.error('Error deleting student note:', error);
     throw new Error('Failed to delete student note.');
@@ -861,6 +865,34 @@ export async function deleteCustomerNote(noteId: string, customerId: string) {
   } catch (error) {
     console.error('Error deleting customer note:', error);
     throw new Error('Failed to delete customer note.');
+  }
+}
+
+export async function createTrialNote(trialId: string, content: string, creator: string) {
+  try {
+    await sql`
+      INSERT INTO trial_notes (trial_id, content, creator, date)
+      VALUES (${trialId}, ${content}, ${creator}, NOW());
+    `;
+    revalidateTag('studentsnotes', 'max');
+    revalidatePath('/dashboard/schedule');
+  } catch (error) {
+    console.error('Error creating trial note:', error);
+    throw new Error('Failed to create trial note.');
+  }
+}
+
+export async function deleteTrialNote(noteId: string) {
+  try {
+    await sql`
+      DELETE FROM trial_notes
+      WHERE id = ${noteId};
+    `;
+    revalidateTag('studentsnotes', 'max');
+    revalidatePath('/dashboard/schedule');
+  } catch (error) {
+    console.error('Error deleting trial note:', error);
+    throw new Error('Failed to delete trial note.');
   }
 }
 

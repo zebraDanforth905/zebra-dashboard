@@ -4,6 +4,7 @@ import Link from "next/link";
 import clsx from "clsx";
 import { formatDate } from "@/app/lib/utils";
 import StudentNoteCell from "../students/student-note-cell";
+import TrialNoteCell from "./trial-note-cell";
 import { ScheduleRow, MakeupRow, TrialRow } from "@/app/lib/definitions";
 
 type Props = {
@@ -30,7 +31,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
         {trials.map((student) => (
           <div
             key={student.trial_id + student.name}
-            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 px-3 md:px-4 py-2 text-sm bg-amber-50"
+            className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm bg-amber-50"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
@@ -46,6 +47,15 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               </div>
               <div className="text-[11px] text-slate-400">
                 {student.date.toDateString()}
+              </div>
+            </div>
+
+            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
+              <div className="w-full md:min-w-[250px]">
+                <TrialNoteCell 
+                  trial={student}
+                  currentUserName={currentUserName} 
+                />
               </div>
             </div>
           </div>

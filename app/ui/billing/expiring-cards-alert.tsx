@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { formatDate } from '@/app/lib/utils';
+import CustomerNoteCell from './customer-note-cell';
 
 
 interface ExpiringCard {
@@ -12,13 +13,19 @@ interface ExpiringCard {
   amount: string;
   billing_cycle: string;
   days_until_expiry: number;
+  recent_note: {
+    content: string;
+    date: string;
+    creator: string;
+  } | null;
 }
 
 interface ExpiringCardsAlertProps {
   expiringCards: ExpiringCard[];
+  currentUserName: string;
 }
 
-export default function ExpiringCardsAlert({ expiringCards }: ExpiringCardsAlertProps) {
+export default function ExpiringCardsAlert({ expiringCards, currentUserName }: ExpiringCardsAlertProps) {
   if (expiringCards.length === 0) {
     return null;
   }
@@ -50,14 +57,26 @@ export default function ExpiringCardsAlert({ expiringCards }: ExpiringCardsAlert
               href={`/dashboard/billing/${card.customer_id}/edit`}
               className="block bg-white rounded px-2 py-1.5 hover:shadow-sm transition-shadow"
             >
-              <div className="flex items-center justify-between text-xs">
-                <div>
+              <div className="flex items-start justify-between gap-2 text-xs">
+                <div className="flex-1 min-w-0">
                   <div className="font-medium text-gray-900">{card.customer_name}</div>
                   <div className="text-gray-500 text-[10px]">
                     Expires: {formatDate(card.exp_date)} • ${parseFloat(card.amount).toFixed(2)}/{card.billing_cycle}
                   </div>
+                  {card.recent_note && (
+                    <div className="mt-1">
+                      <CustomerNoteCell 
+                        customer={{ 
+                          id: card.customer_id, 
+                          name: card.customer_name,
+                          recent_note: card.recent_note
+                        } as any} 
+                        currentUserName={currentUserName}
+                      />
+                    </div>
+                  )}
                 </div>
-                <div className={`text-[10px] font-semibold ${textColor}`}>
+                <div className={`text-[10px] font-semibold ${textColor} flex-shrink-0`}>
                   {card.days_until_expiry < 0 
                     ? `${Math.abs(card.days_until_expiry)}d ago`
                     : card.days_until_expiry === 0

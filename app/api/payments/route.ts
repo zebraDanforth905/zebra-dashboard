@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     const result = await sql`
       INSERT INTO payments (customer_id, amount, date, status, comment)
       VALUES (${customer_id}, ${amount}, ${date}, ${status}, ${description || ''})
-      RETURNING id, customer_id, amount, date, status, comment
+      RETURNING id, customer_id, amount, date, status, comment AS description
     `;
 
     revalidatePath(`/dashboard/billing/${customer_id}/edit`);
@@ -55,7 +55,7 @@ export async function PUT(request: NextRequest) {
           status = ${status},
           comment = ${description || ''}
       WHERE id = ${id}
-      RETURNING id, customer_id, amount, date, status, comment
+      RETURNING id, customer_id, amount, date, status, comment AS description
     `;
 
     if (result.length === 0) {

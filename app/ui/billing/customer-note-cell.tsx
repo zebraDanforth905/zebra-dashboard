@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CustomerTableData } from '@/app/lib/definitions';
 import CustomerNotesModal from './customer-notes-modal';
@@ -13,6 +13,11 @@ type Props = {
 
 export default function CustomerNoteCell({ customer, currentUserName }: Props) {
   const [showModal, setShowModal] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const truncateNote = (content: string, maxLength: number = 50) => {
     if (content.length <= maxLength) return content;
@@ -56,7 +61,7 @@ export default function CustomerNoteCell({ customer, currentUserName }: Props) {
         </button>
       )}
 
-      {showModal && typeof document !== 'undefined' && createPortal(
+      {showModal && mounted && createPortal(
         <CustomerNotesModal
           customerId={customer.id}
           customerName={customer.name}

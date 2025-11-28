@@ -2,7 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote } from './definitions';
+import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -427,6 +427,8 @@ export async function fetchFilteredStudentsTable(
   sortBy: string,
  
 ) {
+  'use cache'
+  cacheTag('studentsnotes')
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
   
@@ -488,7 +490,7 @@ export async function fetchFilteredStudentsTable(
           'creator', sn.creator
         ) AS recent_note
       FROM student_notes sn
-      ORDER BY sn.student_id, sn.date DESC
+      ORDER BY sn.student_id, sn.date DESC, sn.id DESC
     )
     SELECT
       s.id::text                                 AS id,
@@ -651,7 +653,23 @@ export async function fetchExpiringCards() {
       amount: string;
       billing_cycle: string;
       days_until_expiry: number;
+      recent_note: {
+        content: string;
+        date: string;
+        creator: string;
+      } | null;
     }>>`
+      WITH latest_customer_note AS (
+        SELECT DISTINCT ON (customer_id)
+          customer_id,
+          jsonb_build_object(
+            'content', content,
+            'date', date,
+            'creator', creator
+          ) AS note_data
+        FROM customer_notes
+        ORDER BY customer_id, date DESC, id DESC
+      )
       SELECT 
         crp.recurring_id,
         crp.customer_id,
@@ -660,9 +678,11 @@ export async function fetchExpiringCards() {
         crp.exp_date,
         crp.amount,
         crp.billing_cycle,
-        (crp.exp_date - CURRENT_DATE) AS days_until_expiry
+        (crp.exp_date - CURRENT_DATE) AS days_until_expiry,
+        lcn.note_data AS recent_note
       FROM converge_recurring_payments crp
       JOIN customers c ON c.id = crp.customer_id
+      LEFT JOIN latest_customer_note lcn ON lcn.customer_id = c.id
       WHERE crp.exp_date IS NOT NULL
         AND crp.exp_date <= CURRENT_DATE + INTERVAL '60 days'
       ORDER BY crp.exp_date ASC
@@ -752,6 +772,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
   try {
     
     cacheTag('schedule')
+    cacheTag('studentsnotes')
     // If no date provided, compute the next occurrence of this session's weekday
     let targetDate = date;
     
@@ -779,7 +800,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
           sn.date,
           sn.creator
         FROM student_notes sn
-        ORDER BY sn.student_id, sn.date DESC
+        ORDER BY sn.student_id, sn.date DESC, sn.id DESC
       )
       SELECT
         e.id AS enrolment_id,
@@ -822,7 +843,7 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
   try{
     
   cacheTag('schedule')
-
+  cacheTag('studentsnotes')
   let targetDate = date;
     
     if (!targetDate) {
@@ -847,7 +868,7 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
         sn.date,
         sn.creator
       FROM student_notes sn
-      ORDER BY sn.student_id, sn.date DESC
+      ORDER BY sn.student_id, sn.date DESC, sn.id DESC
     )
     SELECT 
       m.id AS makeup_id, 
@@ -881,6 +902,7 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
   'use cache'
   try{  
   cacheTag('schedule')
+  cacheTag('studentsnotes')
 
   let targetDate = date;
     
@@ -898,9 +920,22 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
     const target = Y(targetDate);
 
   const students = await sql<TrialRow[]>`
-    SELECT t.id AS trial_id, t.name, crs.name AS course_name, t.date
+    WITH latest_trial_note AS (
+      SELECT DISTINCT ON (tn.trial_id)
+        tn.trial_id,
+        JSONB_BUILD_OBJECT(
+          'id', tn.id,
+          'content', tn.content,
+          'date', tn.date,
+          'creator', tn.creator
+        ) AS recent_note
+      FROM trial_notes tn
+      ORDER BY tn.trial_id, tn.date DESC, tn.id DESC
+    )
+    SELECT t.id AS trial_id, t.name, crs.name AS course_name, t.date, ltn.recent_note
     FROM trials t
     JOIN courses crs ON crs.id = t.course_id
+    LEFT JOIN latest_trial_note ltn ON ltn.trial_id = t.id
     WHERE t.session_id = ${sessionId} AND t.date = ${target}
     ORDER BY t.date;
   `;
@@ -1043,7 +1078,7 @@ export async function fetchPickupsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday'
           sn.date,
           sn.creator
         FROM student_notes sn
-        ORDER BY sn.student_id, sn.date DESC
+        ORDER BY sn.student_id, sn.date DESC, sn.id DESC
       )
       SELECT 
         p.*, 
@@ -1331,6 +1366,26 @@ export async function fetchCustomerNotes(customerId: string) {
   }
 }
 
+export async function fetchTrialNotes(trialId: string) {
+  try {
+    const notes = await sql<TrialNote[]>`
+      SELECT 
+        id,
+        trial_id,
+        content,
+        date,
+        creator
+      FROM trial_notes
+      WHERE trial_id = ${trialId}
+      ORDER BY date DESC;
+    `;
+    return notes;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch trial notes.');
+  }
+}
+
 export async function fetchTodaySummary(date?: Date) {
   'use cache'
   try {
@@ -1418,7 +1473,7 @@ export async function fetchTodaySummary(date?: Date) {
           sn.date,
           sn.creator
         FROM student_notes sn
-        ORDER BY sn.student_id, sn.date DESC
+        ORDER BY sn.student_id, sn.date DESC, sn.id DESC
       )
       SELECT 
         p.*, 

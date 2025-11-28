@@ -173,6 +173,14 @@ export type CustomerNote = {
   creator: string;
 };
 
+export type TrialNote = {
+  id: string;
+  trial_id: string;
+  content: string;
+  date: Date;
+  creator: string;
+}
+
 // Formatted Data for display in Tables
 
 export type DisplayEnrolment = {
@@ -259,6 +267,12 @@ export type TrialRow = {
   name: string;
   course_name: string;
   date: Date;
+  recent_note?: {
+    id: string;
+    content: string;
+    date: Date;
+    creator: string;
+  } | null;
 }
 
 export type RecurringInvoiceListData = {

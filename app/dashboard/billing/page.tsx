@@ -55,6 +55,7 @@ export default async function Page(props: {
   // Check if user is admin
   const session = await auth();
   const isAdmin = (session?.user as any)?.user_type === 'admin';
+  const currentUserName = session?.user?.name || 'Unknown';
 
   // Fetch all customers for the CSV upload component and unassigned students
   const customers = isAdmin ? await sql<{ id: string; name: string; email: string }[]>`
@@ -70,7 +71,7 @@ export default async function Page(props: {
     <div className="m-2 md:m-4 space-y-3">
       {/* Expiring Cards Alert */}
       {expiringCards.length > 0 && (
-        <ExpiringCardsAlert expiringCards={expiringCards} />
+        <ExpiringCardsAlert expiringCards={expiringCards} currentUserName={currentUserName} />
       )}
 
       {/* CSV Upload Section - Admin Only */}
