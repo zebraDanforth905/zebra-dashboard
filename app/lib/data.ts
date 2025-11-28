@@ -139,6 +139,7 @@ export async function fetchFilteredCustomers(
               ) AS rn
             FROM converge_recurring_payments
             WHERE next_payment >= CURRENT_DATE
+              AND LOWER(billing_cycle) != 'suspended'
           ) x
           WHERE rn = 1
         ),

@@ -34,12 +34,24 @@ export default function CustomerConvergePayments({ payments }: CustomerConvergeP
       {payments.map((payment) => {
         const isExpiringSoon = payment.exp_date && new Date(payment.exp_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         const isExpired = payment.exp_date && new Date(payment.exp_date) < new Date();
+        const isSuspended = payment.billing_cycle && payment.billing_cycle.toLowerCase() === 'suspended';
+        
         return (
-          <div key={payment.recurring_id} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <div key={payment.recurring_id} className={clsx(
+            "border rounded-lg p-3",
+            isSuspended ? "bg-slate-100 border-slate-300" : "bg-slate-50 border-slate-200"
+          )}>
             <div className="flex items-start justify-between mb-2">
               <div>
-                <div className="text-sm font-semibold text-slate-900">
-                  ${parseFloat(payment.amount).toFixed(2)} / {payment.billing_cycle}
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-semibold text-slate-900">
+                    ${parseFloat(payment.amount).toFixed(2)} / {payment.billing_cycle}
+                  </div>
+                  {isSuspended && (
+                    <span className="inline-flex px-2 py-0.5 text-[10px] font-medium rounded-full bg-yellow-50 text-yellow-700 border border-yellow-200">
+                      Suspended
+                    </span>
+                  )}
                 </div>
                 {payment.description && (
                   <div className="text-xs text-slate-600 mt-0.5">{payment.description}</div>

@@ -451,6 +451,7 @@ export async function skipNextDate(formData: FormData){
 
     revalidatePath("/dashboard/billing/[id]/edit");
     revalidatePath("/dashboard/billing");
+    revalidateTag('invoices', 'max');
   }catch(error){
     console.error('error skipping date: ', error);
   }
