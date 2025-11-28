@@ -1,5 +1,8 @@
+'use client';
+
+import { useState } from 'react';
 import Link from 'next/link';
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ExclamationTriangleIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import { formatDate } from '@/app/lib/utils';
 import CustomerNoteCell from './customer-note-cell';
 
@@ -26,6 +29,8 @@ interface ExpiringCardsAlertProps {
 }
 
 export default function ExpiringCardsAlert({ expiringCards, currentUserName }: ExpiringCardsAlertProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
   if (expiringCards.length === 0) {
     return null;
   }
@@ -93,16 +98,33 @@ export default function ExpiringCardsAlert({ expiringCards, currentUserName }: E
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-100 p-4">
-      <h2 className="text-lg font-semibold text-slate-800 mb-3 flex items-center gap-2">
-        <ExclamationTriangleIcon className="h-5 w-5 text-orange-500" />
-        Payment Card Expiry Alerts
-      </h2>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-100">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-slate-50 transition-colors rounded-t-2xl"
+      >
+        <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+          <ExclamationTriangleIcon className="h-5 w-5 text-orange-500" />
+          Payment Card Expiry Alerts
+          <span className="text-sm font-normal text-slate-500">
+            ({expiringCards.length} card{expiringCards.length !== 1 ? 's' : ''})
+          </span>
+        </h2>
+        {isExpanded ? (
+          <ChevronUpIcon className="h-5 w-5 text-slate-400" />
+        ) : (
+          <ChevronDownIcon className="h-5 w-5 text-slate-400" />
+        )}
+      </button>
 
-      {renderCardGroup(expired, 'Expired Cards', 'bg-red-50', 'text-red-700', 'border-red-200')}
-      {renderCardGroup(critical, 'Expiring This Week', 'bg-orange-50', 'text-orange-700', 'border-orange-200')}
-      {renderCardGroup(warning, 'Expiring This Month', 'bg-yellow-50', 'text-yellow-700', 'border-yellow-200')}
-      {renderCardGroup(upcoming, 'Expiring Soon (30-60 days)', 'bg-blue-50', 'text-blue-700', 'border-blue-200')}
+      {isExpanded && (
+        <div className="px-4 pb-4">
+          {renderCardGroup(expired, 'Expired Cards', 'bg-red-50', 'text-red-700', 'border-red-200')}
+          {renderCardGroup(critical, 'Expiring This Week', 'bg-orange-50', 'text-orange-700', 'border-orange-200')}
+          {renderCardGroup(warning, 'Expiring This Month', 'bg-yellow-50', 'text-yellow-700', 'border-yellow-200')}
+          {renderCardGroup(upcoming, 'Expiring Soon (30-60 days)', 'bg-blue-50', 'text-blue-700', 'border-blue-200')}
+        </div>
+      )}
     </div>
   );
 }
