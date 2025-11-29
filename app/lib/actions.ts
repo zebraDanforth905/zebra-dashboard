@@ -481,15 +481,48 @@ export async function generateInvoiceFromRecurring(formData: FormData) {
       VALUES (${recurring.customer_id}, ${recurring.amount}, ${recurring.next_date}, ${recurring.description})
     `;
     
-    // Create FormData to call skipNextDate
-    const skipFormData = new FormData();
-    skipFormData.append('invoiceId', recurring.id);
-    skipFormData.append('nextDate', recurring.next_date.toString());
-    skipFormData.append('dayOfMonth', recurring.day_of_month.toString());
-    skipFormData.append('every', recurring.every.toString());
+    // Handle end_after logic
+    if (recurring.end_after !== null) {
+      const newEndAfter = recurring.end_after - 1;
+      
+      if (newEndAfter <= 0) {
+        // Delete the recurring invoice if it has exhausted its occurrences
+        await sql`
+          DELETE FROM recurring_invoices
+          WHERE id = ${recurring.id}
+        `;
+        console.log(`Deleted recurring invoice ${recurring.id} after reaching end_after limit`);
+      } else {
+        // Decrement end_after and update next_date
+        const next_date = computeNextDate({
+          startDate: nextDay(recurring.next_date), 
+          dayOfMonth: recurring.day_of_month, 
+          every: recurring.every
+        });
+        
+        await sql`
+          UPDATE recurring_invoices
+          SET next_date = ${next_date},
+              end_after = ${newEndAfter}
+          WHERE id = ${recurring.id}
+        `;
+        console.log(`Updated recurring invoice ${recurring.id}: end_after = ${newEndAfter}, next_date = ${next_date}`);
+      }
+    } else {
+      // No end_after limit, just update next_date as before
+      const skipFormData = new FormData();
+      skipFormData.append('invoiceId', recurring.id);
+      skipFormData.append('nextDate', recurring.next_date.toString());
+      skipFormData.append('dayOfMonth', recurring.day_of_month.toString());
+      skipFormData.append('every', recurring.every.toString());
+      
+      await skipNextDate(skipFormData);
+    }
     
-    // Call skipNextDate to update the recurring invoice's next_date
-    await skipNextDate(skipFormData);
+    // Revalidate cache
+    revalidatePath("/dashboard/billing/[id]/edit");
+    revalidatePath("/dashboard/billing");
+    revalidateTag('invoices', 'max');
   } catch (error) {
     console.error('Error generating invoice from recurring:', error);
     throw new Error('Failed to generate invoice.');
