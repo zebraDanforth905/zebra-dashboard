@@ -1316,7 +1316,7 @@ export async function currentDateCheckRecurringInvoices() {
       const currentDateCheck = await sql`SELECT CURRENT_DATE`;
       console.log('Database CURRENT_DATE:', currentDateCheck);
       
-      // Fetch all recurring invoices where next_date is exactly today
+      // Fetch all recurring invoices where next_date is today or earlier
       const invoices = await sql<Array<{
         id: string;
         customer_id: string;
@@ -1326,7 +1326,7 @@ export async function currentDateCheckRecurringInvoices() {
       }>>`
         SELECT id, customer_id, description, amount, next_date, DATE(next_date) as next_date_only
         FROM recurring_invoices
-        WHERE DATE(next_date) < CURRENT_DATE
+        WHERE DATE(next_date) <= CURRENT_DATE
       `;
   
       
