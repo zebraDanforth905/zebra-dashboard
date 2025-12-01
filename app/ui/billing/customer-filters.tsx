@@ -4,7 +4,7 @@ import { useSearchParams, usePathname, useRouter } from 'next/navigation';
 import { AdjustmentsHorizontalIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useState } from 'react';
 
-type FilterType = 'qbo' | 'balance' | 'students' | 'payments' | 'recurringPayments' | 'scheduledInvoices' | 'paymentMatch';
+type FilterType = 'qbo' | 'balance' | 'students' | 'recurringPayments' | 'scheduledInvoices' | 'paymentMatch';
 
 interface FilterOption {
   value: string;
@@ -28,12 +28,6 @@ const filterOptions: Record<FilterType, FilterOption[]> = {
     { value: 'no-students', label: 'No Students' },
     { value: 'has-active-students', label: 'Has Active Students' },
     { value: 'no-active-students', label: 'No Active Students' },
-  ],
-  payments: [
-    { value: 'all', label: 'All' },
-    { value: 'has-recurring', label: 'Has Recurring Payments' },
-    { value: 'has-invoices', label: 'Has Scheduled Invoices' },
-    { value: 'no-upcoming', label: 'No Upcoming Payments' },
   ],
   recurringPayments: [
     { value: 'all', label: 'All' },
@@ -62,7 +56,6 @@ export default function CustomerFilters() {
     qbo: searchParams.get('qboFilter') || 'all',
     balance: searchParams.get('balanceFilter') || 'all',
     students: searchParams.get('studentsFilter') || 'all',
-    payments: searchParams.get('paymentsFilter') || 'all',
     recurringPayments: searchParams.get('recurringPaymentsFilter') || 'all',
     scheduledInvoices: searchParams.get('scheduledInvoicesFilter') || 'all',
     paymentMatch: searchParams.get('paymentMatchFilter') || 'all',
@@ -93,7 +86,6 @@ export default function CustomerFilters() {
     params.delete('qboFilter');
     params.delete('balanceFilter');
     params.delete('studentsFilter');
-    params.delete('paymentsFilter');
     params.delete('recurringPaymentsFilter');
     params.delete('scheduledInvoicesFilter');
     params.delete('paymentMatchFilter');
@@ -197,28 +189,6 @@ export default function CustomerFilters() {
                       onClick={() => handleFilterChange('students', option.value)}
                       className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                         currentFilters.students === option.value
-                          ? 'bg-sky-600 text-white shadow-sm'
-                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Payments Filter */}
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-2">
-                  Payment Status
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {filterOptions.payments.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => handleFilterChange('payments', option.value)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                        currentFilters.payments === option.value
                           ? 'bg-sky-600 text-white shadow-sm'
                           : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                       }`}

@@ -1,5 +1,8 @@
 {
   "crons": [
-    { "path": "/jobs/scrape-now", "schedule": "30 18 * * *" } 
+    {
+      "path": "/jobs/scrape-now",
+      "schedule": "30 18 * * *"
+    }
   ]
 }
