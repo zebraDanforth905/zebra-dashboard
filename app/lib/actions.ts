@@ -1175,6 +1175,84 @@ export async function createCustomer(name: string, email: string): Promise<{ id:
   }
 }
 
+// Helper function to generate recurring invoice for a newly assigned student
+async function generateRecurringInvoiceForStudent(studentId: string, customerId: string) {
+  try {
+    // Get student name and calculate their enrollment costs
+    const studentData = await sql`
+      SELECT 
+        s.name as student_name,
+        COALESCE(SUM(co.price), 0) as total_enrollment_cost,
+        COUNT(DISTINCT e.id) as enrollment_count
+      FROM students s
+      LEFT JOIN enrolments e ON e.student_id = s.id
+      LEFT JOIN courses co ON co.id = e.course_id
+      WHERE s.id = ${studentId}
+      GROUP BY s.name
+    `;
+
+    // Calculate pickup costs for this student ($40 per weekday)
+    const pickupData = await sql`
+      SELECT 
+        COUNT(DISTINCT p.weekday) FILTER (WHERE p.id IS NOT NULL) * 40 as total_pickup_cost,
+        COUNT(DISTINCT p.weekday) FILTER (WHERE p.id IS NOT NULL) as pickup_count
+      FROM pickups p
+      WHERE p.student_id = ${studentId}
+    `;
+
+    const studentName = studentData[0]?.student_name || 'Student';
+    const enrollmentCost = Number(studentData[0]?.total_enrollment_cost) || 0;
+    const pickupCost = Number(pickupData[0]?.total_pickup_cost) || 0;
+    const totalMonthlyFee = enrollmentCost + pickupCost;
+    const enrollmentCount = studentData[0]?.enrollment_count || 0;
+    const pickupCount = pickupData[0]?.pickup_count || 0;
+
+    console.log(`DEBUG - Student: ${studentName}, enrollmentCost: ${enrollmentCost} (type: ${typeof enrollmentCost}), pickupCost: ${pickupCost}, totalMonthlyFee: ${totalMonthlyFee}`);
+
+    // Calculate first of next month
+    const today = new Date();
+    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const startDate = nextMonth.toISOString().split('T')[0];
+
+    const description = `Monthly fee for ${studentName}: ${enrollmentCount} enrollment(s), ${pickupCount} pickup(s)`;
+    const amount = totalMonthlyFee * 100; // Convert dollars to cents
+    
+    console.log(`DEBUG: amount stored in DB will be: ${amount}`);
+
+    if (totalMonthlyFee > 0) {
+      // Create new recurring invoice for this student starting first of next month
+      await sql`
+        INSERT INTO recurring_invoices (
+          customer_id,
+          amount,
+          day_of_month,
+          every,
+          start_date,
+          next_date,
+          end_after,
+          description
+        )
+        VALUES (
+          ${customerId},
+          ${amount},
+          1,
+          1,
+          ${startDate},
+          ${startDate},
+          NULL,
+          ${description}
+        )
+      `;
+      console.log(`Created recurring invoice for student ${studentName} (customer ${customerId}): $${totalMonthlyFee.toFixed(2)}/month starting ${startDate}`);
+    } else {
+      console.log(`No recurring invoice created for student ${studentName} - no enrollments or pickups`);
+    }
+  } catch (error) {
+    console.error('Error generating recurring invoice for student:', error);
+    // Don't throw - we don't want to fail the student assignment if invoice creation fails
+  }
+}
+
 export async function assignStudentToCustomer(studentId: string, customerId: string) {
   try {
     await sql`
@@ -1183,7 +1261,11 @@ export async function assignStudentToCustomer(studentId: string, customerId: str
       WHERE id = ${studentId};
     `;
 
+    // Generate recurring invoice for this newly assigned student
+    await generateRecurringInvoiceForStudent(studentId, customerId);
+
     revalidatePath('/dashboard/billing');
+    revalidateTag('invoices', 'max');
   } catch (error) {
     console.error('Error assigning student to customer:', error);
     throw new Error('Failed to assign student to customer.');
@@ -1245,14 +1327,15 @@ export async function uploadSettledBatchCSV(csvContent: string): Promise<{ match
     
     // Find column indices
     const nameIdx = headers.indexOf('Customer Full Name');
+    const emailIdx = headers.indexOf('Email Address');
     const amountIdx = headers.indexOf('Amount');
     const dateIdx = headers.indexOf('Transaction Date');
     const descIdx = headers.indexOf('Description');
     const txnIdIdx = headers.indexOf('Transaction ID');
     const statusIdx = headers.indexOf('Transaction Status');
 
-    if (nameIdx === -1 || amountIdx === -1 || dateIdx === -1) {
-      throw new Error('CSV is missing required columns');
+    if (emailIdx === -1 || amountIdx === -1 || dateIdx === -1) {
+      throw new Error('CSV is missing required columns (Email Address, Amount, Transaction Date)');
     }
 
     const unmatched: UnmatchedPayment[] = [];
@@ -1283,29 +1366,30 @@ export async function uploadSettledBatchCSV(csvContent: string): Promise<{ match
       fields.push(currentField.trim());
 
       const customerName = fields[nameIdx]?.replace(/"/g, '').trim();
+      const customerEmail = fields[emailIdx]?.replace(/"/g, '').trim();
       const amountStr = fields[amountIdx]?.replace(/"/g, '').trim();
       const dateStr = fields[dateIdx]?.replace(/"/g, '').trim();
       const description = fields[descIdx]?.replace(/"/g, '').trim() || '';
       const transactionId = fields[txnIdIdx]?.replace(/"/g, '').trim() || '';
       const status = fields[statusIdx]?.replace(/"/g, '').trim();
 
-      if (!customerName || !amountStr || !dateStr || status !== 'Settled') continue;
+      if (!customerEmail || !amountStr || !dateStr || status !== 'Settled') continue;
 
       const amount = Math.round(parseFloat(amountStr) * 100); // Convert to cents
       const transactionDate = new Date(dateStr);
 
       if (isNaN(amount) || isNaN(transactionDate.getTime())) continue;
 
-      // Try to match customer by name (fuzzy matching)
-      const customers = await sql<{ id: string; name: string }[]>`
-        SELECT id, name 
+      // Try to match customer by email (case-insensitive)
+      const customers = await sql<{ id: string; name: string; email: string }[]>`
+        SELECT id, name, email
         FROM customers 
-        WHERE LOWER(name) = LOWER(${customerName})
+        WHERE LOWER(email) = LOWER(${customerEmail})
         LIMIT 1;
       `;
 
       if (customers.length > 0) {
-        // Match found - insert payment
+        // Match found by email - insert payment
         await sql`
           INSERT INTO payments (customer_id, amount, date, status)
           VALUES (${customers[0].id}, ${amount}, ${transactionDate}, 'submitted')
@@ -1313,9 +1397,9 @@ export async function uploadSettledBatchCSV(csvContent: string): Promise<{ match
         `;
         matched++;
       } else {
-        // No match - add to unmatched list
+        // No email match - add to unmatched list
         unmatched.push({
-          customer_full_name: customerName,
+          customer_full_name: customerName || customerEmail,
           amount,
           transaction_date: transactionDate,
           description,

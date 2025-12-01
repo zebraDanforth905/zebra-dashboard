@@ -210,7 +210,7 @@ export default function SettledBatchCSVUpload({ customers: initialCustomers }: P
         )}
 
         <p className="mt-2 text-[10px] text-slate-500">
-          Upload SETTLEDBATCHES CSV. Matched by customer name, status &quot;submitted&quot;.
+          Upload SETTLEDBATCHES CSV. Matched by customer email, status &quot;submitted&quot;.
         </p>
       </div>
 
