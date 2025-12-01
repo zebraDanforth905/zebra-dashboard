@@ -1063,8 +1063,45 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
           unmatched.push(paymentData);
         }
       } else {
-        // Recurring ID doesn't exist - add to unmatched list for user to assign
-        unmatched.push(paymentData);
+        // Recurring ID doesn't exist - try to auto-match by email
+        let autoMatched = false;
+        
+        if (paymentData.email && paymentData.email.trim()) {
+          try {
+            // Look for customer with matching email
+            const customerMatch = await sql`
+              SELECT id FROM customers
+              WHERE LOWER(email) = LOWER(${paymentData.email.trim()})
+              LIMIT 1;
+            `;
+            
+            if (customerMatch.length > 0) {
+              // Found matching customer - auto-assign
+              const customerId = customerMatch[0].id;
+              await sql`
+                INSERT INTO converge_recurring_payments (
+                  recurring_id, customer_id, amount, billing_cycle, last_name, 
+                  email, phone, exp_date, start_date, last_payment, next_payment, description
+                ) VALUES (
+                  ${recurringId}, ${customerId}, ${paymentData.amount}, ${paymentData.billing_cycle},
+                  ${paymentData.last_name}, ${paymentData.email}, ${paymentData.phone},
+                  ${paymentData.exp_date}, ${paymentData.start_date}, ${paymentData.last_payment},
+                  ${paymentData.next_payment}, ${paymentData.description}
+                );
+              `;
+              matchedCount++;
+              autoMatched = true;
+              console.log(`Auto-matched recurring payment ${recurringId} to customer ${customerId} by email`);
+            }
+          } catch (matchError) {
+            console.error(`Error auto-matching recurring_id ${recurringId}:`, matchError);
+          }
+        }
+        
+        if (!autoMatched) {
+          // Couldn't auto-match - add to unmatched list for manual assignment
+          unmatched.push(paymentData);
+        }
       }
     }
 
