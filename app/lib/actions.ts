@@ -882,6 +882,7 @@ export async function createCustomerNote(customerId: string, content: string, cr
     `;
     revalidatePath('/dashboard/billing');
     revalidatePath(`/dashboard/billing/${customerId}/edit`);
+    revalidatePath('/dashboard/billing/invoice-discrepancies');
   } catch (error) {
     console.error('Error creating customer note:', error);
     throw new Error('Failed to create customer note.');
@@ -896,6 +897,7 @@ export async function deleteCustomerNote(noteId: string, customerId: string) {
     `;
     revalidatePath('/dashboard/billing');
     revalidatePath(`/dashboard/billing/${customerId}/edit`);
+    revalidatePath('/dashboard/billing/invoice-discrepancies');
   } catch (error) {
     console.error('Error deleting customer note:', error);
     throw new Error('Failed to delete customer note.');
