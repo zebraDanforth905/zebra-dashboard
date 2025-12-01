@@ -1390,11 +1390,12 @@ export async function uploadSettledBatchCSV(csvContent: string): Promise<{ match
 
       if (customers.length > 0) {
         // Match found by email - insert payment
-        await sql`
-          INSERT INTO payments (customer_id, amount, date, status)
-          VALUES (${customers[0].id}, ${amount}, ${transactionDate}, 'submitted')
-          ON CONFLICT DO NOTHING;
-        `;
+          await sql`
+            INSERT INTO payments (transaction_id, customer_id, amount, date, status, comment)
+            VALUES (${transactionId}, ${customers[0].id}, ${amount}, ${transactionDate}, 'submitted', ${description})
+            ON CONFLICT (transaction_id) DO UPDATE SET
+              comment = EXCLUDED.comment;
+          `;
         matched++;
       } else {
         // No email match - add to unmatched list
@@ -1418,11 +1419,20 @@ export async function uploadSettledBatchCSV(csvContent: string): Promise<{ match
 
 export async function assignPaymentToCustomer(customerId: string, paymentData: UnmatchedPayment) {
   try {
-    await sql`
-      INSERT INTO payments (customer_id, amount, date, status)
-      VALUES (${customerId}, ${paymentData.amount}, ${paymentData.transaction_date}, 'submitted')
-      ON CONFLICT DO NOTHING;
-    `;
+    // Include transaction_id if it exists
+    if (paymentData.transaction_id && paymentData.transaction_id.trim()) {
+      await sql`
+        INSERT INTO payments (transaction_id, customer_id, amount, date, status)
+        VALUES (${paymentData.transaction_id}, ${customerId}, ${paymentData.amount}, ${paymentData.transaction_date}, 'submitted')
+        ON CONFLICT (transaction_id) DO NOTHING;
+      `;
+    } else {
+      await sql`
+        INSERT INTO payments (customer_id, amount, date, status)
+        VALUES (${customerId}, ${paymentData.amount}, ${paymentData.transaction_date}, 'submitted')
+        ON CONFLICT DO NOTHING;
+      `;
+    }
 
     revalidatePath('/dashboard/billing');
   } catch (error) {
