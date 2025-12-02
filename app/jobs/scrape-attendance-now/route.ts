@@ -8,6 +8,7 @@ export async function GET() {
   try {
     const result = await syncAbsencesForCurrentWeek();
     
+    
     console.log("running the endpoint: ", result);
 
     revalidateTag('schedule', 'max')

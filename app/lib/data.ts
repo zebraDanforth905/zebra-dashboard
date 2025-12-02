@@ -2,7 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote } from './definitions';
+import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote, CampSessionWithEnrolments } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -84,8 +84,10 @@ export async function fetchFilteredCustomers(
     havingConditions = sql`${havingConditions} AND crp.next_payment = rec.next_invoice_date AND (crp.amount * 100)::INTEGER = rec.next_invoice_amount`;
   } else if (paymentMatchFilter === 'mismatch') {
     havingConditions = sql`${havingConditions} AND (
-      (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NOT NULL) AND
-      (crp.next_payment != rec.next_invoice_date OR (crp.amount * 100)::INTEGER != rec.next_invoice_amount)
+      (crp.next_payment IS NULL AND rec.next_invoice_date IS NOT NULL) OR
+      (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NULL) OR
+      (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NOT NULL AND
+       (crp.next_payment != rec.next_invoice_date OR (crp.amount * 100)::INTEGER != rec.next_invoice_amount))
     )`;
   }
   
@@ -284,8 +286,10 @@ export async function fetchCustomerPages(
         havingConditions = sql`${havingConditions} AND crp.next_payment = rec.next_invoice_date AND (crp.amount * 100)::INTEGER = rec.next_invoice_amount`;
       } else if (paymentMatchFilter === 'mismatch') {
         havingConditions = sql`${havingConditions} AND (
-          (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NOT NULL) AND
-          (crp.next_payment != rec.next_invoice_date OR (crp.amount * 100)::INTEGER != rec.next_invoice_amount)
+          (crp.next_payment IS NULL AND rec.next_invoice_date IS NOT NULL) OR
+          (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NULL) OR
+          (crp.next_payment IS NOT NULL AND rec.next_invoice_date IS NOT NULL AND
+           (crp.next_payment != rec.next_invoice_date OR (crp.amount * 100)::INTEGER != rec.next_invoice_amount))
         )`;
       }
       
@@ -1653,9 +1657,101 @@ export async function fetchInvoiceDiscrepancies() {
     `;
     
     return discrepancies;
-    return discrepancies;
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch invoice discrepancies.');
+  }
+}
+
+// Camp functions
+export async function fetchUpcomingCampSessions() {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const sessions = await sql<Array<{
+      id: string;
+      start_date: Date;
+      end_date: Date;
+      extended_care: boolean;
+      camp_type: 'FD' | 'PM' | 'AM';
+      enrolment_count: number;
+    }>>`
+      SELECT 
+        cs.id,
+        cs.start_date,
+        cs.end_date,
+        cs.extended_care,
+        cs.camp_type,
+        COUNT(ce.id)::int as enrolment_count
+      FROM camp_sessions cs
+      LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      WHERE cs.start_date >= CURRENT_DATE
+      GROUP BY cs.id, cs.start_date, cs.end_date, cs.extended_care, cs.camp_type
+      ORDER BY cs.start_date ASC, cs.camp_type ASC;
+    `;
+    return sessions;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch upcoming camp sessions.');
+  }
+}
+
+export async function fetchCampSessionById(sessionId: string) {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const [session] = await sql<Array<{
+      id: string;
+      start_date: Date;
+      end_date: Date;
+      extended_care: boolean;
+      camp_type: 'FD' | 'PM' | 'AM';
+    }>>`
+      SELECT 
+        id,
+        start_date,
+        end_date,
+        extended_care,
+        camp_type
+      FROM camp_sessions
+      WHERE id = ${sessionId};
+    `;
+    
+    if (!session) return null;
+    
+    const enrolments = await sql<Array<{
+      id: string;
+      student_id: string;
+      student_name: string;
+      dob: Date | null;
+      course_id: string;
+      camp_type: 'FD' | 'PM' | 'AM';
+      assigned_seat_number: number | null;
+      special_needs: string | null;
+    }>>`
+      SELECT 
+        ce.id,
+        ce.student_id,
+        s.name as student_name,
+        s.dob,
+        ce.course_id,
+        cs.camp_type,
+        ce.assigned_seat_number,
+        s.special_needs
+      FROM camp_enrolments ce
+      JOIN students s ON s.id = ce.student_id
+      JOIN camp_sessions cs ON cs.id = ce.camp_session_id
+      WHERE ce.camp_session_id = ${sessionId}
+      ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC;
+    `;
+    
+    return {
+      ...session,
+      enrolment_count: enrolments.length,
+      enrolments
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp session.');
   }
 }

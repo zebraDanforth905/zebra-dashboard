@@ -127,3 +127,42 @@ export async function fetchAttendanceReport(opts: {
 
 }
 
+export async function fetchCampEnrolments(opts: {
+  startDate: string;     // "YYYY-MM-DD"
+  endDate: string;       // "YYYY-MM-DD"
+  branchId: number; // 20
+}) {
+  const {startDate, endDate, branchId} = opts;
+  console.log(opts);
+  const token = await loginGetToken();
+
+  const url = `${ZEBRA_API_BASE}/reports/camp/20/default/default/${startDate}/${endDate}`;
+  console.log(url);
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "x-auth-token": token,
+      referer: "https://portal.zebrarobotics.com/",
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Camp enrolments fetch failed: ${res.status} ${res.statusText}`);
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(`Expected JSON, got ${ct}: ${text.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  console.log(data);
+
+  if (Array.isArray(data)) return data;
+
+ 
+  if (data && typeof data === "object" && Array.isArray((data as any).results)) return (data as any).results;
+
+  return data ? [data] : [];
+
+} 

@@ -90,3 +90,108 @@ export function normalizeAbsencesFromAttendance(results: RawAttendance[]): Norma
       date: r.date,
     }));
 }
+
+// normalize_camp.ts
+type RawCampEnrolment = {
+  delivery_type: string;
+  program_type: string;
+  camp_week: string;        // "Jan 16, 2026 - Jan 16, 2026"
+  camp_type: string;        // "FD" | "PM" | "AM"
+  camp_times: string;       // "08:30:00 - 16:00:00"
+  course_abbr: string;
+  student_id: number;
+  student_name: string;
+  phone: string;
+  parent_id: number;
+  email: string;
+  parent_name: string;
+  course_status: string;
+  alternate_emails: string;
+  dob: string;
+  allergies: string;
+  special_need: string;
+};
+
+export type NormalizedCampEnrolment = {
+  student_id: number;
+  student_name: string;
+  dob: string;              // "YYYY-MM-DD"
+  start_date: string;       // "YYYY-MM-DD"
+  end_date: string;         // "YYYY-MM-DD"
+  start_time: string;       // "HH:MM:SS"
+  end_time: string;         // "HH:MM:SS"
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  special_needs: string;
+  course_id: string;        // course_abbr
+};
+
+function parseCampWeek(campWeek: string): { start: string; end: string } | null {
+  // "Jan 16, 2026 - Jan 16, 2026" or "Jan 16, 2026 - Jan 17, 2026"
+  const match = campWeek.match(/([A-Za-z]+)\s+(\d+),\s+(\d{4})\s*-\s*([A-Za-z]+)\s+(\d+),\s+(\d{4})/);
+  if (!match) return null;
+
+  const [, startMonth, startDay, startYear, endMonth, endDay, endYear] = match;
+  
+  const monthMap: { [key: string]: string } = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+  
+  const startMonthNum = monthMap[startMonth.toLowerCase().slice(0, 3)];
+  const endMonthNum = monthMap[endMonth.toLowerCase().slice(0, 3)];
+  
+  if (!startMonthNum || !endMonthNum) return null;
+  
+  return {
+    start: `${startYear}-${startMonthNum}-${startDay.padStart(2, '0')}`,
+    end: `${endYear}-${endMonthNum}-${endDay.padStart(2, '0')}`
+  };
+}
+
+function parseCampTimes(campTimes: string): { start: string; end: string } | null {
+  // "08:30:00 - 16:00:00"
+  const match = campTimes.match(/([\d:]+)\s*-\s*([\d:]+)/);
+  if (!match) return null;
+  
+  return {
+    start: match[1].trim(),
+    end: match[2].trim()
+  };
+}
+
+export function normalizeCampEnrolments(results: RawCampEnrolment[]): NormalizedCampEnrolment[] {
+  console.log("normalizing camp enrolments");
+  
+  return results
+    .filter(r => r.course_status === "Active")
+    .map(r => {
+      const dates = parseCampWeek(r.camp_week);
+      const times = parseCampTimes(r.camp_times);
+      
+      if (!dates || !times) {
+        console.warn(`Skipping invalid camp enrolment for student ${r.student_id}:`, { camp_week: r.camp_week, camp_times: r.camp_times });
+        return null;
+      }
+      
+      // Extended care is typically before 9am or after 4pm
+      const startHour = parseInt(times.start.split(':')[0]);
+      const endHour = parseInt(times.end.split(':')[0]);
+      const extended_care = startHour < 9 || endHour > 16;
+      
+      return {
+        student_id: r.student_id,
+        student_name: r.student_name,
+        dob: r.dob || '',
+        start_date: dates.start,
+        end_date: dates.end,
+        start_time: times.start,
+        end_time: times.end,
+        camp_type: r.camp_type as 'FD' | 'PM' | 'AM',
+        extended_care,
+        special_needs: r.special_need || '',
+        course_id: r.course_abbr || ''
+      };
+    })
+    .filter((r): r is NormalizedCampEnrolment => r !== null);
+}

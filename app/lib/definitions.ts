@@ -32,12 +32,31 @@ export type ConvergeRecurringPayment = {
     customer_id: string;
 }
 
+// create a camps page, where the user can see upcoming camps and click on them to see all the students enrolled in that camp session, add some or all campers to slip_info, and also access a drag and drop seating chart with cards for each student with their date of birth, session (FD, PM, AM), and course 
 export type Student = {
   id:string;
   name: string;
   customer_id: string;
+  dob?: Date;
+  special_needs?: string;
   has_activity?: boolean;
   has_upcoming_start?: boolean;
+}
+
+export type CampSession = {
+    id: string;
+    start_date: Date;
+    end_date: Date;
+    extended_care: boolean;
+    camp_type: 'FD' | 'PM' | 'AM';
+}
+
+export type CampEnrolment = {
+    id: string;
+    student_id: string;
+    camp_session_id: string;
+    course_id: string;
+    assigned_seat_number: number;
 }
 
 export type Invoice = {
@@ -320,3 +339,24 @@ export type InvoiceTableData = {
     date: Date;
     description: string;
 }
+
+export type CampEnrolmentWithStudent = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  dob: Date | null;
+  course_id: string;
+  camp_type: 'FD' | 'PM' | 'AM';
+  assigned_seat_number: number | null;
+  special_needs: string | null;
+};
+
+export type CampSessionWithEnrolments = {
+  id: string;
+  start_date: Date;
+  end_date: Date;
+  extended_care: boolean;
+  camp_type: 'FD' | 'PM' | 'AM';
+  enrolment_count: number;
+  enrolments: CampEnrolmentWithStudent[];
+};

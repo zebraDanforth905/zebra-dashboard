@@ -10,10 +10,6 @@ export const config = {
 
 export async function middleware(request: NextRequest) {
 
-  if (request.nextUrl.pathname.startsWith('/dashboard/camp')) {
-    return NextResponse.rewrite(new URL('/dashboard/schedule', request.url))
-  }
-
   // Protect admin routes - admin access only
   if (request.nextUrl.pathname.startsWith('/dashboard/admin')) {
     console.log('Middleware - Admin route access check:', {

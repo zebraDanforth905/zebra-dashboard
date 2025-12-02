@@ -6,9 +6,9 @@ import { revalidatePath, revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
 import {z} from 'zod';
-import { fetchAttendanceReport, fetchEnrolmentReportJSON } from './scraper_helpers';
-import { normalizeAbsencesFromAttendance, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
-import { syncAbsencesForRange, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
+import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
+import { normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
+import { insertCampEnrolments, syncAbsencesForRange, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
 import { RecurringInvoice } from './definitions';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
@@ -183,6 +183,35 @@ export async function scrapeEnrolmentNow(opts?: {
   return { ok: true, rows: normalized.length, ...res };
 }
 
+export async function scrapeCampEnrolments(opts?: {
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;   // YYYY-MM-DD
+  branchId?: number;
+}) {
+  const branchId = opts?.branchId ?? Number(process.env.ZEBRA_BRANCH_ID ?? 20);
+  
+  // Default to current date if not provided
+  const today = new Date();
+  const startDate = opts?.startDate ?? ymd(today);
+  const endDate = opts?.endDate ?? ymd(new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000)); // 1 year from now
+
+  const raw = await fetchCampEnrolments({
+    startDate,
+    endDate,
+    branchId,
+  });
+
+  const normalized = normalizeCampEnrolments(raw);
+  const res = await insertCampEnrolments(normalized);
+
+  // refresh any pages that read from these tables
+  revalidatePath("/dashboard", 'layout');
+  revalidatePath("/students", 'layout');
+  revalidatePath("/camp", 'layout');
+
+  return { ok: true, rows: normalized.length, ...res };
+}
+
 
 export async function syncAbsencesForCurrentWeek(){
   const startDate = new Date();
@@ -203,6 +232,8 @@ export async function syncAbsencesForCurrentWeek(){
 
   return {ok: true, rows: normalized.length, ...res};
 }
+
+
 
 export async function createRecurringInvoice(formData: FormData) {
   const {customer_id, amount, day_of_month, every, start_date, end_after, description} = NewRecurringInvoiceFormSchema.parse({
@@ -1705,3 +1736,57 @@ export async function updatePassword(formData: FormData) {
   }
 }
 
+// Camp actions
+export async function updateCampSeatAssignment(enrolmentId: string, seatNumber: number | null) {
+  try {
+    await sql`
+      UPDATE camp_enrolments
+      SET assigned_seat_number = ${seatNumber}
+      WHERE id = ${enrolmentId};
+    `;
+    revalidatePath('/dashboard/camp');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating seat assignment:', error);
+    return { ok: false, error: 'Failed to update seat assignment' };
+  }
+}
+
+export async function createSlipsForCampers(studentIds: string[], sessionId: string) {
+  try {
+    const enrolments = await sql<Array<{
+      student_id: string;
+      student_name: string;
+      course_id: string;
+    }>>`
+      SELECT 
+        ce.student_id,
+        s.name as student_name,
+        ce.course_id
+      FROM camp_enrolments ce
+      JOIN students s ON s.id = ce.student_id
+      WHERE ce.camp_session_id = ${sessionId}
+        AND ce.student_id = ANY(${studentIds}::int[]);
+    `;
+    
+    for (const enrolment of enrolments) {
+      await sql`
+        INSERT INTO slip_info (student_name, user_id, lms_username, lms_password, course_name)
+        VALUES (
+          ${enrolment.student_name},
+          ${enrolment.student_id},
+          '',
+          '',
+          ${enrolment.course_id}
+        )
+        ON CONFLICT (user_id, course_name) DO NOTHING;
+      `;
+    }
+    
+    revalidatePath('/dashboard/camp');
+    return { ok: true, created: enrolments.length };
+  } catch (error) {
+    console.error('Error creating slips:', error);
+    return { ok: false, error: 'Failed to create slips' };
+  }
+}

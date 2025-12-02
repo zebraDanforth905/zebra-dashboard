@@ -417,6 +417,120 @@ export async function syncAbsencesForRange(opts: {
   });
 }
 
+// insert_camp.ts
+type NormalizedCampRow = {
+  student_id: number;
+  student_name: string;
+  dob: string;
+  start_date: string;
+  end_date: string;
+  start_time: string;
+  end_time: string;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  special_needs: string;
+  course_id: string;
+};
+
+async function getCampSessionId(
+  tx: any,
+  startDate: string,
+  endDate: string,
+  extendedCare: boolean,
+  campType: 'FD' | 'PM' | 'AM'
+): Promise<string> {
+  const result = await tx<{ id: string }[]>`
+    INSERT INTO camp_sessions (start_date, end_date, extended_care, camp_type)
+    VALUES (${startDate}::date, ${endDate}::date, ${extendedCare}, ${campType})
+    ON CONFLICT (start_date, end_date, camp_type, extended_care) 
+      DO UPDATE SET extended_care = EXCLUDED.extended_care
+    RETURNING id;
+  `;
+  return result[0].id;
+}
+
+export async function insertCampEnrolments(rows: NormalizedCampRow[]) {
+  if (!rows.length) return { inserted: 0, updated: 0, seen: 0 };
+
+  const seenEnrolments = new Set<string>();
+
+  await sql.begin(async (tx) => {
+    for (const r of rows) {
+      console.log(
+        r.student_id,
+        r.student_name,
+        r.start_date,
+        r.end_date,
+        r.camp_type,
+        r.extended_care
+      );
+
+      // Get or create camp session
+      const campSessionId = await getCampSessionId(
+        tx,
+        r.start_date,
+        r.end_date,
+        r.extended_care,
+        r.camp_type
+      );
+
+      // Update student with name, dob, and special_needs
+      const dobValue = r.dob ? r.dob : null;
+      await tx`
+        INSERT INTO students (id, name, dob, special_needs)
+        VALUES (${r.student_id}, ${r.student_name}, ${dobValue}::date, ${r.special_needs})
+        ON CONFLICT (id) DO UPDATE
+          SET name = EXCLUDED.name,
+              dob = COALESCE(EXCLUDED.dob, students.dob),
+              special_needs = EXCLUDED.special_needs;
+      `;
+
+      // Insert camp enrolment
+      seenEnrolments.add(`${r.student_id}|${campSessionId}`);
+      await tx`
+        INSERT INTO camp_enrolments (student_id, camp_session_id, course_id)
+        VALUES (${r.student_id}, ${campSessionId}::uuid, ${r.course_id})
+        ON CONFLICT (student_id, camp_session_id) DO UPDATE
+          SET course_id = EXCLUDED.course_id;
+      `;
+    }
+
+    // Snapshot deletion: remove enrolments not in the current data
+    const STRICT_SNAPSHOT = true;
+
+    if (STRICT_SNAPSHOT && seenEnrolments.size > 0) {
+      const keys = Array.from(seenEnrolments).map((k) => k.split("|"));
+      const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));
+      const keepSessions: string[] = keys.map(([, sessionId]) => sessionId);
+
+      await tx`
+        WITH keep AS (
+          SELECT *
+          FROM UNNEST(${keepStudents}::int[], ${keepSessions}::uuid[])
+          AS t(student_id, camp_session_id)
+        )
+        DELETE FROM camp_enrolments e
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM keep k
+          WHERE k.student_id = e.student_id
+            AND k.camp_session_id = e.camp_session_id
+        );
+      `;
+    }
+
+    // Delete camp sessions with no enrolments
+    await tx`
+      DELETE FROM camp_sessions cs
+      WHERE NOT EXISTS (
+        SELECT 1 FROM camp_enrolments ce WHERE ce.camp_session_id = cs.id
+      );
+    `;
+  });
+
+  return { inserted: rows.length, updated: 0, seen: rows.length };
+}
+
 
 
 

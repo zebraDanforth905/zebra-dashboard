@@ -13,6 +13,7 @@ const links = [
   { name: 'Accounts', href: '/dashboard/scratch-accounts' },
   { name: 'Admin', href: '/dashboard/admin/users', adminOnly: true },
   { name: 'Settings', href: '/dashboard/settings' },
+  {name: 'Camps', href: '/dashboard/camp' }
 ];
 
 export default function NavLinks({ userType }: { userType?: string }) {

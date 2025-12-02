@@ -7,15 +7,11 @@ import { revalidateTag } from "next/cache";
 export async function GET() {
   try {
 
-    const result = await scrapeEnrolmentNow();
-    const result2 = await currentDateCheckRecurringInvoices();
-    const result3 = await scrapeCampEnrolments();
+    const result = await scrapeCampEnrolments();
     
-    console.log("running the endpoint: ", result, result2, result3);
-    revalidateTag('schedule', 'max')
-    revalidateTag('invoices', 'max')
+    console.log("running the endpoint: ", result);
 
-    return NextResponse.json({ result, result2 }, { headers: { } });
+    return NextResponse.json({ result }, { headers: { } });
     
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
