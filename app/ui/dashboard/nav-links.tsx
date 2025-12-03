@@ -7,13 +7,13 @@ import clsx from 'clsx';
 // Central link registry (db-backed later if desired)
 const links = [
   { name: 'Schedule', href: '/dashboard/schedule' },
+  { name: 'Camps', href: '/dashboard/camp' },
   { name: 'Billing', href: '/dashboard/billing', adminOnly: true },
-  { name: 'Students', href: '/dashboard/students' },
   { name: 'Slips', href: '/dashboard/printable' },
   { name: 'Accounts', href: '/dashboard/scratch-accounts' },
   { name: 'Admin', href: '/dashboard/admin/users', adminOnly: true },
-  { name: 'Settings', href: '/dashboard/settings' },
-  {name: 'Camps', href: '/dashboard/camp' }
+  { name: 'Incidents', href: '/dashboard/admin/incident-reports', adminOnly: true },
+  { name: 'Settings', href: '/dashboard/settings' }
 ];
 
 export default function NavLinks({ userType }: { userType?: string }) {

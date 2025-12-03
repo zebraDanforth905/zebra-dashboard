@@ -21,6 +21,10 @@ import { auth } from '@/auth';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
+const IncidentReportFormSchema = z.object({
+  description: z.string().min(10, 'Description must be at least 10 characters'),
+});
+
 const AssignStudentFormSchema = z.object({
   studentId: z.string(),
   customerId: z.string(),
@@ -1795,5 +1799,87 @@ export async function createSlipsForCampers(studentIds: string[], sessionId: str
   } catch (error) {
     console.error('Error creating slips:', error);
     return { ok: false, error: 'Failed to create slips' };
+  }
+}
+
+export async function createIncidentReport(prevState: any, formData: FormData) {
+  const session = await auth();
+  
+  if (!session?.user?.id) {
+    return { 
+      ok: false, 
+      error: 'You must be logged in to submit an incident report' 
+    };
+  }
+
+  const validatedFields = IncidentReportFormSchema.safeParse({
+    description: formData.get('description'),
+  });
+
+  if (!validatedFields.success) {
+    return {
+      ok: false,
+      error: validatedFields.error.flatten().fieldErrors.description?.[0] || 'Invalid description',
+    };
+  }
+
+  const { description } = validatedFields.data;
+
+  try {
+    const currentDate = new Date();
+    
+    await sql`
+      INSERT INTO incident_reports (description, status, user_id, date)
+      VALUES (${description}, 'new', ${session.user.id}, ${currentDate})
+    `;
+
+    revalidateTag('incident-reports');
+    return { 
+      ok: true, 
+      message: 'Incident report submitted successfully' 
+    };
+  } catch (error) {
+    console.error('Error creating incident report:', error);
+    return { 
+      ok: false, 
+      error: 'Failed to submit incident report' 
+    };
+  }
+}
+
+export async function updateIncidentReportStatus(prevState: any, formData: FormData) {
+  const session = await auth();
+  const userType = (session?.user as any)?.user_type;
+
+  if (userType !== 'admin') {
+    return { 
+      ok: false, 
+      error: 'Only admin users can update incident report status' 
+    };
+  }
+
+  const reportId = formData.get('reportId') as string;
+  const status = formData.get('status') as string;
+
+  if (!reportId || !status) {
+    return { ok: false, error: 'Missing required fields' };
+  }
+
+  if (!['new', 'in progress', 'closed'].includes(status)) {
+    return { ok: false, error: 'Invalid status value' };
+  }
+
+  try {
+    await sql`
+      UPDATE incident_reports
+      SET status = ${status}
+      WHERE id = ${reportId}
+    `;
+
+    revalidatePath('/dashboard/admin/incident-reports');
+    return { ok: true, message: 'Status updated successfully' };
+  } catch (error) {
+    console.error('Error updating incident report status:', error);
+    return { ok: false, error: 'Failed to update status' };
   }
 }

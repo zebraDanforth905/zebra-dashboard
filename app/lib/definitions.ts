@@ -360,3 +360,13 @@ export type CampSessionWithEnrolments = {
   enrolment_count: number;
   enrolments: CampEnrolmentWithStudent[];
 };
+
+export type IncidentReport = {
+  id: string;
+  description: string;
+  status: 'new' | 'in progress' | 'closed';
+  user_id: string;
+  date: Date;
+  user_name?: string;
+  created_at?: Date;
+};
