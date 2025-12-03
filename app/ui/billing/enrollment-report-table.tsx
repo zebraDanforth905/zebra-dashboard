@@ -4,14 +4,17 @@ import { EnrollmentReportRow } from '@/app/lib/enrollment-report';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import clsx from 'clsx';
+import CustomerNoteCell from './customer-note-cell';
+import StudentNoteCell from '@/app/ui/students/student-note-cell';
 
 type Props = {
   enrollments: EnrollmentReportRow[];
   startDate: string;
   endDate: string;
+  currentUserName: string;
 };
 
-export default function EnrollmentReportTable({ enrollments, startDate, endDate }: Props) {
+export default function EnrollmentReportTable({ enrollments, startDate, endDate, currentUserName }: Props) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
@@ -38,6 +41,12 @@ export default function EnrollmentReportTable({ enrollments, startDate, endDate 
           id: enrollment.customer_id,
           name: enrollment.customer_name,
           email: enrollment.customer_email,
+          recent_note: enrollment.customer_note_id && enrollment.customer_note ? {
+            id: enrollment.customer_note_id,
+            content: enrollment.customer_note,
+            date: enrollment.customer_note_date!,
+            creator: enrollment.customer_note_creator!,
+          } : null,
         },
         recurring_invoice: enrollment.recurring_invoice_id ? {
           id: enrollment.recurring_invoice_id,
@@ -51,7 +60,12 @@ export default function EnrollmentReportTable({ enrollments, startDate, endDate 
     acc[enrollment.customer_id].enrollments.push(enrollment);
     return acc;
   }, {} as Record<string, {
-    customer: { id: string; name: string; email: string };
+    customer: { 
+      id: string; 
+      name: string; 
+      email: string; 
+      recent_note: { id: string; content: string; date: Date; creator: string } | null;
+    };
     recurring_invoice: { id: string; amount: number | null; description: string | null; next_date: Date | null } | null;
     enrollments: EnrollmentReportRow[];
   }>);
@@ -125,10 +139,13 @@ export default function EnrollmentReportTable({ enrollments, startDate, endDate 
             <div key={group.customer.id} className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
               {/* Customer Header */}
               <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
-                <div className="flex justify-between items-start">
-                  <div>
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex-1">
                     <h3 className="text-lg font-semibold text-slate-900">{group.customer.name}</h3>
-                    <p className="text-sm text-slate-600">{group.customer.email}</p>
+                    <p className="text-sm text-slate-600 mb-2">{group.customer.email}</p>
+                    <div className="mt-2">
+                      <CustomerNoteCell customer={group.customer as any} currentUserName={currentUserName} />
+                    </div>
                   </div>
                   {group.recurring_invoice && (
                     <div className="text-right">
@@ -157,6 +174,9 @@ export default function EnrollmentReportTable({ enrollments, startDate, endDate 
                         Student
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">
+                        Student Note
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">
                         Course
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">
@@ -171,33 +191,49 @@ export default function EnrollmentReportTable({ enrollments, startDate, endDate 
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-200">
-                    {group.enrollments.map((enrollment) => (
-                      <tr key={enrollment.enrolment_id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="text-sm font-medium text-slate-900">{enrollment.student_name}</div>
-                          {enrollment.student_dob && (
-                            <div className="text-xs text-slate-600">
-                              DOB: {new Date(enrollment.student_dob).toLocaleDateString()}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900">
-                          {enrollment.course_name}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="text-sm text-slate-900">{enrollment.session_weekday}</div>
-                          <div className="text-xs text-slate-600">{enrollment.session_time}</div>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900">
-                          {new Date(enrollment.enrolment_start_date).toLocaleDateString()}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900 text-right font-medium">
-                          ${Number(enrollment.course_price).toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
+                    {group.enrollments.map((enrollment) => {
+                      const studentData = {
+                        id: enrollment.student_id,
+                        name: enrollment.student_name,
+                        recent_note: enrollment.student_note_id && enrollment.student_note ? {
+                          id: enrollment.student_note_id,
+                          content: enrollment.student_note,
+                          date: enrollment.student_note_date!,
+                          creator: enrollment.student_note_creator!,
+                        } : null,
+                      };
+                      
+                      return (
+                        <tr key={enrollment.enrolment_id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3">
+                            <div className="text-sm font-medium text-slate-900">{enrollment.student_name}</div>
+                            {enrollment.student_dob && (
+                              <div className="text-xs text-slate-600">
+                                DOB: {new Date(enrollment.student_dob).toLocaleDateString()}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <StudentNoteCell student={studentData as any} currentUserName={currentUserName} />
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900">
+                            {enrollment.course_name}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <div className="text-sm text-slate-900">{enrollment.session_weekday}</div>
+                            <div className="text-xs text-slate-600">{enrollment.session_time}</div>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900">
+                            {new Date(enrollment.enrolment_start_date).toLocaleDateString()}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900 text-right font-medium">
+                            ${Number(enrollment.course_price).toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                     <tr className="bg-slate-50 font-semibold">
-                      <td colSpan={4} className="px-4 py-3 text-right text-sm text-slate-900">
+                      <td colSpan={5} className="px-4 py-3 text-right text-sm text-slate-900">
                         New Enrollments Subtotal:
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900 text-right">
@@ -205,7 +241,7 @@ export default function EnrollmentReportTable({ enrollments, startDate, endDate 
                       </td>
                     </tr>
                     <tr className="bg-slate-100 font-semibold">
-                      <td colSpan={4} className="px-4 py-3 text-right text-sm text-slate-900">
+                      <td colSpan={5} className="px-4 py-3 text-right text-sm text-slate-900">
                         Total Expected Monthly (All Enrollments + Pickups):
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-900 text-right">

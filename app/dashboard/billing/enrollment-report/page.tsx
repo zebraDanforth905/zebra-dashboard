@@ -2,6 +2,7 @@ import { fetchEnrollmentReport } from '@/app/lib/enrollment-report';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import EnrollmentReportTable from '@/app/ui/billing/enrollment-report-table';
+import { auth } from '@/auth';
 
 type SearchParams = Promise<{
   startDate?: string;
@@ -14,6 +15,8 @@ export default async function EnrollmentReportPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
+  const session = await auth();
+  const currentUserName = session?.user?.name || 'Unknown';
   
   // Default to current month if no dates provided
   const now = new Date();
@@ -52,6 +55,7 @@ export default async function EnrollmentReportPage({
         enrollments={enrollments}
         startDate={startDate}
         endDate={endDate}
+        currentUserName={currentUserName}
       />
     </div>
   );

@@ -24,6 +24,14 @@ export type EnrollmentReportRow = {
   customer_total_expected: number;
   customer_total_enrollments: number;
   customer_total_pickups: number;
+  customer_note_id: string | null;
+  customer_note: string | null;
+  customer_note_date: Date | null;
+  customer_note_creator: string | null;
+  student_note_id: string | null;
+  student_note: string | null;
+  student_note_date: Date | null;
+  student_note_creator: string | null;
 };
 
 export async function fetchEnrollmentReport(startDate: string, endDate: string) {
@@ -40,6 +48,26 @@ export async function fetchEnrollmentReport(startDate: string, endDate: string) 
         LEFT JOIN courses co ON co.id = e.course_id
         LEFT JOIN pickups p ON p.student_id = s.id
         GROUP BY c.id
+      ),
+      recent_customer_notes AS (
+        SELECT DISTINCT ON (customer_id)
+          customer_id,
+          id as customer_note_id,
+          content as customer_note,
+          date as customer_note_date,
+          creator as customer_note_creator
+        FROM customer_notes
+        ORDER BY customer_id, date DESC, id DESC
+      ),
+      recent_student_notes AS (
+        SELECT DISTINCT ON (student_id)
+          student_id,
+          id as student_note_id,
+          content as student_note,
+          date as student_note_date,
+          creator as student_note_creator
+        FROM student_notes
+        ORDER BY student_id, date DESC, id DESC
       )
       SELECT 
         c.id as customer_id,
@@ -64,13 +92,23 @@ export async function fetchEnrollmentReport(startDate: string, endDate: string) 
         ri.next_date as recurring_invoice_next_date,
         (ct.total_enrollments + ct.total_pickups)::numeric as customer_total_expected,
         ct.total_enrollments::numeric as customer_total_enrollments,
-        ct.total_pickups::numeric as customer_total_pickups
+        ct.total_pickups::numeric as customer_total_pickups,
+        cn.customer_note_id,
+        cn.customer_note,
+        cn.customer_note_date,
+        cn.customer_note_creator,
+        sn.student_note_id,
+        sn.student_note,
+        sn.student_note_date,
+        sn.student_note_creator
       FROM enrolments e
       INNER JOIN students s ON e.student_id = s.id
       INNER JOIN customers c ON s.customer_id = c.id
       INNER JOIN courses co ON e.course_id = co.id
       INNER JOIN sessions se ON e.session_id = se.id
       LEFT JOIN customer_totals ct ON ct.customer_id = c.id
+      LEFT JOIN recent_customer_notes cn ON cn.customer_id = c.id
+      LEFT JOIN recent_student_notes sn ON sn.student_id = s.id
       LEFT JOIN LATERAL (
         SELECT id, amount, description, next_date
         FROM recurring_invoices
