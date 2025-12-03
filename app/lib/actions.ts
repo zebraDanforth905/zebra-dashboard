@@ -461,6 +461,13 @@ export async function deleteRecurringInvoice(formData: FormData){
   revalidatePath("/dashboard/billing/[id]/edit");
   revalidatePath("/dashboard/billing");
 }
+
+export async function forceInvoiceDiscrepanciesRefresh() {
+  revalidateTag('invoices', 'max');
+  revalidateTag('customers', 'max');
+  console.log("Invoice discrepancies cache refreshed");
+}
+
 export async function skipNextDate(formData: FormData){
   
   const {invoiceId, nextDate, dayOfMonth, every} = skipNextDateFormSchema.parse({
