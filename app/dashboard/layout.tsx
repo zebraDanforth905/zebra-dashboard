@@ -18,7 +18,7 @@ export default async function Layout({ children }: { children: React.ReactNode }
     <div className="flex h-screen flex-col md:flex-row print:block print:h-auto">
       {/* Mobile navigation - only visible on small screens */}
       <div className="md:hidden print:hidden">
-        <MobileNav signOutAction={handleSignOut} />
+        <MobileNav signOutAction={handleSignOut} userType={userType} />
       </div>
       
       {/* Desktop sidebar - only visible on medium+ screens */}
