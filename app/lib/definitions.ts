@@ -359,9 +359,21 @@ export type CampSessionWithEnrolments = {
   enrolments: CampEnrolmentWithStudent[];
 };
 
+export type IncidentReportDetails = {
+  incident_date: string;
+  incident_time: string;
+  student_name: string;
+  coaches: string[];
+  what_happened: string;
+  what_led_up: string;
+  other_students: string[];
+  parent_involvement: string;
+  how_addressed: string;
+};
+
 export type IncidentReport = {
   id: string;
-  description: string;
+  details: IncidentReportDetails | string; // Can be JSON object or string for backward compatibility
   status: 'new' | 'in progress' | 'closed';
   user_id: string;
   date: Date;

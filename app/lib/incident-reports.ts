@@ -15,7 +15,7 @@ export async function fetchIncidentReports(statuses?: string[]): Promise<Inciden
       query = sql<IncidentReport[]>`
         SELECT 
           ir.id,
-          ir.description,
+          ir.details,
           ir.status,
           ir.user_id,
           ir.date,
@@ -29,7 +29,7 @@ export async function fetchIncidentReports(statuses?: string[]): Promise<Inciden
       query = sql<IncidentReport[]>`
         SELECT 
           ir.id,
-          ir.description,
+          ir.details,
           ir.status,
           ir.user_id,
           ir.date,
