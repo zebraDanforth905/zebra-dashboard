@@ -1833,7 +1833,7 @@ export async function createIncidentReport(prevState: any, formData: FormData) {
       VALUES (${description}, 'new', ${session.user.id}, ${currentDate})
     `;
 
-    revalidateTag('incident-reports');
+    revalidateTag('incident-reports', 'max');
     return { 
       ok: true, 
       message: 'Incident report submitted successfully' 
