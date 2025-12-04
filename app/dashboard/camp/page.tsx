@@ -1,6 +1,7 @@
 import { fetchUpcomingCampSessions } from '@/app/lib/data';
 import Link from 'next/link';
 import { CalendarIcon, UserGroupIcon } from '@heroicons/react/24/outline';
+import ScrapeCampsButton from '@/app/ui/camp/scrape-camps-button';
 
 export default async function CampPage() {
   const sessions = await fetchUpcomingCampSessions();
@@ -16,21 +17,29 @@ export default async function CampPage() {
     return `${startStr} - ${endStr}`;
   };
 
-  const getCampTypeLabel = (type: 'FD' | 'PM' | 'AM') => {
-    switch (type) {
-      case 'FD': return 'Full Day';
-      case 'AM': return 'Morning';
-      case 'PM': return 'Afternoon';
-    }
+  const parseSessionTypes = (types: string) => {
+    const typeArray = types.split(',');
+    const labels = typeArray.map(type => {
+      switch (type) {
+        case 'FD': return 'Full Day';
+        case 'AM': return 'Morning';
+        case 'PM': return 'Afternoon';
+        default: return type;
+      }
+    });
+    return labels.join(', ');
   };
 
   return (
     <div className="m-2 md:m-4">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Camp Sessions</h1>
-        <p className="text-sm text-slate-600 mt-1">
-          Upcoming camp sessions and enrolled students
-        </p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Camp Sessions</h1>
+          <p className="text-sm text-slate-600 mt-1">
+            Upcoming camp sessions and enrolled students
+          </p>
+        </div>
+        <ScrapeCampsButton />
       </div>
 
       {sessions.length === 0 ? (
@@ -43,36 +52,56 @@ export default async function CampPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sessions.map((session) => (
-            <Link
-              key={session.id}
-              href={`/dashboard/camp/${session.id}`}
-              className="block bg-white border border-slate-200 rounded-lg p-5 hover:shadow-md hover:border-sky-300 transition-all"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <div className="text-xs font-semibold text-sky-600 uppercase tracking-wide mb-1">
-                    {getCampTypeLabel(session.camp_type)}
+          {sessions.map((session) => {
+            const startDateStr = new Date(session.start_date).toISOString().split('T')[0];
+            const endDateStr = new Date(session.end_date).toISOString().split('T')[0];
+            const dateKey = `${startDateStr}-${endDateStr}`;
+            return (
+              <Link
+                key={dateKey}
+                href={`/dashboard/camp/${startDateStr}/${endDateStr}`}
+                className="block bg-white border border-slate-200 rounded-lg p-5 hover:shadow-md hover:border-sky-300 transition-all"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">
+                      {formatDateRange(session.start_date, session.end_date)}
+                    </h3>
                   </div>
-                  <h3 className="text-lg font-bold text-slate-900">
-                    {formatDateRange(session.start_date, session.end_date)}
-                  </h3>
                 </div>
-                {session.extended_care && (
-                  <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded">
-                    Extended Care
-                  </span>
-                )}
-              </div>
 
-              <div className="flex items-center gap-2 text-slate-600">
-                <UserGroupIcon className="h-5 w-5" />
-                <span className="text-sm font-medium">
-                  {session.enrolment_count} {session.enrolment_count === 1 ? 'camper' : 'campers'}
-                </span>
-              </div>
-            </Link>
-          ))}
+                <div className="flex items-center gap-2 text-slate-600 mb-3">
+                  <UserGroupIcon className="h-5 w-5" />
+                  <span className="text-sm font-medium">
+                    {session.total_enrolments} {session.total_enrolments === 1 ? 'camper' : 'campers'}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {session.fd_count > 0 && (
+                    <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded">
+                      {session.fd_count} FD
+                    </span>
+                  )}
+                  {session.am_count > 0 && (
+                    <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-medium rounded">
+                      {session.am_count} AM
+                    </span>
+                  )}
+                  {session.pm_count > 0 && (
+                    <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded">
+                      {session.pm_count} PM
+                    </span>
+                  )}
+                  {session.extended_care_count > 0 && (
+                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded">
+                      {session.extended_care_count} Ext
+                    </span>
+                  )}
+                </div>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

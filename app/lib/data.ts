@@ -1669,25 +1669,31 @@ export async function fetchUpcomingCampSessions() {
   cacheTag('camps');
   try {
     const sessions = await sql<Array<{
-      id: string;
       start_date: Date;
       end_date: Date;
-      extended_care: boolean;
-      camp_type: 'FD' | 'PM' | 'AM';
-      enrolment_count: number;
+      total_enrolments: number;
+      has_extended_care: boolean;
+      session_types: string;
+      fd_count: number;
+      am_count: number;
+      pm_count: number;
+      extended_care_count: number;
     }>>`
       SELECT 
-        cs.id,
         cs.start_date,
         cs.end_date,
-        cs.extended_care,
-        cs.camp_type,
-        COUNT(ce.id)::int as enrolment_count
+        COUNT(ce.id)::int as total_enrolments,
+        BOOL_OR(cs.extended_care) as has_extended_care,
+        STRING_AGG(DISTINCT cs.camp_type, ',') as session_types,
+        COUNT(CASE WHEN cs.camp_type = 'FD' THEN ce.id END)::int as fd_count,
+        COUNT(CASE WHEN cs.camp_type = 'AM' THEN ce.id END)::int as am_count,
+        COUNT(CASE WHEN cs.camp_type = 'PM' THEN ce.id END)::int as pm_count,
+        COUNT(CASE WHEN cs.extended_care = true THEN ce.id END)::int as extended_care_count
       FROM camp_sessions cs
       LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
       WHERE cs.start_date >= CURRENT_DATE
-      GROUP BY cs.id, cs.start_date, cs.end_date, cs.extended_care, cs.camp_type
-      ORDER BY cs.start_date ASC, cs.camp_type ASC;
+      GROUP BY cs.start_date, cs.end_date
+      ORDER BY cs.start_date ASC;
     `;
     return sessions;
   } catch (error) {
@@ -1753,5 +1759,49 @@ export async function fetchCampSessionById(sessionId: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch camp session.');
+  }
+}
+
+export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Date) {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const enrolments = await sql<Array<{
+      id: string;
+      student_id: string;
+      student_name: string;
+      dob: Date | null;
+      course_id: string;
+      camp_type: 'FD' | 'PM' | 'AM';
+      assigned_seat_number: number | null;
+      special_needs: string | null;
+      extended_care: boolean;
+    }>>`
+      SELECT 
+        ce.id,
+        ce.student_id,
+        s.name as student_name,
+        s.dob,
+        ce.course_id,
+        cs.camp_type,
+        ce.assigned_seat_number,
+        s.special_needs,
+        cs.extended_care
+      FROM camp_enrolments ce
+      JOIN students s ON s.id = ce.student_id
+      JOIN camp_sessions cs ON cs.id = ce.camp_session_id
+      WHERE cs.start_date = ${startDate} AND cs.end_date = ${endDate}
+      ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC;
+    `;
+    
+    return {
+      start_date: startDate,
+      end_date: endDate,
+      enrolment_count: enrolments.length,
+      enrolments
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp sessions by date range.');
   }
 }

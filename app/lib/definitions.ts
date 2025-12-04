@@ -349,14 +349,12 @@ export type CampEnrolmentWithStudent = {
   camp_type: 'FD' | 'PM' | 'AM';
   assigned_seat_number: number | null;
   special_needs: string | null;
+  extended_care: boolean;
 };
 
 export type CampSessionWithEnrolments = {
-  id: string;
   start_date: Date;
   end_date: Date;
-  extended_care: boolean;
-  camp_type: 'FD' | 'PM' | 'AM';
   enrolment_count: number;
   enrolments: CampEnrolmentWithStudent[];
 };

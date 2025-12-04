@@ -96,7 +96,7 @@ type RawCampEnrolment = {
   delivery_type: string;
   program_type: string;
   camp_week: string;        // "Jan 16, 2026 - Jan 16, 2026"
-  camp_type: string;        // "FD" | "PM" | "AM"
+  camp_type: string;        // "FD" | "FD-EX" | "HD-PM" | "HD-PM-EX" | "HD-AM"
   camp_times: string;       // "08:30:00 - 16:00:00"
   course_abbr: string;
   student_id: number;
@@ -160,6 +160,19 @@ function parseCampTimes(campTimes: string): { start: string; end: string } | nul
   };
 }
 
+function parseCampType(campType: string): 'FD' | 'PM' | 'AM' | null {
+  // Map various camp_type strings to 'FD', 'PM', or 'AM'
+  const typeMap: { [key: string]: 'FD' | 'PM' | 'AM' } = {
+    "FD": "FD",
+    "FD-EX": "FD",
+    "HD-PM": "PM",
+    "HD-PM-EX": "PM",
+    "HD-AM": "AM"
+  };
+
+  return typeMap[campType] || null;
+}
+
 export function normalizeCampEnrolments(results: RawCampEnrolment[]): NormalizedCampEnrolment[] {
   console.log("normalizing camp enrolments");
   
@@ -177,7 +190,7 @@ export function normalizeCampEnrolments(results: RawCampEnrolment[]): Normalized
       // Extended care is typically before 9am or after 4pm
       const startHour = parseInt(times.start.split(':')[0]);
       const endHour = parseInt(times.end.split(':')[0]);
-      const extended_care = startHour < 9 || endHour > 16;
+      const extended_care = r.camp_type.endsWith('-EX');
       
       return {
         student_id: r.student_id,
@@ -187,7 +200,7 @@ export function normalizeCampEnrolments(results: RawCampEnrolment[]): Normalized
         end_date: dates.end,
         start_time: times.start,
         end_time: times.end,
-        camp_type: r.camp_type as 'FD' | 'PM' | 'AM',
+        camp_type: parseCampType(r.camp_type) as 'FD' | 'PM' | 'AM',
         extended_care,
         special_needs: r.special_need || '',
         course_id: r.course_abbr || ''

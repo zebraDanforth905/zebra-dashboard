@@ -18,6 +18,7 @@ import { localMidnightFromISODate } from './utils';
 import { ymd } from './utils';
 import bcrypt from 'bcrypt';
 import { auth } from '@/auth';
+import { userAgent } from 'next/server';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -1744,7 +1745,7 @@ export async function updateCampSeatAssignment(enrolmentId: string, seatNumber: 
       SET assigned_seat_number = ${seatNumber}
       WHERE id = ${enrolmentId};
     `;
-    revalidatePath('/dashboard/camp');
+    revalidateTag('camps', 'max');
     return { ok: true };
   } catch (error) {
     console.error('Error updating seat assignment:', error);
@@ -1752,8 +1753,15 @@ export async function updateCampSeatAssignment(enrolmentId: string, seatNumber: 
   }
 }
 
-export async function createSlipsForCampers(studentIds: string[], sessionId: string) {
+export async function createSlipsForCampers(studentIds: string[]) {
   try {
+    const session = await auth();
+    const userId = (session?.user as any)?.id;
+
+    if (!userId) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
     const enrolments = await sql<Array<{
       student_id: string;
       student_name: string;
@@ -1765,8 +1773,7 @@ export async function createSlipsForCampers(studentIds: string[], sessionId: str
         ce.course_id
       FROM camp_enrolments ce
       JOIN students s ON s.id = ce.student_id
-      WHERE ce.camp_session_id = ${sessionId}
-        AND ce.student_id = ANY(${studentIds}::int[]);
+      WHERE ce.student_id = ANY(${studentIds});
     `;
     
     for (const enrolment of enrolments) {
@@ -1774,16 +1781,15 @@ export async function createSlipsForCampers(studentIds: string[], sessionId: str
         INSERT INTO slip_info (student_name, user_id, lms_username, lms_password, course_name)
         VALUES (
           ${enrolment.student_name},
-          ${enrolment.student_id},
-          '',
+          ${userId},
+          ${enrolment.student_id + '@zebrarobotics.com'},
           '',
           ${enrolment.course_id}
-        )
-        ON CONFLICT (user_id, course_name) DO NOTHING;
+        );
       `;
     }
     
-    revalidatePath('/dashboard/camp');
+    revalidateTag('camps', 'max');
     return { ok: true, created: enrolments.length };
   } catch (error) {
     console.error('Error creating slips:', error);
