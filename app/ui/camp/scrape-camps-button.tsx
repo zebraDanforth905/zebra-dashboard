@@ -14,7 +14,6 @@ export default function ScrapeCampsButton() {
     try {
       const result = await scrapeCampEnrolments();
       if (result.ok) {
-        alert(`Successfully scraped camp enrolments!\nInserted: ${result.inserted}\nUpdated: ${result.updated}`);
         window.location.reload();
       } else {
         alert(`Error scraping camps: ${result.ok}`);
