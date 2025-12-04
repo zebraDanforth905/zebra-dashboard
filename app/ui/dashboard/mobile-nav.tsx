@@ -9,19 +9,24 @@ import Image from 'next/image';
 
 const links = [
   { name: 'Schedule', href: '/dashboard/schedule' },
-  { name: 'Billing', href: '/dashboard/billing' },
-  { name: 'Students', href: '/dashboard/students' },
+  { name: 'Camps', href: '/dashboard/camp' },
+  { name: 'Billing', href: '/dashboard/billing', adminOnly: true },
   { name: 'Slips', href: '/dashboard/printable' },
   { name: 'Accounts', href: '/dashboard/scratch-accounts' },
+  { name: 'Admin', href: '/dashboard/admin/users', adminOnly: true },
+  { name: 'Incidents', href: '/dashboard/admin/incident-reports', adminOnly: true },
+  { name: 'Settings', href: '/dashboard/settings' }
 ];
 
 type MobileNavProps = {
   signOutAction: () => Promise<void>;
+  userType?: string;
 };
 
-export default function MobileNav({ signOutAction }: MobileNavProps) {
+export default function MobileNav({ signOutAction, userType }: MobileNavProps) {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
+  const isAdmin = userType === 'admin';
 
   return (
     <>
@@ -66,6 +71,11 @@ export default function MobileNav({ signOutAction }: MobileNavProps) {
           <div className="fixed top-14 left-0 right-0 z-50 bg-white shadow-xl rounded-b-2xl md:hidden">
             <nav className="p-4 space-y-2">
               {links.map((link) => {
+                // Skip admin-only links for non-admin users
+                if (link.adminOnly && !isAdmin) {
+                  return null;
+                }
+                
                 const active = pathname === link.href || pathname.startsWith(link.href + '/');
                 return (
                   <Link

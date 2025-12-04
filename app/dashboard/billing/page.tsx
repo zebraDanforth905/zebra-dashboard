@@ -11,7 +11,7 @@ import ActiveFilters from "@/app/ui/billing/active-filters";
 import ExpiringCardsAlert from "@/app/ui/billing/expiring-cards-alert";
 import postgres from 'postgres';
 import Link from 'next/link';
-import { DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { DocumentMagnifyingGlassIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -91,13 +91,22 @@ export default async function Page(props: {
       <div>
         <div className="flex w-full items-center justify-between">
           <h1 className="text-lg md:text-xl font-semibold">Customers</h1>
-          <Link
-            href="/dashboard/billing/invoice-discrepancies"
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-sky-600 border border-sky-600 rounded-lg hover:bg-sky-700 transition-colors shadow-sm"
-          >
-            <DocumentMagnifyingGlassIcon className="h-4 w-4" />
-            Invoice Discrepancies
-          </Link>
+          <div className="flex gap-2">
+            <Link
+              href="/dashboard/billing/enrollment-report"
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-emerald-600 border border-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+            >
+              <CalendarDaysIcon className="h-4 w-4" />
+              Enrollment Report
+            </Link>
+            <Link
+              href="/dashboard/billing/invoice-discrepancies"
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-sky-600 border border-sky-600 rounded-lg hover:bg-sky-700 transition-colors shadow-sm"
+            >
+              <DocumentMagnifyingGlassIcon className="h-4 w-4" />
+              Invoice Discrepancies
+            </Link>
+          </div>
         </div>
 
         <div className="my-2 flex items-center justify-between gap-2 md:mt-4">
