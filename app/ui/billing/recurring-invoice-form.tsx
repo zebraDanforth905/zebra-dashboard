@@ -68,7 +68,7 @@ export default function RecurringInvoiceForm({ customerId, invoice, onClose }: P
   }
 
   async function handleDelete() {
-    if (!invoice || !confirm('Are you sure you want to delete this recurring invoice?')) return;
+    if (!invoice) return;
 
     setIsDeleting(true);
     try {

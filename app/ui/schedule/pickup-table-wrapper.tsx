@@ -28,14 +28,13 @@ export default function PickupTableWrapper({ day, pickups, currentUserName }: Pr
     const pickup = pickups.find(p => p.id === pickupId);
     if (!pickup) return;
 
-    if (confirm(`Are you sure you want to delete the pickup for ${pickup.name}?`)) {
+  
       try {
         await deletePickup(pickupId);
         window.location.reload();
       } catch (error) {
         alert('Failed to delete pickup');
       }
-    }
   };
 
   return (

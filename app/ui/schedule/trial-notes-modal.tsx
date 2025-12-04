@@ -51,7 +51,7 @@ export default function TrialNotesModal({ trialId, trialName, currentUserName, o
   };
 
   const handleDeleteNote = async (noteId: string) => {
-    if (!confirm('Are you sure you want to delete this note?')) return;
+
 
     try {
       await deleteTrialNote(noteId);

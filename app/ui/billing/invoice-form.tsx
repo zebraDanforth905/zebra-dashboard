@@ -58,7 +58,7 @@ export default function InvoiceForm({ customerId, invoice, onClose }: Props) {
   }
 
   async function handleDelete() {
-    if (!invoice || !confirm('Are you sure you want to delete this invoice?')) return;
+    if (!invoice) return;
 
     setIsDeleting(true);
     try {

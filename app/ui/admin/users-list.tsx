@@ -15,9 +15,6 @@ export default function UsersList({ users }: { users: User[] }) {
   const [error, setError] = useState<string | null>(null);
 
   async function handleDelete(userId: string, userName: string) {
-    if (!confirm(`Are you sure you want to delete user "${userName}"? This action cannot be undone.`)) {
-      return;
-    }
 
     setDeletingId(userId);
     setError(null);

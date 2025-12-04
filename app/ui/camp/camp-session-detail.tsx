@@ -505,7 +505,7 @@ export default function CampSessionDetail({ session }: { session: CampSessionWit
     const result = await createSlipsForCampers(studentIds);
 
     if (result.ok) {
-      alert(`Created ${result.created} slip(s) successfully!`);
+     
       deselectAll();
     } else {
       alert(`Error: ${result.error}`);

@@ -51,7 +51,7 @@ export default function CustomerNotesModal({ customerId, customerName, currentUs
   };
 
   const handleDeleteNote = async (noteId: string) => {
-    if (!confirm('Are you sure you want to delete this note?')) return;
+    
 
     try {
       await deleteCustomerNote(noteId, customerId);

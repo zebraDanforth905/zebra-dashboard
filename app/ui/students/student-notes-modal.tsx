@@ -51,7 +51,7 @@ export default function StudentNotesModal({ studentId, studentName, currentUserN
   };
 
   const handleDeleteNote = async (noteId: string) => {
-    if (!confirm('Are you sure you want to delete this note?')) return;
+
 
     try {
       await deleteStudentNote(noteId);

@@ -205,9 +205,9 @@ export default function SlipForm (props: { slip_info?: SlipInfo }) {
         <button 
           type="button" 
           onClick={() => {
-            if (confirm('Are you sure you want to delete this slip?')) {
+          
               deleteSlipInfo(slip_info?.id || '');
-            }
+            
           }}
           className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded transition-colors ml-auto"
           title="Delete slip"

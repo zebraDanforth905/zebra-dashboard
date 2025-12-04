@@ -45,14 +45,14 @@ export default function ViewAbsencesModal({ studentId, onClose }: Props) {
   }, [studentId]);
 
   const handleRemoveAbsence = async (pickupId: string, date: Date) => {
-    if (confirm('Remove this absence record?')) {
+   
       try {
         await unmarkPickupAbsence(pickupId, date);
         setAbsences(absences.filter(a => !(a.pickup_id === pickupId && a.date === date)));
       } catch (error) {
         alert('Failed to remove absence');
       }
-    }
+    
   };
 
   return (

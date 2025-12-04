@@ -94,8 +94,7 @@ export default function CustomerPaymentsTable({ customerId, initialPayments }: C
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this payment?')) return;
-    
+
     try {
       const response = await fetch(`/api/payments?id=${id}`, {
         method: 'DELETE',
