@@ -215,7 +215,7 @@ export async function scrapeCampEnrolments(opts?: {
   });
 
   const normalized = normalizeCampEnrolments(raw);
-  const res = await insertCampEnrolments(normalized);
+  const res = await insertCampEnrolments(normalized, { startDate, endDate });
 
   // refresh any pages that read from these tables
   revalidatePath("/dashboard", 'layout');

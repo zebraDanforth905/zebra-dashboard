@@ -449,10 +449,29 @@ async function getCampSessionId(
   return result[0].id;
 }
 
-export async function insertCampEnrolments(rows: NormalizedCampRow[]) {
-  if (!rows.length) return { inserted: 0, updated: 0, seen: 0 };
-
+export async function insertCampEnrolments(
+  rows: NormalizedCampRow[], 
+  dateRange?: { startDate: string; endDate: string }
+) {
+  // Determine date range - either from data or from explicit parameters
+  let minDate: Date;
+  let maxDate: Date;
+  
+  if (dateRange) {
+    minDate = new Date(dateRange.startDate);
+    maxDate = new Date(dateRange.endDate);
+  } else if (rows.length > 0) {
+    const dates = rows.map(r => new Date(r.start_date));
+    minDate = new Date(Math.min(...dates.map(d => d.getTime())));
+    maxDate = new Date(Math.max(...rows.map(r => new Date(r.end_date).getTime())));
+  } else {
+    // No data and no date range - nothing to do
+    return { inserted: 0, updated: 0, seen: 0 };
+  }
+  
   const seenEnrolments = new Set<string>();
+  let insertedCount = 0;
+  let updatedCount = 0;
 
   await sql.begin(async (tx) => {
     for (const r of rows) {
@@ -485,24 +504,44 @@ export async function insertCampEnrolments(rows: NormalizedCampRow[]) {
               special_needs = EXCLUDED.special_needs;
       `;
 
-      // Insert camp enrolment
-      seenEnrolments.add(`${r.student_id}|${campSessionId}`);
+      // Check if this student already has an enrolment for this camp week (same dates)
+      // Delete any duplicate enrolments for the same student in overlapping camp sessions
       await tx`
+        DELETE FROM camp_enrolments ce
+        WHERE ce.student_id = ${r.student_id}
+        AND EXISTS (
+          SELECT 1 FROM camp_sessions cs
+          WHERE cs.id = ce.camp_session_id
+          AND cs.start_date = ${r.start_date}::date
+          AND cs.end_date = ${r.end_date}::date
+          AND ce.camp_session_id != ${campSessionId}::uuid
+        );
+      `;
+
+      // Insert or update camp enrolment
+      seenEnrolments.add(`${r.student_id}|${campSessionId}`);
+      const result = await tx`
         INSERT INTO camp_enrolments (student_id, camp_session_id, course_id)
         VALUES (${r.student_id}, ${campSessionId}::uuid, ${r.course_id})
         ON CONFLICT (student_id, camp_session_id) DO UPDATE
-          SET course_id = EXCLUDED.course_id;
+          SET course_id = EXCLUDED.course_id
+        RETURNING (xmax = 0) AS inserted;
       `;
+      
+      if (result[0].inserted) {
+        insertedCount++;
+      } else {
+        updatedCount++;
+      }
     }
 
-    // Snapshot deletion: remove enrolments not in the current data
-    const STRICT_SNAPSHOT = true;
+    // Delete enrolments within the scraped date range that are not in the current data
+    // This runs even if no rows were scraped, allowing deletion of all enrolments in the range
+    const keys = Array.from(seenEnrolments).map((k) => k.split("|"));
+    const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));
+    const keepSessions: string[] = keys.map(([, sessionId]) => sessionId);
 
-    if (STRICT_SNAPSHOT && seenEnrolments.size > 0) {
-      const keys = Array.from(seenEnrolments).map((k) => k.split("|"));
-      const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));
-      const keepSessions: string[] = keys.map(([, sessionId]) => sessionId);
-
+    if (seenEnrolments.size > 0) {
       await tx`
         WITH keep AS (
           SELECT *
@@ -510,11 +549,28 @@ export async function insertCampEnrolments(rows: NormalizedCampRow[]) {
           AS t(student_id, camp_session_id)
         )
         DELETE FROM camp_enrolments e
-        WHERE NOT EXISTS (
+        WHERE EXISTS (
+          SELECT 1 FROM camp_sessions cs
+          WHERE cs.id = e.camp_session_id
+          AND cs.start_date >= ${minDate.toISOString().split('T')[0]}::date
+          AND cs.end_date <= ${maxDate.toISOString().split('T')[0]}::date
+        )
+        AND NOT EXISTS (
           SELECT 1
           FROM keep k
           WHERE k.student_id = e.student_id
             AND k.camp_session_id = e.camp_session_id
+        );
+      `;
+    } else {
+      // No enrolments in scraped data - delete all enrolments in the date range
+      await tx`
+        DELETE FROM camp_enrolments e
+        WHERE EXISTS (
+          SELECT 1 FROM camp_sessions cs
+          WHERE cs.id = e.camp_session_id
+          AND cs.start_date >= ${minDate.toISOString().split('T')[0]}::date
+          AND cs.end_date <= ${maxDate.toISOString().split('T')[0]}::date
         );
       `;
     }
@@ -528,7 +584,7 @@ export async function insertCampEnrolments(rows: NormalizedCampRow[]) {
     `;
   });
 
-  return { inserted: rows.length, updated: 0, seen: rows.length };
+  return { inserted: insertedCount, updated: updatedCount, seen: rows.length };
 }
 
 
