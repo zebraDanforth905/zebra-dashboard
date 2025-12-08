@@ -45,9 +45,9 @@ export async function fetchFilteredCustomers(
   let havingConditions = sql`TRUE`;
   
   if (balanceFilter === 'has-balance') {
-    havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) > 0`;
+    havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) != 0`;
   } else if (balanceFilter === 'no-balance') {
-    havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) <= 0`;
+    havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) = 0`;
   }
   
   if (studentsFilter === 'has-students') {
@@ -247,9 +247,9 @@ export async function fetchCustomerPages(
       let havingConditions = sql`TRUE`;
       
       if (balanceFilter === 'has-balance') {
-        havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) > 0`;
+        havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) != 0`;
       } else if (balanceFilter === 'no-balance') {
-        havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) <= 0`;
+        havingConditions = sql`${havingConditions} AND (COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0)) = 0`;
       }
       
       if (studentsFilter === 'has-students') {
