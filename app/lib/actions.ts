@@ -596,13 +596,14 @@ const addPickupFormSchema = pickupFormSchema.omit({id: true});
 export async function addPickup(formData: FormData){
   console.log("adding pickup with form data: ", formData);
   
-  const {studentId, weekday, waiver_signed, school_name, teacher_name, room_number} = addPickupFormSchema.parse({
+  const {studentId, weekday, waiver_signed, school_name, teacher_name, room_number, comment} = addPickupFormSchema.parse({
     studentId: formData.get('studentId'),
     weekday: formData.get('weekday'),
     waiver_signed: formData.get('waiver_signed'),
     school_name: formData.get('school_name'),
     teacher_name: formData.get('teacher_name'),
-    room_number: formData.get('room_number')
+    room_number: formData.get('room_number'),
+    comment: formData.get('comment')
   });
 
   console.log(`adding pickup for student ${studentId} on ${weekday}`)
@@ -615,7 +616,8 @@ export async function addPickup(formData: FormData){
       waiver_signed,
       school_name,
       teacher_name,
-      room_number
+      room_number,
+      comment
     )
     VALUES (
       ${studentId},
@@ -623,7 +625,8 @@ export async function addPickup(formData: FormData){
       ${waiver_signed},
       ${school_name},
       ${teacher_name ?? null},
-      ${room_number ?? null}
+      ${room_number ?? null},
+      ${comment ?? null}
     );
     `;
     revalidateTag("schedule", "max");

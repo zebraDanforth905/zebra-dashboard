@@ -43,7 +43,7 @@ export default function PickupTable({
     setEditingId(pickup.id);
     setEditForm({
       teacher_name: pickup.teacher_name,
-      room_number: String(pickup.room_number),
+      room_number: pickup.room_number,
       comment: pickup.comment || "",
       waiver_signed: pickup.waiver_signed
     });

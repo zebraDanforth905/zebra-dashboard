@@ -148,7 +148,7 @@ export type Pickup = {
   waiver_signed: boolean;
   school_name: 'Frankland' | 'Jackman';
   teacher_name: string;
-  room_number: number;
+  room_number: string;
   invoice_id: string;
   comment?: string;
 }
@@ -320,7 +320,7 @@ export type PickupListDisplay = {
   waiver_signed: boolean;
   school_name: string;
   teacher_name: string;
-  room_number: number;
+  room_number: string;
   invoice_id: string;
   name: string;
   absent: boolean;

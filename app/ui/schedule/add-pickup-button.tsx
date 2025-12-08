@@ -16,6 +16,7 @@ export default function AddPickupButton({ defaultWeekday }: { defaultWeekday?: s
   const [roomNumber, setRoomNumber] = useState('');
   const [weekday, setWeekday] = useState(defaultWeekday?.toLowerCase() || '');
   const [waiverSigned, setWaiverSigned] = useState(false);
+  const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -68,6 +69,9 @@ export default function AddPickupButton({ defaultWeekday }: { defaultWeekday?: s
       formData.append('room_number', roomNumber);
       formData.append('weekday', weekday);
       formData.append('waiver_signed', waiverSigned ? 'on' : '');
+      if (comment) {
+        formData.append('comment', comment);
+      }
 
       await addPickup(formData);
 
@@ -89,6 +93,7 @@ export default function AddPickupButton({ defaultWeekday }: { defaultWeekday?: s
     setRoomNumber('');
     setWeekday(defaultWeekday?.toLowerCase() || '');
     setWaiverSigned(false);
+    setComment('');
     setError('');
   };
 
@@ -242,6 +247,22 @@ export default function AddPickupButton({ defaultWeekday }: { defaultWeekday?: s
                   />
                   <span className="text-sm font-medium text-gray-700">Waiver Signed</span>
                 </label>
+              </div>
+
+              {/* Comment */}
+              <div>
+                <label htmlFor="comment" className="block text-sm font-medium text-gray-700 mb-1">
+                  Comment
+                </label>
+                <textarea
+                  id="comment"
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="Optional comment..."
+                  rows={3}
+                  disabled={isSubmitting}
+                />
               </div>
 
               {/* Submit Button */}
