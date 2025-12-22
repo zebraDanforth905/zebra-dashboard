@@ -669,6 +669,13 @@ export async function updatePickup(formData: FormData){
 
 export async function deletePickup(pickupId: string) {
   try {
+    // Delete related absences first
+    await sql`
+      DELETE FROM pickup_absences
+      WHERE pickup_id = ${pickupId};
+    `;
+    
+    // Then delete the pickup
     await sql`
       DELETE FROM pickups
       WHERE id = ${pickupId};
@@ -1939,5 +1946,692 @@ export async function updateIncidentReportStatus(prevState: any, formData: FormD
   } catch (error) {
     console.error('Error updating incident report status:', error);
     return { ok: false, error: 'Failed to update status' };
+  }
+}
+
+// Staff Schedule Actions
+export async function createShiftTemplate(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const name = formData.get('name') as string;
+  const weekday = parseInt(formData.get('weekday') as string);
+  const startTime = formData.get('start_time') as string;
+  const endTime = formData.get('end_time') as string;
+  const shiftType = formData.get('shift_type') as string;
+
+  try {
+    await sql`
+      INSERT INTO shift_template (name, weekday, start_time, end_time, shift_type, created_by)
+      VALUES (${name}, ${weekday}, ${startTime}, ${endTime}, ${shiftType}, ${(session.user as any).id})
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating shift template:', error);
+    throw new Error('Failed to create shift template');
+  }
+}
+
+export async function createShift(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const name = formData.get('name') as string;
+  const eventType = formData.get('event_type') as string;
+  const startDate = formData.get('start_date') as string;
+  const startTime = formData.get('start_time') as string;
+  const endDate = formData.get('end_date') as string;
+  const endTime = formData.get('end_time') as string;
+  const notes = formData.get('notes') as string;
+
+  const startsAt = `${startDate}T${startTime}:00`;
+  const endsAt = `${endDate}T${endTime}:00`;
+
+  try {
+    await sql`
+      INSERT INTO shift (name, starts_at, ends_at, event_type, notes, created_by)
+      VALUES (${name}, ${startsAt}, ${endsAt}, ${eventType}, ${notes || null}, ${(session.user as any).id})
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating shift:', error);
+    throw new Error('Failed to create shift');
+  }
+}
+
+export async function createAssignment(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const assignmentType = formData.get('assignment_type') as string;
+  const templateId = formData.get('template_id') as string;
+  const shiftId = formData.get('shift_id') as string;
+  const staffUserId = formData.get('staff_user_id') as string;
+  const role = formData.get('role') as string;
+  const effectiveFrom = formData.get('effective_from') as string;
+  const effectiveTo = formData.get('effective_to') as string;
+
+  try {
+    await sql`
+      INSERT INTO shift_assignment (
+        template_id, 
+        shift_id, 
+        staff_user_id, 
+        role, 
+        effective_from, 
+        effective_to, 
+        created_by
+      )
+      VALUES (
+        ${assignmentType === 'template' ? templateId : null},
+        ${assignmentType === 'shift' ? shiftId : null},
+        ${staffUserId},
+        ${role || null},
+        ${effectiveFrom || null},
+        ${effectiveTo || null},
+        ${(session.user as any).id}
+      )
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating assignment:', error);
+    throw new Error('Failed to create assignment');
+  }
+}
+
+export async function createTimeOff(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const staffUserId = formData.get('staff_user_id') as string;
+  const timeOffType = formData.get('time_off_type') as string;
+  const startDate = formData.get('start_date') as string;
+  const startTime = formData.get('start_time') as string;
+  const endDate = formData.get('end_date') as string;
+  const endTime = formData.get('end_time') as string;
+  const status = formData.get('status') as string;
+  const notes = formData.get('notes') as string;
+
+  const startsAt = `${startDate}T${startTime}:00`;
+  const endsAt = `${endDate}T${endTime}:00`;
+
+  try {
+    await sql`
+      INSERT INTO staff_time_off (
+        staff_user_id, 
+        starts_at, 
+        ends_at, 
+        time_off_type, 
+        status, 
+        notes, 
+        created_by
+      )
+      VALUES (
+        ${staffUserId},
+        ${startsAt},
+        ${endsAt},
+        ${timeOffType},
+        ${status},
+        ${notes || null},
+        ${(session.user as any).id}
+      )
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating time off:', error);
+    throw new Error('Failed to create time off request');
+  }
+}
+
+export async function createShiftUnified(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const shiftType = formData.get('shift_type') as string;
+  const name = formData.get('name') as string;
+  const staffUserId = formData.get('staff_user_id') as string;
+  const role = formData.get('role') as string;
+
+  try {
+    let createdId: string;
+    let isTemplate = false;
+
+    if (shiftType === 'recurring') {
+      // Create shift template
+      const weekday = parseInt(formData.get('weekday') as string);
+      const startTime = formData.get('start_time') as string;
+      const endTime = formData.get('end_time') as string;
+      const shiftCategory = formData.get('shift_category') as string;
+      const effectiveFrom = formData.get('effective_from') as string;
+      const effectiveTo = formData.get('effective_to') as string;
+
+      const result = await sql<{ id: string }[]>`
+        INSERT INTO shift_template (name, weekday, start_time, end_time, shift_type, is_active, created_by)
+        VALUES (${name}, ${weekday}, ${startTime}, ${endTime}, ${shiftCategory}, true, ${(session.user as any).id})
+        RETURNING id
+      `;
+      createdId = result[0].id;
+      isTemplate = true;
+
+      // Create assignment if staff member selected
+      if (staffUserId) {
+        await sql`
+          INSERT INTO shift_assignment (
+            template_id,
+            staff_user_id,
+            role,
+            effective_from,
+            effective_to,
+            created_by
+          )
+          VALUES (
+            ${createdId},
+            ${staffUserId},
+            ${role || null},
+            ${effectiveFrom || null},
+            ${effectiveTo || null},
+            ${(session.user as any).id}
+          )
+        `;
+      }
+    } else {
+      // Create one-off shift
+      const eventType = formData.get('event_type') as string;
+      const startDate = formData.get('start_date') as string;
+      const startTime = formData.get('start_time_oneoff') as string;
+      const endDate = formData.get('end_date') as string;
+      const endTime = formData.get('end_time_oneoff') as string;
+      const notes = formData.get('notes') as string;
+
+      const startsAt = `${startDate}T${startTime}:00`;
+      const endsAt = `${endDate}T${endTime}:00`;
+
+      const result = await sql<{ id: string }[]>`
+        INSERT INTO shift (name, starts_at, ends_at, event_type, notes, created_by)
+        VALUES (${name}, ${startsAt}, ${endsAt}, ${eventType}, ${notes || null}, ${(session.user as any).id})
+        RETURNING id
+      `;
+      createdId = result[0].id;
+
+      // Create assignment if staff member selected
+      if (staffUserId) {
+        await sql`
+          INSERT INTO shift_assignment (
+            shift_id,
+            staff_user_id,
+            role,
+            created_by
+          )
+          VALUES (
+            ${createdId},
+            ${staffUserId},
+            ${role || null},
+            ${(session.user as any).id}
+          )
+        `;
+      }
+    }
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating shift:', error);
+    throw new Error('Failed to create shift');
+  }
+}
+
+export async function reassignShiftStaff(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const assignmentId = formData.get('assignment_id') as string;
+  const newStaffUserId = formData.get('new_staff_user_id') as string;
+
+  try {
+    if (!newStaffUserId || newStaffUserId === '') {
+      // Delete the assignment
+      await sql`
+        DELETE FROM shift_assignment
+        WHERE id = ${assignmentId}
+      `;
+    } else {
+      // Update the assignment
+      await sql`
+        UPDATE shift_assignment
+        SET staff_user_id = ${newStaffUserId}
+        WHERE id = ${assignmentId}
+      `;
+    }
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error reassigning shift staff:', error);
+    throw new Error('Failed to reassign staff');
+  }
+}
+
+export async function deleteShiftAssignment(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const assignmentId = formData.get('assignment_id') as string;
+
+  try {
+    await sql`
+      DELETE FROM shift_assignment
+      WHERE id = ${assignmentId}
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error deleting shift assignment:', error);
+    throw new Error('Failed to delete assignment');
+  }
+}
+
+export async function updateShiftAssignmentEndDate(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const assignmentId = formData.get('assignment_id') as string;
+  const effectiveTo = formData.get('effective_to') as string;
+
+  try {
+    await sql`
+      UPDATE shift_assignment
+      SET effective_to = ${effectiveTo}
+      WHERE id = ${assignmentId}
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating assignment end date:', error);
+    throw new Error('Failed to update assignment end date');
+  }
+}
+
+export async function createAbsence(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const assignmentId = formData.get('assignment_id') as string;
+  const absenceDate = formData.get('absence_date') as string;
+
+  try {
+    // Get the existing assignment details
+    const existing = await sql`
+      SELECT template_id, staff_user_id, effective_from, effective_to, role
+      FROM shift_assignment
+      WHERE id = ${assignmentId}
+    `;
+
+    if (existing.length === 0) {
+      throw new Error('Assignment not found');
+    }
+
+    const assignment = existing[0];
+    const templateId = assignment.template_id;
+    const staffUserId = assignment.staff_user_id;
+    const originalFrom = assignment.effective_from;
+    const originalTo = assignment.effective_to;
+    const role = assignment.role;
+
+    // Calculate dates
+    const absDate = new Date(absenceDate);
+    const dayBefore = new Date(absDate);
+    dayBefore.setDate(dayBefore.getDate() - 1);
+    const dayAfter = new Date(absDate);
+    dayAfter.setDate(dayAfter.getDate() + 1);
+
+    const dayBeforeStr = dayBefore.toISOString().split('T')[0];
+    const dayAfterStr = dayAfter.toISOString().split('T')[0];
+
+    // Update existing assignment to end the day before
+    await sql`
+      UPDATE shift_assignment
+      SET effective_to = ${dayBeforeStr}
+      WHERE id = ${assignmentId}
+    `;
+
+    // Create new assignment starting the day after (if the original extended beyond this date)
+    if (!originalTo || new Date(originalTo) > absDate) {
+      await sql`
+        INSERT INTO shift_assignment (
+          template_id,
+          staff_user_id,
+          role,
+          effective_from,
+          effective_to,
+          created_by
+        )
+        VALUES (
+          ${templateId},
+          ${staffUserId},
+          ${role},
+          ${dayAfterStr},
+          ${originalTo},
+          ${(session.user as any).id}
+        )
+      `;
+    }
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating absence:', error);
+    throw new Error('Failed to create absence');
+  }
+}
+
+export async function createShiftAssignment(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const templateId = formData.get('template_id') as string;
+  const shiftId = formData.get('shift_id') as string;
+  const staffUserId = formData.get('staff_user_id') as string;
+  const effectiveDate = formData.get('effective_date') as string;
+  const assignmentType = formData.get('assignment_type') as string; // 'add', 'replace', or 'substitute'
+  const replaceAssignmentId = formData.get('replace_assignment_id') as string;
+
+  try {
+    if (templateId) {
+      if (assignmentType === 'replace' && replaceAssignmentId) {
+        // Replace a specific assignment: end it and create a new one from this date forward
+        const existing = await sql`
+          SELECT staff_user_id, effective_from, effective_to 
+          FROM shift_assignment
+          WHERE id = ${replaceAssignmentId}
+        `;
+        
+        if (existing.length > 0) {
+          const dayBefore = new Date(effectiveDate);
+          dayBefore.setDate(dayBefore.getDate() - 1);
+          const dayBeforeStr = dayBefore.toISOString().split('T')[0];
+          
+          await sql`
+            UPDATE shift_assignment
+            SET effective_to = ${dayBeforeStr}
+            WHERE id = ${replaceAssignmentId}
+          `;
+        }
+        
+        // Create new assignment from this date forward
+        await sql`
+          INSERT INTO shift_assignment (
+            template_id,
+            staff_user_id,
+            role,
+            effective_from,
+            effective_to,
+            created_by
+          )
+          VALUES (
+            ${templateId},
+            ${staffUserId},
+            null,
+            ${effectiveDate},
+            null,
+            ${(session.user as any).id}
+          )
+        `;
+      } else if (assignmentType === 'substitute' && replaceAssignmentId) {
+        // One-day substitute: split the existing assignment around this date
+        const existing = await sql`
+          SELECT staff_user_id, effective_from, effective_to 
+          FROM shift_assignment
+          WHERE id = ${replaceAssignmentId}
+        `;
+        
+        if (existing.length > 0) {
+          const existingAssignment = existing[0];
+          const originalStaffId = existingAssignment.staff_user_id;
+          const originalFrom = existingAssignment.effective_from;
+          const originalTo = existingAssignment.effective_to;
+          
+          // Calculate dates
+          const subDate = new Date(effectiveDate);
+          const dayBefore = new Date(subDate);
+          dayBefore.setDate(dayBefore.getDate() - 1);
+          const dayAfter = new Date(subDate);
+          dayAfter.setDate(dayAfter.getDate() + 1);
+          
+          const dayBeforeStr = dayBefore.toISOString().split('T')[0];
+          const dayAfterStr = dayAfter.toISOString().split('T')[0];
+          
+          // Update existing assignment to end the day before
+          await sql`
+            UPDATE shift_assignment
+            SET effective_to = ${dayBeforeStr}
+            WHERE id = ${replaceAssignmentId}
+          `;
+          
+          // Create assignment for the substitute day
+          await sql`
+            INSERT INTO shift_assignment (
+              template_id,
+              staff_user_id,
+              role,
+              effective_from,
+              effective_to,
+              created_by
+            )
+            VALUES (
+              ${templateId},
+              ${staffUserId},
+              null,
+              ${effectiveDate},
+              ${effectiveDate},
+              ${(session.user as any).id}
+            )
+          `;
+          
+          // Create new assignment for the original staff starting the day after
+          if (!originalTo || new Date(originalTo) > subDate) {
+            await sql`
+              INSERT INTO shift_assignment (
+                template_id,
+                staff_user_id,
+                role,
+                effective_from,
+                effective_to,
+                created_by
+              )
+              VALUES (
+                ${templateId},
+                ${originalStaffId},
+                null,
+                ${dayAfterStr},
+                ${originalTo},
+                ${(session.user as any).id}
+              )
+            `;
+          }
+        }
+      } else {
+        // Default: just add a new assignment from this date forward
+        await sql`
+          INSERT INTO shift_assignment (
+            template_id,
+            staff_user_id,
+            role,
+            effective_from,
+            effective_to,
+            created_by
+          )
+          VALUES (
+            ${templateId},
+            ${staffUserId},
+            null,
+            ${effectiveDate},
+            null,
+            ${(session.user as any).id}
+          )
+        `;
+      }
+    } else if (shiftId) {
+      // For one-off shifts, just add the assignment (allow multiple)
+      await sql`
+        INSERT INTO shift_assignment (
+          shift_id,
+          staff_user_id,
+          role,
+          created_by
+        )
+        VALUES (
+          ${shiftId},
+          ${staffUserId},
+          null,
+          ${(session.user as any).id}
+        )
+      `;
+    }
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating shift assignment:', error);
+    throw new Error('Failed to create assignment');
+  }
+}
+
+export async function updateShift(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const shiftId = formData.get('shift_id') as string;
+  const name = formData.get('name') as string;
+  const startDate = formData.get('start_date') as string;
+  const startTime = formData.get('start_time') as string;
+  const endDate = formData.get('end_date') as string;
+  const endTime = formData.get('end_time') as string;
+  const notes = formData.get('notes') as string;
+
+  const startsAt = `${startDate}T${startTime}:00`;
+  const endsAt = `${endDate}T${endTime}:00`;
+
+  try {
+    await sql`
+      UPDATE shift
+      SET name = ${name},
+          starts_at = ${startsAt},
+          ends_at = ${endsAt},
+          notes = ${notes || null}
+      WHERE id = ${shiftId}
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating shift:', error);
+    throw new Error('Failed to update shift');
+  }
+}
+
+export async function updateShiftTemplate(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const templateId = formData.get('template_id') as string;
+  const name = formData.get('name') as string;
+  const weekday = parseInt(formData.get('weekday') as string);
+  const startTime = formData.get('start_time') as string;
+  const endTime = formData.get('end_time') as string;
+
+  try {
+    await sql`
+      UPDATE shift_template
+      SET name = ${name},
+          weekday = ${weekday},
+          start_time = ${startTime},
+          end_time = ${endTime}
+      WHERE id = ${templateId}
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating shift template:', error);
+    throw new Error('Failed to update shift template');
+  }
+}
+
+export async function deleteShift(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const shiftId = formData.get('shift_id') as string;
+
+  try {
+    await sql`
+      DELETE FROM shift
+      WHERE id = ${shiftId}
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error deleting shift:', error);
+    throw new Error('Failed to delete shift');
+  }
+}
+
+export async function deleteShiftTemplate(formData: FormData) {
+  'use server';
+  
+  const session = await auth();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  const templateId = formData.get('template_id') as string;
+
+  try {
+    await sql`
+      UPDATE shift_template
+      SET is_active = false
+      WHERE id = ${templateId}
+    `;
+
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error deleting shift template:', error);
+    throw new Error('Failed to delete shift template');
   }
 }
