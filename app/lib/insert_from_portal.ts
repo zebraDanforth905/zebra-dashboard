@@ -520,9 +520,25 @@ export async function insertCampEnrolments(
 
       // Insert or update camp enrolment
       seenEnrolments.add(`${r.student_id}|${campSessionId}`);
+      
+      // Handle course_id: create course if it doesn't exist
+      let courseId = null;
+      if (r.course_id && r.course_id.trim() !== '') {
+        const trimmedCourseId = r.course_id.trim();
+        
+        // Check if course exists, if not create it
+        await tx`
+          INSERT INTO courses (id, name)
+          VALUES (${trimmedCourseId}, ${trimmedCourseId})
+          ON CONFLICT (id) DO NOTHING
+        `;
+        
+        courseId = trimmedCourseId;
+      }
+      
       const result = await tx`
         INSERT INTO camp_enrolments (student_id, camp_session_id, course_id)
-        VALUES (${r.student_id}, ${campSessionId}::uuid, ${r.course_id})
+        VALUES (${r.student_id}, ${campSessionId}::uuid, ${courseId})
         ON CONFLICT (student_id, camp_session_id) DO UPDATE
           SET course_id = EXCLUDED.course_id
         RETURNING (xmax = 0) AS inserted;

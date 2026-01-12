@@ -12,7 +12,6 @@ const links = [
   { name: 'Slips', href: '/dashboard/printable' },
   { name: 'Accounts', href: '/dashboard/scratch-accounts' },
   { name: 'Admin', href: '/dashboard/admin/users', adminOnly: true },
-  // { name: 'Staff Schedule', href: '/dashboard/staff-schedule', adminOnly: true },
   { name: 'Incidents', href: '/dashboard/admin/incident-reports', adminOnly: true },
   { name: 'Settings', href: '/dashboard/settings' }
 ];
