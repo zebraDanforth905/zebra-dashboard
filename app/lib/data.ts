@@ -1805,3 +1805,187 @@ export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Dat
     throw new Error('Failed to fetch camp sessions by date range.');
   }
 }
+
+// Global student search with comprehensive details
+export async function searchStudents(query: string) {
+  try {
+    const today = Y(new Date());
+    
+    const students = await sql<Array<{
+      id: string;
+      name: string;
+      customer_id: string;
+      customer_name: string;
+      customer_email: string;
+      enrollments: Array<{
+        id: string;
+        course_name: string;
+        weekday: string;
+        start_time: string;
+        end_time: string;
+        session_id: string;
+      }>;
+      last_absence: {
+        date: Date;
+        course_name: string;
+      } | null;
+      upcoming_absence: {
+        date: Date;
+        course_name: string;
+      } | null;
+      last_makeup: {
+        date: Date;
+        course_name: string;
+        weekday: string;
+        start_time: string;
+      } | null;
+      upcoming_makeup: {
+        date: Date;
+        course_name: string;
+        weekday: string;
+        start_time: string;
+      } | null;
+      notes: Array<{
+        id: string;
+        content: string;
+        date: Date;
+        creator: string;
+      }>;
+    }>>`
+      WITH student_matches AS (
+        SELECT s.id, s.name, s.customer_id, c.name as customer_name, c.email as customer_email
+        FROM students s
+        LEFT JOIN customers c ON c.id = s.customer_id
+        WHERE s.name ILIKE '%' || ${query} || '%'
+        LIMIT 10
+      ),
+      student_enrollments AS (
+        SELECT 
+          e.student_id,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', e.id,
+                'course_name', co.name,
+                'weekday', se.weekday,
+                'start_time', se.start_time,
+                'end_time', se.end_time,
+                'session_id', se.id
+              )
+              ORDER BY se.weekday, se.start_time
+            ) FILTER (WHERE e.id IS NOT NULL),
+            '[]'::json
+          ) AS enrollments
+        FROM student_matches sm
+        JOIN enrolments e ON e.student_id = sm.id
+        LEFT JOIN courses co ON co.id = e.course_id
+        LEFT JOIN sessions se ON se.id = e.session_id
+        GROUP BY e.student_id
+      ),
+      last_absences AS (
+        SELECT DISTINCT ON (sm.id)
+          sm.id as student_id,
+          json_build_object(
+            'date', a.date,
+            'course_name', co.name
+          ) as last_absence
+        FROM student_matches sm
+        JOIN enrolments e ON e.student_id = sm.id
+        JOIN absences a ON a.enrolment_id = e.id
+        JOIN courses co ON co.id = e.course_id
+        WHERE a.date < ${today}
+        ORDER BY sm.id, a.date DESC
+      ),
+      upcoming_absences AS (
+        SELECT DISTINCT ON (sm.id)
+          sm.id as student_id,
+          json_build_object(
+            'date', a.date,
+            'course_name', co.name
+          ) as upcoming_absence
+        FROM student_matches sm
+        JOIN enrolments e ON e.student_id = sm.id
+        JOIN absences a ON a.enrolment_id = e.id
+        JOIN courses co ON co.id = e.course_id
+        WHERE a.date >= ${today}
+        ORDER BY sm.id, a.date ASC
+      ),
+      last_makeups AS (
+        SELECT DISTINCT ON (sm.id)
+          sm.id as student_id,
+          json_build_object(
+            'date', m.date,
+            'course_name', co.name,
+            'weekday', se.weekday,
+            'start_time', se.start_time
+          ) as last_makeup
+        FROM student_matches sm
+        JOIN makeups m ON m.student_id = sm.id
+        LEFT JOIN courses co ON co.id = m.course_id
+        LEFT JOIN sessions se ON se.id = m.session_id
+        WHERE m.date < ${today}
+        ORDER BY sm.id, m.date DESC
+      ),
+      upcoming_makeups AS (
+        SELECT DISTINCT ON (sm.id)
+          sm.id as student_id,
+          json_build_object(
+            'date', m.date,
+            'course_name', co.name,
+            'weekday', se.weekday,
+            'start_time', se.start_time
+          ) as upcoming_makeup
+        FROM student_matches sm
+        JOIN makeups m ON m.student_id = sm.id
+        LEFT JOIN courses co ON co.id = m.course_id
+        LEFT JOIN sessions se ON se.id = m.session_id
+        WHERE m.date >= ${today}
+        ORDER BY sm.id, m.date ASC
+      ),
+      student_notes_agg AS (
+        SELECT 
+          sn.student_id,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', sn.id,
+                'content', sn.content,
+                'date', sn.date,
+                'creator', sn.creator
+              )
+              ORDER BY sn.date DESC
+            ) FILTER (WHERE sn.id IS NOT NULL),
+            '[]'::json
+          ) AS notes
+        FROM student_matches sm
+        JOIN student_notes sn ON sn.student_id = sm.id
+        GROUP BY sn.student_id
+      )
+      SELECT 
+        sm.id,
+        sm.name,
+        sm.customer_id,
+        sm.customer_name,
+        sm.customer_email,
+        COALESCE(se.enrollments, '[]'::json) as enrollments,
+        la.last_absence,
+        ua.upcoming_absence,
+        lm.last_makeup,
+        um.upcoming_makeup,
+        COALESCE(sna.notes, '[]'::json) as notes
+      FROM student_matches sm
+      LEFT JOIN student_enrollments se ON se.student_id = sm.id
+      LEFT JOIN last_absences la ON la.student_id = sm.id
+      LEFT JOIN upcoming_absences ua ON ua.student_id = sm.id
+      LEFT JOIN last_makeups lm ON lm.student_id = sm.id
+      LEFT JOIN upcoming_makeups um ON um.student_id = sm.id
+      LEFT JOIN student_notes_agg sna ON sna.student_id = sm.id
+      ORDER BY sm.name;
+    `;
+    
+    return students;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to search students.');
+  }
+}

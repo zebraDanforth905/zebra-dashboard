@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline';
 import Image from 'next/image';
+import GlobalStudentSearch from '../global-student-search';
 
 const links = [
   { name: 'Schedule', href: '/dashboard/schedule' },
@@ -68,8 +69,13 @@ export default function MobileNav({ signOutAction, userType }: MobileNavProps) {
           />
           
           {/* Menu */}
-          <div className="fixed top-14 left-0 right-0 z-50 bg-white shadow-xl rounded-b-2xl md:hidden">
+          <div className="fixed top-14 left-0 right-0 z-50 bg-white shadow-xl rounded-b-2xl md:hidden max-h-[calc(100vh-3.5rem)] overflow-y-auto">
             <nav className="p-4 space-y-2">
+              {/* Global Student Search */}
+              <div className="mb-4">
+                <GlobalStudentSearch />
+              </div>
+
               {links.map((link) => {
                 // Skip admin-only links for non-admin users
                 if (link.adminOnly && !isAdmin) {

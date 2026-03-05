@@ -10,6 +10,7 @@ import Link from 'next/link';
 import NavLinks from './nav-links';
 import { signOut } from '@/auth';
 import Image from 'next/image';
+import GlobalStudentSearch from '../global-student-search';
 
 // Optional: swap to your brand mark
 function BrandMark() {
@@ -45,6 +46,11 @@ export default function SideNav({ userType }: { userType?: string }) {
           
         </div>
       </Link>
+
+      {/* Global Student Search */}
+      <div className="mb-3 px-1">
+        <GlobalStudentSearch />
+      </div>
 
       {/* Links + filler + signout */}
       <div className="flex grow flex-row justify-between space-x-2 md:flex-col md:space-x-0 md:space-y-2">
