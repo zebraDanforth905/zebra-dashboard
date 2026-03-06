@@ -114,11 +114,16 @@ export function formatTime12Hour(t: string) {
   if (!t) return "";
   const [hoursPart = "", minutesPart = "00"] = t.split(":");
   const hours = Number(hoursPart);
+  const minutes = Number(minutesPart);
 
-  if (!Number.isFinite(hours)) return t;
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return t;
+  if (hours < 0 || hours > 24 || minutes < 0 || minutes > 59) return t;
+  if (hours === 24 && minutes !== 0) return t;
 
-  const period = hours >= 12 ? "PM" : "AM";
-  const hour12 = hours % 12 || 12;
+  const normalizedHours = hours === 24 ? 0 : hours;
 
-  return `${hour12}:${minutesPart.padStart(2, "0")} ${period}`;
+  const period = normalizedHours >= 12 ? "PM" : "AM";
+  const hour12 = normalizedHours % 12 || 12;
+
+  return `${hour12}:${String(minutes).padStart(2, "0")} ${period}`;
 }
