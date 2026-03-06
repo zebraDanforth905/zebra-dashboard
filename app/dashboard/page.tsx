@@ -1,5 +1,5 @@
 import { fetchTodaySummary } from '@/app/lib/data';
-import { hhmm } from '@/app/lib/utils';
+import { formatTime12Hour } from '@/app/lib/utils';
 import Link from 'next/link';
 import { 
   CalendarIcon, 
@@ -150,7 +150,7 @@ export default async function Page(props: {
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-900">
-                          {hhmm(session.start_time)}–{hhmm(session.end_time)}
+                          {formatTime12Hour(session.start_time)}–{formatTime12Hour(session.end_time)}
                         </p>
                         <div className="flex items-center gap-2 mt-1 flex-wrap">
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">

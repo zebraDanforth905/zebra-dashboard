@@ -4,12 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
 import { Session } from "@/app/lib/definitions";
-
-
-function hhmm(t: string) {
-  // expects "HH:MM:SS" → "HH:MM"
-  return t?.slice(0,5);
-}
+import { formatTime12Hour } from "@/app/lib/utils";
 
 export default function SessionNav({
   day,
@@ -72,7 +67,7 @@ export default function SessionNav({
 
 
                 <span className="whitespace-nowrap">
-                  {hhmm(s.start_time)}–{hhmm(s.end_time)}
+                  {formatTime12Hour(s.start_time)}–{formatTime12Hour(s.end_time)}
                 </span>
               </Link>
             </li>
