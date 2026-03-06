@@ -1,10 +1,11 @@
 // app/api/admin/scrape-now/route.ts
 import { NextResponse } from "next/server";
+import { connection } from "next/server";
 import { syncAbsencesForCurrentWeek } from "@/app/lib/actions";
 import { revalidateTag } from "next/cache";
 
-
 export async function GET() {
+  await connection();
   try {
     const result = await syncAbsencesForCurrentWeek();
     

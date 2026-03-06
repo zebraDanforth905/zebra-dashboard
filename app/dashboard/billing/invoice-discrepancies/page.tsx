@@ -4,8 +4,10 @@ import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import InvoiceDiscrepanciesTable from '@/app/ui/billing/invoice-discrepancies-table';
 import RefreshDiscrepanciesButton from '@/app/ui/billing/refresh-discrepancies-button';
 import { auth } from '@/auth';
+import { connection } from 'next/server';
 
 export default async function InvoiceDiscrepanciesPage() {
+  await connection();
   const discrepancies = await fetchInvoiceDiscrepancies();
   const session = await auth();
   const currentUserName = session?.user?.name || 'Unknown';
