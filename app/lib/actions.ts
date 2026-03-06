@@ -1941,3 +1941,18 @@ export async function updateIncidentReportStatus(prevState: any, formData: FormD
     return { ok: false, error: 'Failed to update status' };
   }
 }
+
+export async function cancelMakeup(makeupId: string) {
+  try {
+    await sql`
+      UPDATE makeups
+      SET cancelled = true
+      WHERE id = ${makeupId};
+    `;
+    revalidatePath("/dashboard/schedule");
+    revalidateTag("schedule", "max");
+  } catch (error) {
+    console.error('error cancelling makeup: ', error);
+    throw error;
+  }
+}

@@ -896,7 +896,7 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
     JOIN courses crs ON crs.id = m.course_id
     LEFT JOIN customers c ON c.id = s.customer_id
     LEFT JOIN latest_note ln ON ln.student_id = s.id
-    WHERE m.session_id = ${sessionId} AND m.date = ${target}
+    WHERE m.session_id = ${sessionId} AND m.date = ${target} AND (m.cancelled = false OR m.cancelled IS NULL)
     ORDER BY m.date;
   `;
   return students;

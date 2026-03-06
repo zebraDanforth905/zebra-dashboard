@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import clsx from "clsx";
+import { useState } from "react";
 import { formatDate } from "@/app/lib/utils";
+import { cancelMakeup } from "@/app/lib/actions";
 import StudentNoteCell from "../students/student-note-cell";
 import TrialNoteCell from "./trial-note-cell";
 import { ScheduleRow, MakeupRow, TrialRow } from "@/app/lib/definitions";
@@ -15,6 +17,22 @@ type Props = {
 };
 
 export default function ScheduleRowClient({ students, trials, makeups, currentUserName }: Props) {
+  const [cancellingMakeupId, setCancellingMakeupId] = useState<string | null>(null);
+
+  const handleCancelMakeup = async (makeupId: string) => {
+    if (confirm('Are you sure you want to cancel this makeup?')) {
+      try {
+        setCancellingMakeupId(makeupId);
+        await cancelMakeup(makeupId);
+      } catch (error) {
+        console.error('Failed to cancel makeup:', error);
+        alert('Failed to cancel makeup');
+      } finally {
+        setCancellingMakeupId(null);
+      }
+    }
+  };
+
   return (
     <div className="mt-4 rounded-xl md:rounded-2xl border border-slate-200 bg-white shadow-sm ring-1 ring-slate-100">
       {/* Header */}
@@ -100,12 +118,14 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
                   currentUserName={currentUserName} 
                 />
               </div>
-              <Link
-                href={`/dashboard/students/${student.student_id}/edit`}
-                className="inline-flex items-center rounded-xl border border-sky-500 px-2.5 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-300 flex-shrink-0"
+              <button
+                type="button"
+                onClick={() => handleCancelMakeup(student.makeup_id)}
+                disabled={cancellingMakeupId === student.makeup_id}
+                className="inline-flex items-center rounded-xl border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-300 flex-shrink-0 disabled:opacity-60"
               >
-                Edit
-              </Link>
+                {cancellingMakeupId === student.makeup_id ? 'Cancelling...' : 'Cancel'}
+              </button>
             </div>
           </div>
         ))}
