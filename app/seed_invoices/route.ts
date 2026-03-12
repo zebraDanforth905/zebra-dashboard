@@ -1,9 +1,11 @@
 import postgres from 'postgres';
 import { revalidatePath } from 'next/cache';
+import { connection } from 'next/server';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 export async function GET() {
+  await connection();
   try {
     const result = await sql.begin(async (tx) => {
       // Get all customers with their students and calculate monthly fees

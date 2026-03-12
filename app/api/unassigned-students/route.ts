@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { connection } from 'next/server';
 import { fetchUnnassignedStudents } from '@/app/lib/data';
 
 export async function GET(request: NextRequest) {
+  await connection();
   try {
     const searchParams = request.nextUrl.searchParams;
     const query = searchParams.get('query') || '';

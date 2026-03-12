@@ -3,10 +3,12 @@ import postgres from 'postgres';
 import {customers, users, invoices, payments, students, sessions, enrolments, courses} from '../lib/test-data';
 import bcrypt from 'bcrypt';
 import { revalidatePath } from 'next/cache';
+import { connection } from 'next/server';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 export async function GET() {
+  await connection();
   try {
     await sql.begin(async (tx) => {
       // 1) One-time setup (no parallel DDL)

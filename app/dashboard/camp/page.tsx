@@ -2,8 +2,10 @@ import { fetchUpcomingCampSessions } from '@/app/lib/data';
 import Link from 'next/link';
 import { CalendarIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import ScrapeCampsButton from '@/app/ui/camp/scrape-camps-button';
+import { connection } from 'next/server';
 
 export default async function CampPage() {
+  await connection();
   const sessions = await fetchUpcomingCampSessions();
 
   const formatDateRange = (start: Date, end: Date) => {

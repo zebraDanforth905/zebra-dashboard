@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { connection } from "next/server";
 import postgres from "postgres";
 import { revalidatePath } from "next/cache";
 
@@ -6,6 +7,7 @@ const sql = postgres(process.env.POSTGRES_URL || "", { ssl: "require" });
 
 // POST - Create a new payment
 export async function POST(request: NextRequest) {
+  await connection();
   try {
     const body = await request.json();
     const { customer_id, amount, date, status, description } = body;
@@ -37,6 +39,7 @@ export async function POST(request: NextRequest) {
 
 // PUT - Update an existing payment
 export async function PUT(request: NextRequest) {
+  await connection();
   try {
     const body = await request.json();
     const { id, customer_id, amount, date, status, description } = body;
@@ -79,6 +82,7 @@ export async function PUT(request: NextRequest) {
 
 // DELETE - Delete a payment
 export async function DELETE(request: NextRequest) {
+  await connection();
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");

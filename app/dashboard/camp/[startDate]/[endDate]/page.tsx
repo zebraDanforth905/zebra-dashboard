@@ -3,12 +3,14 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import CampSessionDetail from '@/app/ui/camp/camp-session-detail';
+import { connection } from 'next/server';
 
 export default async function CampSessionPage({ 
   params 
 }: { 
   params: Promise<{ startDate: string; endDate: string }> 
 }) {
+  await connection();
   const { startDate, endDate } = await params;
   
   // Parse ISO date strings (YYYY-MM-DD format)
