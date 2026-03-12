@@ -488,6 +488,7 @@ export default function CampSessionDetail({ session }: { session: CampSessionWit
 
   const selectAll = () => {
     setSelectedIds(new Set(session.enrolments.map((e) => e.id)));
+
   };
 
   const deselectAll = () => {
@@ -496,13 +497,14 @@ export default function CampSessionDetail({ session }: { session: CampSessionWit
 
   const handleCreateSlips = async () => {
     if (selectedIds.size === 0) return;
-
+    console.log(selectedIds);
     setIsCreatingSlips(true);
-    const studentIds = session.enrolments
-      .filter((e) => selectedIds.has(e.id))
-      .map((e) => e.student_id);
 
-    const result = await createSlipsForCampers(studentIds);
+    const enrolments = session.enrolments
+      .filter((e) => selectedIds.has(e.id));
+
+    console.log(enrolments);
+    const result = await createSlipsForCampers(enrolments);
 
     if (result.ok) {
      
