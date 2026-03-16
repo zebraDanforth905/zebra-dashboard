@@ -1,7 +1,11 @@
 'use client';
 
-type MonthReportData = {
-  month: string;
+import Link from 'next/link';
+
+type EnrolmentReportData = {
+  id: string;
+  label: string;
+  href?: string;
   totalEnrolments: number;
   byType: { FD: number; half: number };
   byLength: Record<number, number>;
@@ -36,36 +40,31 @@ function HistogramBar({
 }
 
 export default function CampMonthlyReport({
-  monthlyReport
+  reports,
+  heading = 'Enrollment Summary'
 }: {
-  monthlyReport: MonthReportData[];
+  reports: EnrolmentReportData[];
+  heading?: string;
 }) {
-  const formatMonthName = (monthStr: string) => {
-    const [year, month] = monthStr.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1);
-    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  };
-
   return (
     <div className="mb-8 space-y-4">
-      <h2 className="text-xl font-bold text-slate-900">Enrollment Summary</h2>
+      <h2 className="text-xl font-bold text-slate-900">{heading}</h2>
       <div className="space-y-4">
-        {monthlyReport.map(rep => {
-          const maxLength = Math.max(...Object.values(rep.byLength));
-          const maxCourse = Math.max(...Object.values(rep.byCourse));
+        {reports.map(rep => {
+          const lengthValues = Object.values(rep.byLength);
+          const courseValues = Object.values(rep.byCourse);
+          const maxLength = lengthValues.length > 0 ? Math.max(...lengthValues) : 0;
+          const maxCourse = courseValues.length > 0 ? Math.max(...courseValues) : 0;
           const lengthKeys = Object.keys(rep.byLength)
             .map(Number)
             .sort((a, b) => a - b);
           const courseKeys = Object.keys(rep.byCourse).sort();
 
-          return (
-            <div
-              key={rep.month}
-              className="p-5 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-lg shadow-sm hover:shadow-md transition-shadow w-full"
-            >
+          const cardContent = (
+            <>
               {/* Header */}
               <h3 className="text-lg font-bold text-slate-900 mb-4">
-                {formatMonthName(rep.month)}
+                {rep.label}
               </h3>
 
               {/* Summary stats */}
@@ -143,7 +142,24 @@ export default function CampMonthlyReport({
                   </div>
                 </div>
               </div>
-            </div>
+            </>
+          );
+
+          return (
+            rep.href ? (
+              <Link key={rep.id} href={rep.href} className="block">
+                <div className="p-5 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-lg shadow-sm hover:shadow-md hover:border-sky-300 transition-all w-full cursor-pointer">
+                  {cardContent}
+                </div>
+              </Link>
+            ) : (
+              <div
+                key={rep.id}
+                className="p-5 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-lg shadow-sm hover:shadow-md transition-shadow w-full"
+              >
+                {cardContent}
+              </div>
+            )
           );
         })}
       </div>
