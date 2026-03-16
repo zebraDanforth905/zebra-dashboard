@@ -4,6 +4,39 @@ import ScrapeCampsButton from '@/app/ui/camp/scrape-camps-button';
 import CampMonthlyReport from '@/app/ui/camp/camp-monthly-report';
 import { connection } from 'next/server';
 
+const parseLocalISODate = (value: string) => {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsedDate = new Date(year, month - 1, day);
+
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+};
+
+const getLocalDateFromDb = (value: Date | string) => {
+  if (typeof value === 'string') {
+    const parsed = parseLocalISODate(value);
+    if (parsed) return parsed;
+
+    const fallback = new Date(value);
+    if (Number.isNaN(fallback.getTime())) return null;
+    return new Date(
+      fallback.getUTCFullYear(),
+      fallback.getUTCMonth(),
+      fallback.getUTCDate()
+    );
+  }
+
+  return new Date(
+    value.getUTCFullYear(),
+    value.getUTCMonth(),
+    value.getUTCDate()
+  );
+};
+
 const getDateKey = (date: Date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -52,12 +85,11 @@ export default async function CampPage() {
   >();
 
   sessions.forEach(session => {
-    const start = new Date(session.start_date);
-    const end = new Date(session.end_date);
-
-    // Keep date handling consistent with the rest of camp pages.
-    start.setDate(start.getDate() + 1);
-    end.setDate(end.getDate() + 1);
+    const start = getLocalDateFromDb(session.start_date);
+    const end = getLocalDateFromDb(session.end_date);
+    if (!start || !end) {
+      return;
+    }
 
     const weekStart = getWeekStart(start);
     const weekEnd = getWeekEnd(weekStart);

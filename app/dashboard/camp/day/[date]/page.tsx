@@ -17,6 +17,27 @@ const parseLocalISODate = (value: string) => {
   return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
 };
 
+const getLocalDateFromDb = (value: Date | string) => {
+  if (typeof value === 'string') {
+    const parsed = parseLocalISODate(value);
+    if (parsed) return parsed;
+
+    const fallback = new Date(value);
+    if (Number.isNaN(fallback.getTime())) return null;
+    return new Date(
+      fallback.getUTCFullYear(),
+      fallback.getUTCMonth(),
+      fallback.getUTCDate()
+    );
+  }
+
+  return new Date(
+    value.getUTCFullYear(),
+    value.getUTCMonth(),
+    value.getUTCDate()
+  );
+};
+
 const getDateKey = (date: Date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -69,12 +90,11 @@ export default async function CampDayPage({
   const dayEnrolments = new Map<string, Array<any>>();
   
   sessions.forEach((session) => {
-    const start = new Date(session.start_date);
-    const end = new Date(session.end_date);
-    
-    // Shift dates forward by 1 day to correct timezone offset
-    start.setDate(start.getDate() + 1);
-    end.setDate(end.getDate() + 1);
+    const start = getLocalDateFromDb(session.start_date);
+    const end = getLocalDateFromDb(session.end_date);
+    if (!start || !end) {
+      return;
+    }
     
     // Check if this session spans the requested date
     const dayStart = new Date(dayDate);
