@@ -359,6 +359,11 @@ export type CampSessionWithEnrolments = {
   enrolments: CampEnrolmentWithStudent[];
 };
 
+export type SeatAssignment = {
+  enrolment_id: string;
+  seat: number;
+};
+
 export type IncidentReportDetails = {
   incident_date: string;
   incident_time: string;

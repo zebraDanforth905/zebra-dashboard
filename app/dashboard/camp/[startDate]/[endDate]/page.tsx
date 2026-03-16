@@ -17,6 +17,10 @@ export default async function CampSessionPage({
   const start = new Date(startDate);
   const end = new Date(endDate);
   
+  // Shift dates forward by 1 day to correct timezone offset
+  start.setDate(start.getDate() + 1);
+  end.setDate(end.getDate() + 1);
+  
   const session = await fetchCampSessionsByDateRange(start, end);
 
   if (!session || session.enrolments.length === 0) {

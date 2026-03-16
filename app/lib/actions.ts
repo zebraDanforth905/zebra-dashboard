@@ -1760,13 +1760,34 @@ export async function updatePassword(formData: FormData) {
 }
 
 // Camp actions
-export async function updateCampSeatAssignment(enrolmentId: string, seatNumber: number | null) {
+export async function updateCampSeatAssignment(
+  enrolmentId: string,
+  seatNumber: number | null,
+  date?: Date
+) {
   try {
-    await sql`
-      UPDATE camp_enrolments
-      SET assigned_seat_number = ${seatNumber}
-      WHERE id = ${enrolmentId};
-    `;
+    if (date) {
+      if (seatNumber === null) {
+        await sql`
+          DELETE FROM seat_assignments
+          WHERE enrolment_id = ${enrolmentId} AND date = ${date};
+        `;
+      } else {
+        await sql`
+          INSERT INTO seat_assignments (enrolment_id, date, seat)
+          VALUES (${enrolmentId}, ${date}, ${seatNumber})
+          ON CONFLICT (enrolment_id, date) DO UPDATE
+          SET seat = EXCLUDED.seat;
+        `;
+      }
+    } else {
+      await sql`
+        UPDATE camp_enrolments
+        SET assigned_seat_number = ${seatNumber}
+        WHERE id = ${enrolmentId};
+      `;
+    }
+
     revalidateTag('camps', 'max');
     return { ok: true };
   } catch (error) {

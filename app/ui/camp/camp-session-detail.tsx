@@ -267,7 +267,16 @@ function SeatSpot({
   );
 }
 
-export default function CampSessionDetail({ session }: { session: CampSessionWithEnrolments }) {
+export default function CampSessionDetail({
+  session,
+  seatAssignments,
+  seatAssignmentsDate
+}: {
+  session: CampSessionWithEnrolments;
+  seatAssignments?: Map<number, string>;
+  seatAssignmentsDate?: Date;
+}) {
+  const seatAssignmentsDateValue = seatAssignmentsDate; // may be undefined
   // Room configurations
   const ROOM_1_CONFIG = {
     name: 'Back Room',
@@ -314,9 +323,17 @@ export default function CampSessionDetail({ session }: { session: CampSessionWit
         // Only create seats that should be visible for THIS room
         if (!roomConfig.visibleSeats.has(relativeSeatNumber)) continue;
         
-        const amEnrolment = session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'AM');
-        const pmEnrolment = session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'PM');
-        const fdEnrolment = session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'FD');
+        const assignedId = seatAssignments?.get(absoluteSeatNumber) ?? null;
+
+        const amEnrolment = assignedId
+          ? session.enrolments.find(e => e.id === assignedId && e.camp_type === 'AM')
+          : session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'AM');
+        const pmEnrolment = assignedId
+          ? session.enrolments.find(e => e.id === assignedId && e.camp_type === 'PM')
+          : session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'PM');
+        const fdEnrolment = assignedId
+          ? session.enrolments.find(e => e.id === assignedId && e.camp_type === 'FD')
+          : session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'FD');
         
         seats.push({
           id: `seat-${absoluteSeatNumber}`,
@@ -463,14 +480,14 @@ export default function CampSessionDetail({ session }: { session: CampSessionWit
     setSeats(newSeats);
 
     // Update database for the moved enrolment
-    await updateCampSeatAssignment(activeId, toSeat.number);
+    await updateCampSeatAssignment(activeId, toSeat.number, seatAssignmentsDateValue);
     
     // Update database for displaced enrolment if there was one
     if (displacedEnrolmentId && fromSeat) {
-      await updateCampSeatAssignment(displacedEnrolmentId, fromSeat.number);
+      await updateCampSeatAssignment(displacedEnrolmentId, fromSeat.number, seatAssignmentsDateValue);
     } else if (displacedEnrolmentId && !fromSeat) {
       // Displaced from seat but moving student was unassigned, so clear the displaced one
-      await updateCampSeatAssignment(displacedEnrolmentId, null);
+      await updateCampSeatAssignment(displacedEnrolmentId, null, seatAssignmentsDateValue);
     }
   };
 
@@ -559,7 +576,7 @@ export default function CampSessionDetail({ session }: { session: CampSessionWit
     }
 
     // Update database to unassign
-    await updateCampSeatAssignment(enrolmentId, null);
+    await updateCampSeatAssignment(enrolmentId, null, seatAssignmentsDateValue);
   };
 
   return (
