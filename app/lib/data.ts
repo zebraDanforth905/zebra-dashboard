@@ -1691,7 +1691,7 @@ export async function fetchUpcomingCampSessions() {
         COUNT(CASE WHEN cs.extended_care = true THEN ce.id END)::int as extended_care_count
       FROM camp_sessions cs
       LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
-      WHERE cs.start_date >= CURRENT_DATE
+      WHERE cs.start_date >= DATE_TRUNC('week', CURRENT_DATE)::date
       GROUP BY cs.start_date, cs.end_date
       ORDER BY cs.start_date ASC;
     `;
@@ -1740,7 +1740,7 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
       FROM camp_sessions cs
       LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
       LEFT JOIN students s ON s.id = ce.student_id
-      WHERE cs.start_date >= CURRENT_DATE
+      WHERE cs.start_date >= DATE_TRUNC('week', CURRENT_DATE)::date
       GROUP BY cs.start_date, cs.end_date
       ORDER BY cs.start_date ASC;
     `;

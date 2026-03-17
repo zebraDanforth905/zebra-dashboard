@@ -223,7 +223,12 @@ export default async function CampSessionPage({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             {weekDays.map(day => {
-              const uniqueTypes = getUniqueCampTypes(day.enrolments);
+              const fdCount = countByType(day.enrolments, 'FD');
+              const amCount = countByType(day.enrolments, 'AM');
+              const pmCount = countByType(day.enrolments, 'PM');
+              const extCareCount = day.enrolments.filter(e => e.extended_care).length;
+              const fdAndAmCount = fdCount + amCount;
+              const fdAndPmCount = fdCount + pmCount;
               const dateStr = getDateKey(day.date);
 
               return (
@@ -242,30 +247,32 @@ export default async function CampSessionPage({
 
                   <div className="flex items-center gap-2 text-slate-600 mb-3">
                     <UserGroupIcon className="h-5 w-5" />
-                    <span className="text-sm font-medium">
-                      {day.enrolments.length} {day.enrolments.length === 1 ? 'camper' : 'campers'}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                      <span>{fdAndAmCount} FD + AM</span>
+                      <span className="text-slate-400">|</span>
+                      <span>{fdAndPmCount} FD + PM</span>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
-                    {uniqueTypes.includes('FD') && (
+                    {fdCount > 0 && (
                       <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded">
-                        {countByType(day.enrolments, 'FD')} FD
+                        {fdCount} FD
                       </span>
                     )}
-                    {uniqueTypes.includes('AM') && (
+                    {amCount > 0 && (
                       <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-medium rounded">
-                        {countByType(day.enrolments, 'AM')} AM
+                        {amCount} AM
                       </span>
                     )}
-                    {uniqueTypes.includes('PM') && (
+                    {pmCount > 0 && (
                       <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded">
-                        {countByType(day.enrolments, 'PM')} PM
+                        {pmCount} PM
                       </span>
                     )}
-                    {day.enrolments.some(e => e.extended_care) && (
+                    {extCareCount > 0 && (
                       <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded">
-                        Ext Care
+                        {extCareCount} Ext Care
                       </span>
                     )}
                   </div>
