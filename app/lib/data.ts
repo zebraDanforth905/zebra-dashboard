@@ -1691,7 +1691,7 @@ export async function fetchUpcomingCampSessions() {
         COUNT(CASE WHEN cs.extended_care = true THEN ce.id END)::int as extended_care_count
       FROM camp_sessions cs
       LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
-      WHERE cs.start_date >= CURRENT_DATE
+      WHERE cs.start_date >= DATE_TRUNC('week', CURRENT_DATE)::date
       GROUP BY cs.start_date, cs.end_date
       ORDER BY cs.start_date ASC;
     `;
@@ -1699,6 +1699,55 @@ export async function fetchUpcomingCampSessions() {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch upcoming camp sessions.');
+  }
+}
+
+export async function fetchUpcomingCampSessionsWithEnrolments() {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const sessions = await sql<Array<{
+      start_date: Date;
+      end_date: Date;
+      enrolments: Array<{
+        id: string;
+        student_id: string;
+        student_name: string;
+        dob: Date | null;
+        course_id: string;
+        camp_type: 'FD' | 'PM' | 'AM';
+        assigned_seat_number: number | null;
+        special_needs: string | null;
+        extended_care: boolean;
+      }>;
+    }>>`
+      SELECT 
+        cs.start_date,
+        cs.end_date,
+        JSON_AGG(
+          JSON_BUILD_OBJECT(
+            'id', ce.id,
+            'student_id', ce.student_id,
+            'student_name', s.name,
+            'dob', s.dob,
+            'course_id', ce.course_id,
+            'camp_type', cs.camp_type,
+            'assigned_seat_number', ce.assigned_seat_number,
+            'special_needs', s.special_needs,
+            'extended_care', cs.extended_care
+          ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
+        ) FILTER (WHERE ce.id IS NOT NULL) AS enrolments
+      FROM camp_sessions cs
+      LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      LEFT JOIN students s ON s.id = ce.student_id
+      WHERE cs.start_date >= DATE_TRUNC('week', CURRENT_DATE)::date
+      GROUP BY cs.start_date, cs.end_date
+      ORDER BY cs.start_date ASC;
+    `;
+    return sessions;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch upcoming camp sessions with enrolments.');
   }
 }
 
@@ -1803,6 +1852,26 @@ export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Dat
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch camp sessions by date range.');
+  }
+}
+
+export async function fetchSeatAssignments(date: Date) {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const rows = await sql<Array<{
+      enrolment_id: string;
+      seat: number;
+    }>>`
+      SELECT enrolment_id, seat
+      FROM seat_assignments
+      WHERE date = ${date}
+    `;
+
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch seat assignments.');
   }
 }
 

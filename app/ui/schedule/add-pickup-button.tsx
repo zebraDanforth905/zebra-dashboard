@@ -259,7 +259,7 @@ export default function AddPickupButton({ defaultWeekday }: { defaultWeekday?: s
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                  placeholder="Optional comment..."
+                  placeholder="Mandatory comment (Pickup Details, Door Number, etc)..."
                   rows={3}
                   disabled={isSubmitting}
                 />

@@ -9,7 +9,7 @@ import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
-import { RecurringInvoice } from './definitions';
+import { CampEnrolmentWithStudent, RecurringInvoice } from './definitions';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
 import { formatDate } from './utils';
@@ -1760,13 +1760,34 @@ export async function updatePassword(formData: FormData) {
 }
 
 // Camp actions
-export async function updateCampSeatAssignment(enrolmentId: string, seatNumber: number | null) {
+export async function updateCampSeatAssignment(
+  enrolmentId: string,
+  seatNumber: number | null,
+  date?: Date
+) {
   try {
-    await sql`
-      UPDATE camp_enrolments
-      SET assigned_seat_number = ${seatNumber}
-      WHERE id = ${enrolmentId};
-    `;
+    if (date) {
+      if (seatNumber === null) {
+        await sql`
+          DELETE FROM seat_assignments
+          WHERE enrolment_id = ${enrolmentId} AND date = ${date};
+        `;
+      } else {
+        await sql`
+          INSERT INTO seat_assignments (enrolment_id, date, seat)
+          VALUES (${enrolmentId}, ${date}, ${seatNumber})
+          ON CONFLICT (enrolment_id, date) DO UPDATE
+          SET seat = EXCLUDED.seat;
+        `;
+      }
+    } else {
+      await sql`
+        UPDATE camp_enrolments
+        SET assigned_seat_number = ${seatNumber}
+        WHERE id = ${enrolmentId};
+      `;
+    }
+
     revalidateTag('camps', 'max');
     return { ok: true };
   } catch (error) {
@@ -1775,7 +1796,7 @@ export async function updateCampSeatAssignment(enrolmentId: string, seatNumber: 
   }
 }
 
-export async function createSlipsForCampers(studentIds: string[]) {
+export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent[]) {
   try {
     const session = await auth();
     const userId = (session?.user as any)?.id;
@@ -1784,29 +1805,71 @@ export async function createSlipsForCampers(studentIds: string[]) {
       return { ok: false, error: 'Unauthorized: Please log in' };
     }
 
-    const enrolments = await sql<Array<{
+    const enrolment_info = await sql<Array<{
       student_id: string;
       student_name: string;
-      course_id: string;
+      course: string;
+      session: string;
+      other_fields: { [key: string]: string } | null;
     }>>`
       SELECT 
         ce.student_id,
         s.name as student_name,
-        ce.course_id
+        c.name as course,
+        cs.camp_type as session,
+        JSONB_STRIP_NULLS(
+          JSONB_BUILD_OBJECT(
+            'Scratch Login', scr.username,
+            'Scratch Password', scr.password,
+            'Roblox Login', rob.username,
+            'Roblox Password', rob.password,
+            'Laptop #', lap.laptop_number
+          )
+        ) AS other_fields
       FROM camp_enrolments ce
       JOIN students s ON s.id = ce.student_id
-      WHERE ce.student_id = ANY(${studentIds});
+      JOIN camp_sessions cs ON cs.id = ce.camp_session_id
+      JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN scratch_accounts scr ON scr.student_id = s.id
+      LEFT JOIN roblox_accounts rob ON rob.student_id = s.id
+      LEFT JOIN laptop_assignments lap ON lap.student_id = s.id
+      WHERE ce.id = ANY(${enrolments.map(e => e.id)});
     `;
     
-    for (const enrolment of enrolments) {
+    for (const enrolment of enrolment_info) {
+      // transform any password labels to generic "Password" before inserting
+      let other_fields: { [key: string]: string } | null = null;
+      if (enrolment.other_fields && Object.keys(enrolment.other_fields).length > 0) {
+        other_fields = {};
+        for (const [key, value] of Object.entries(enrolment.other_fields)) {
+          if (key === 'Scratch Password' || key === 'Roblox Password') {
+            // generic password label; last one wins if both present
+            other_fields['Password'] = value;
+          } else {
+            other_fields[key] = value;
+          }
+        }
+        if (Object.keys(other_fields).length === 0) {
+          other_fields = null;
+        }
+      }
+
       await sql`
-        INSERT INTO slip_info (student_name, user_id, lms_username, lms_password, course_name)
+        INSERT INTO slip_info (
+          student_name,
+          user_id,
+          lms_username,
+          lms_password,
+          course_name,
+          other_fields
+        )
         VALUES (
           ${enrolment.student_name},
           ${userId},
-          ${enrolment.student_id + '@zebrarobotics.com'},
+          ${Number(enrolment.student_id) + '@zebrarobotics.com'},
           '',
-          ${enrolment.course_id}
+          ${enrolment.course + " " + enrolment.session},
+          ${other_fields as any}
         );
       `;
     }
