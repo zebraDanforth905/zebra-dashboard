@@ -31,6 +31,5 @@ Last updated: 2026-03-06
 | B010 | Logging hygiene        | Sensitive information appears in server logs.                         | Open                                          |
 | B011 | Billing UX correctness | Billing sort direction flag (`incDec`) is ignored.                    | Open                                          |
 | B012 | Framework migration    | `middleware.ts` convention is deprecated in Next.js 16.               | Open                                          |
-| B014 | Time display consistency | Non-schedule UI still shows 24-hour time strings in some views.      | Open (Schedule updated to AM/PM on 2026-03-06; review remaining pages later) |
 | R001 | Engineering debt       | Lint debt blocks safer refactors and quality gates.                   | Open                                          |
 | R002 | Engineering debt       | Unused/dead files create confusion.                                   | Open                                          |
