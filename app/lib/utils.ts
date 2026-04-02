@@ -109,3 +109,21 @@ export function nextOccurrenceOf(weekday: Weekday, from = new Date()): Date {
   return dt;
 }
 export function hhmm(t: string) { return t?.slice(0,5); }
+
+export function formatTime12Hour(t: string) {
+  if (!t) return "";
+  const [hoursPart = "", minutesPart = "00"] = t.split(":");
+  const hours = Number(hoursPart);
+  const minutes = Number(minutesPart);
+
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return t;
+  if (hours < 0 || hours > 24 || minutes < 0 || minutes > 59) return t;
+  if (hours === 24 && minutes !== 0) return t;
+
+  const normalizedHours = hours === 24 ? 0 : hours;
+
+  const period = normalizedHours >= 12 ? "PM" : "AM";
+  const hour12 = normalizedHours % 12 || 12;
+
+  return `${hour12}:${String(minutes).padStart(2, "0")} ${period}`;
+}
