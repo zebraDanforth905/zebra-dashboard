@@ -1,7 +1,6 @@
-import { fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
+import { fetchPastCampSessionsWithEnrolments } from '@/app/lib/data';
 import Link from 'next/link';
-import { CalendarIcon } from '@heroicons/react/24/outline';
-import ScrapeCampsButton from '@/app/ui/camp/scrape-camps-button';
+import { ArrowLeftIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import CampMonthlyReport from '@/app/ui/camp/camp-monthly-report';
 import { connection } from 'next/server';
 
@@ -15,6 +14,12 @@ const parseLocalISODate = (value: string) => {
   const parsedDate = new Date(year, month - 1, day);
 
   return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+};
+
+const normalizeISODate = (value?: string) => {
+  if (!value) return undefined;
+  const parsed = parseLocalISODate(value);
+  return parsed ? `${value}` : undefined;
 };
 
 const getLocalDateFromDb = (value: Date | string) => {
@@ -67,9 +72,25 @@ const formatDateRange = (start: Date, end: Date) => {
   return `${startStr} - ${endStr}`;
 };
 
-export default async function CampPage() {
+export default async function PastCampWeeksPage(props: {
+  searchParams?: Promise<{
+    from?: string;
+    to?: string;
+  }>;
+}) {
   await connection();
-  const sessions = await fetchUpcomingCampSessionsWithEnrolments();
+
+  const searchParams = await props.searchParams;
+  let fromFilter = normalizeISODate(searchParams?.from);
+  let toFilter = normalizeISODate(searchParams?.to);
+
+  if (fromFilter && toFilter && fromFilter > toFilter) {
+    const tmp = fromFilter;
+    fromFilter = toFilter;
+    toFilter = tmp;
+  }
+
+  const sessions = await fetchPastCampSessionsWithEnrolments(fromFilter, toFilter);
 
   const weeklyMap = new Map<
     string,
@@ -128,7 +149,7 @@ export default async function CampPage() {
   });
 
   const weeklyReports = Array.from(weeklyMap.values())
-    .sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime())
+    .sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime())
     .map(r => ({
       id: r.id,
       label: `Week of ${formatDateRange(r.weekStart, r.weekEnd)}`,
@@ -142,36 +163,74 @@ export default async function CampPage() {
 
   return (
     <div className="m-2 md:m-4">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Camp Schedule</h1>
-          <p className="text-sm text-slate-600 mt-1">
-            Weekly enrollment summaries. Click a week to view that week's report and day cards.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/dashboard/camp/past"
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
-          >
-            View Past Weeks
-          </Link>
-          <ScrapeCampsButton />
-        </div>
+      <Link
+        href="/dashboard/camp"
+        className="inline-flex items-center gap-2 text-sm text-sky-600 hover:text-sky-700 mb-4"
+      >
+        <ArrowLeftIcon className="h-4 w-4" />
+        Back to Camp Schedule
+      </Link>
+
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-900">Past Camp Weeks</h1>
+        <p className="text-sm text-slate-600 mt-1">
+          Filter historical camp weeks by week start date.
+        </p>
       </div>
+
+      <form method="get" className="mb-6 bg-white border border-slate-200 rounded-lg p-4 flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="from" className="text-xs font-medium text-slate-600">
+            From Week Start
+          </label>
+          <input
+            id="from"
+            name="from"
+            type="date"
+            defaultValue={fromFilter || ''}
+            className="h-10 px-3 border border-slate-300 rounded-md text-sm text-slate-700"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="to" className="text-xs font-medium text-slate-600">
+            To Week Start
+          </label>
+          <input
+            id="to"
+            name="to"
+            type="date"
+            defaultValue={toFilter || ''}
+            className="h-10 px-3 border border-slate-300 rounded-md text-sm text-slate-700"
+          />
+        </div>
+
+        <button
+          type="submit"
+          className="h-10 px-4 text-sm font-medium text-white bg-sky-600 border border-sky-600 rounded-md hover:bg-sky-700 transition-colors"
+        >
+          Apply
+        </button>
+
+        <Link
+          href="/dashboard/camp/past"
+          className="h-10 px-4 inline-flex items-center text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+        >
+          Clear
+        </Link>
+      </form>
 
       {weeklyReports.length === 0 ? (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-8 text-center">
           <CalendarIcon className="h-12 w-12 text-slate-400 mx-auto mb-3" />
-          <p className="text-slate-600 font-medium">No upcoming camp sessions</p>
+          <p className="text-slate-600 font-medium">No past camp weeks found</p>
           <p className="text-slate-500 text-sm mt-1">
-            Camp sessions will appear here once they are scheduled
+            Try widening the date range filters.
           </p>
         </div>
       ) : (
-        <CampMonthlyReport reports={weeklyReports} heading="Weekly Enrollment Summary" />
+        <CampMonthlyReport reports={weeklyReports} heading="Past Weekly Enrollment Summary" />
       )}
     </div>
   );
 }
-

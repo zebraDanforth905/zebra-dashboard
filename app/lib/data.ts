@@ -1751,6 +1751,65 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
   }
 }
 
+export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toDate?: string) {
+  'use cache'
+  cacheTag('camps');
+  try {
+    let whereConditions = sql`DATE_TRUNC('week', cs.start_date)::date < DATE_TRUNC('week', CURRENT_DATE)::date`;
+
+    if (fromDate) {
+      whereConditions = sql`${whereConditions} AND DATE_TRUNC('week', cs.start_date)::date >= ${fromDate}`;
+    }
+
+    if (toDate) {
+      whereConditions = sql`${whereConditions} AND DATE_TRUNC('week', cs.start_date)::date <= ${toDate}`;
+    }
+
+    const sessions = await sql<Array<{
+      start_date: Date;
+      end_date: Date;
+      enrolments: Array<{
+        id: string;
+        student_id: string;
+        student_name: string;
+        dob: Date | null;
+        course_id: string;
+        camp_type: 'FD' | 'PM' | 'AM';
+        assigned_seat_number: number | null;
+        special_needs: string | null;
+        extended_care: boolean;
+      }>;
+    }>>`
+      SELECT 
+        cs.start_date,
+        cs.end_date,
+        JSON_AGG(
+          JSON_BUILD_OBJECT(
+            'id', ce.id,
+            'student_id', ce.student_id,
+            'student_name', s.name,
+            'dob', s.dob,
+            'course_id', ce.course_id,
+            'camp_type', cs.camp_type,
+            'assigned_seat_number', ce.assigned_seat_number,
+            'special_needs', s.special_needs,
+            'extended_care', cs.extended_care
+          ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
+        ) FILTER (WHERE ce.id IS NOT NULL) AS enrolments
+      FROM camp_sessions cs
+      LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      LEFT JOIN students s ON s.id = ce.student_id
+      WHERE ${whereConditions}
+      GROUP BY cs.start_date, cs.end_date
+      ORDER BY cs.start_date DESC;
+    `;
+    return sessions;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch past camp sessions with enrolments.');
+  }
+}
+
 export async function fetchCampSessionById(sessionId: string) {
   'use cache'
   cacheTag('camps');
