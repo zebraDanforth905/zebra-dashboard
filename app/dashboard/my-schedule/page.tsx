@@ -148,8 +148,8 @@ export default async function MySchedulePage(props: { searchParams?: SearchParam
               <input name="endDate" type="date" className="rounded border border-gray-300 px-3 py-2 text-sm" required />
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input name="startTime" type="time" step={900} className="rounded border border-gray-300 px-3 py-2 text-sm" required />
-              <input name="endTime" type="time" step={900} className="rounded border border-gray-300 px-3 py-2 text-sm" required />
+              <input name="startTime" type="time" step={60} defaultValue="00:00" className="rounded border border-gray-300 px-3 py-2 text-sm" required />
+              <input name="endTime" type="time" step={60} defaultValue="23:59" className="rounded border border-gray-300 px-3 py-2 text-sm" required />
             </div>
             <textarea name="note" rows={3} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" placeholder="Reason or note (optional)" />
             <button className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white">Submit Request</button>
@@ -172,8 +172,8 @@ export default async function MySchedulePage(props: { searchParams?: SearchParam
                       <input name="endDate" type="date" defaultValue={request.end_date} className="rounded border border-gray-300 px-2 py-1 text-sm" required />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <input name="startTime" type="time" step={900} defaultValue={request.start_time.slice(0, 5)} className="rounded border border-gray-300 px-2 py-1 text-sm" required />
-                      <input name="endTime" type="time" step={900} defaultValue={request.end_time.slice(0, 5)} className="rounded border border-gray-300 px-2 py-1 text-sm" required />
+                      <input name="startTime" type="time" step={60} defaultValue={request.start_time.slice(0, 5)} className="rounded border border-gray-300 px-2 py-1 text-sm" required />
+                      <input name="endTime" type="time" step={60} defaultValue={request.end_time.slice(0, 5)} className="rounded border border-gray-300 px-2 py-1 text-sm" required />
                     </div>
                     <textarea name="note" defaultValue={request.note || ''} rows={2} className="w-full rounded border border-gray-300 px-2 py-1 text-sm" placeholder="Reason or note (optional)" />
                     <div className="flex items-center gap-3">

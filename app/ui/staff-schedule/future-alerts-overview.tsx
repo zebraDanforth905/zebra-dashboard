@@ -59,7 +59,7 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
         <div>
           <h2 className="text-lg font-semibold text-amber-900">Future Staffing Overview</h2>
           <p className="mt-1 text-sm text-amber-800">
-            Upcoming warnings and pending absence requests from {activeOverview.from_date} through {activeOverview.through_date}.
+            Upcoming warnings from {activeOverview.from_date} through {activeOverview.through_date}, plus all pending absence requests.
           </p>
         </div>
         <div className="text-xs font-medium text-amber-800">
@@ -121,19 +121,47 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                       </div>
                       {request.note ? <div className="mt-1 text-xs text-gray-700">Note: {request.note}</div> : null}
                     </div>
-                    <form action={updateStaffAbsence} className="flex items-center gap-2">
-                      <input type="hidden" name="id" value={request.id} />
-                      <input type="hidden" name="userId" value={request.user_id} />
-                      <input type="hidden" name="startDate" value={request.start_date} />
-                      <input type="hidden" name="endDate" value={request.end_date} />
-                      <input type="hidden" name="startTime" value={request.start_time.slice(0, 5)} />
-                      <input type="hidden" name="endTime" value={request.end_time.slice(0, 5)} />
-                      <input type="hidden" name="note" value={request.note || ''} />
-                      <input type="hidden" name="status" value="approved" />
-                      <button className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">
-                        Approve
-                      </button>
-                    </form>
+                    <div className="flex items-center gap-2">
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const formData = new FormData(e.currentTarget);
+                          startTransition(async () => {
+                            await updateStaffAbsence(formData);
+                            await refreshForMonth(activeOverview.selected_month);
+                          });
+                        }}
+                        className="flex items-center"
+                      >
+                        <input type="hidden" name="id" value={request.id} />
+                        <input type="hidden" name="userId" value={request.user_id} />
+                        <input type="hidden" name="startDate" value={request.start_date} />
+                        <input type="hidden" name="endDate" value={request.end_date} />
+                        <input type="hidden" name="startTime" value={request.start_time.slice(0, 5)} />
+                        <input type="hidden" name="endTime" value={request.end_time.slice(0, 5)} />
+                        <input type="hidden" name="note" value={request.note || ''} />
+                        <input type="hidden" name="status" value="approved" />
+                        <button type="submit" disabled={isPending} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
+                          Approve
+                        </button>
+                      </form>
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const formData = new FormData(e.currentTarget);
+                          startTransition(async () => {
+                            await deleteStaffAbsence(formData);
+                            await refreshForMonth(activeOverview.selected_month);
+                          });
+                        }}
+                        className="flex items-center"
+                      >
+                        <input type="hidden" name="id" value={request.id} />
+                        <button type="submit" disabled={isPending} className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60">
+                          Discard
+                        </button>
+                      </form>
+                    </div>
                   </div>
                 </li>
               ))}
@@ -156,10 +184,10 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                       <div className="mt-0.5 text-sm text-gray-700">{warning.message}</div>
                     </div>
                     <Link
-                      href={`/dashboard/staff-schedule?view=coverage&weekStart=${toWeekStart(warning.date)}&warningMonth=${activeOverview.selected_month}`}
+                      href={`/dashboard/staff-schedule?view=weekly&weekStart=${toWeekStart(warning.date)}&warningMonth=${activeOverview.selected_month}`}
                       className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
                     >
-                      Open Week
+                      Take me to week
                     </Link>
                   </div>
 
@@ -167,13 +195,18 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                   {warning.suggestions.length === 0 ? (
                     <div className="text-xs text-gray-500">No qualified and available coach found for this time slot.</div>
                   ) : (
-                    <ul className="mt-1 space-y-1">
-                      {warning.suggestions.map((suggestion) => (
-                        <li key={`${warning.date}-${warning.start_time}-${suggestion.user_id}`} className="text-xs text-gray-800">
-                          {suggestion.user_name}: {suggestion.reason}
-                        </li>
-                      ))}
-                    </ul>
+                    <details className="mt-1 rounded border border-gray-200 bg-gray-50 p-2">
+                      <summary className="cursor-pointer text-xs font-medium text-gray-700">
+                        Show {warning.suggestions.length} suggested coach{warning.suggestions.length === 1 ? '' : 'es'}
+                      </summary>
+                      <ul className="mt-2 space-y-1">
+                        {warning.suggestions.map((suggestion) => (
+                          <li key={`${warning.date}-${warning.start_time}-${suggestion.user_id}`} className="text-xs text-gray-800">
+                            {suggestion.user_name}: {suggestion.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                   )}
                 </li>
               ))}
@@ -198,7 +231,18 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
         </div>
 
         {showAddAbsence && (
-          <form action={createStaffAbsence} className="mt-3 rounded border border-gray-200 bg-gray-50 p-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              startTransition(async () => {
+                await createStaffAbsence(formData);
+                setShowAddAbsence(false);
+                await refreshForMonth(activeOverview.selected_month);
+              });
+            }}
+            className="mt-3 rounded border border-gray-200 bg-gray-50 p-3"
+          >
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label className="block text-xs font-medium text-gray-700">Staff member</label>
@@ -219,11 +263,11 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700">Start time</label>
-                <input type="time" name="startTime" step={900} required className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
+                <input type="time" name="startTime" step={60} required defaultValue="00:00" className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700">End time</label>
-                <input type="time" name="endTime" step={900} required className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
+                <input type="time" name="endTime" step={60} required defaultValue="23:59" className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700">Status</label>
@@ -238,8 +282,8 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
               </div>
             </div>
             <div className="mt-2 flex justify-end">
-              <button type="submit" className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">
-                Save Absence
+              <button type="submit" disabled={isPending} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
+                {isPending ? 'Saving...' : 'Save Absence'}
               </button>
             </div>
           </form>
@@ -252,7 +296,17 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
             {activeOverview.all_absences.map((absence) =>
               editingAbsenceId === absence.id ? (
                 <li key={absence.id} className="rounded border border-blue-200 bg-blue-50 p-2">
-                  <form action={updateStaffAbsence}>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const formData = new FormData(e.currentTarget);
+                      startTransition(async () => {
+                        await updateStaffAbsence(formData);
+                        setEditingAbsenceId(null);
+                        await refreshForMonth(activeOverview.selected_month);
+                      });
+                    }}
+                  >
                     <input type="hidden" name="id" value={absence.id} />
                     <div className="grid gap-2 sm:grid-cols-2">
                       <div className="sm:col-span-2">
@@ -273,11 +327,11 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-700">Start time</label>
-                        <input type="time" name="startTime" step={900} required defaultValue={absence.start_time.slice(0, 5)} className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
+                        <input type="time" name="startTime" step={60} required defaultValue={absence.start_time.slice(0, 5)} className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-700">End time</label>
-                        <input type="time" name="endTime" step={900} required defaultValue={absence.end_time.slice(0, 5)} className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
+                        <input type="time" name="endTime" step={60} required defaultValue={absence.end_time.slice(0, 5)} className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm" />
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-700">Status</label>
@@ -299,8 +353,8 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                       >
                         Cancel
                       </button>
-                      <button type="submit" className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-                        Save Changes
+                      <button type="submit" disabled={isPending} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60">
+                        {isPending ? 'Saving...' : 'Save Changes'}
                       </button>
                     </div>
                   </form>
@@ -326,12 +380,21 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                     >
                       Edit
                     </button>
-                    <form action={deleteStaffAbsence}>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const formData = new FormData(e.currentTarget);
+                        startTransition(async () => {
+                          await deleteStaffAbsence(formData);
+                          await refreshForMonth(activeOverview.selected_month);
+                        });
+                      }}
+                    >
                       <input type="hidden" name="id" value={absence.id} />
                       <button
                         type="submit"
-                        onClick={(e) => { if (!confirm(`Delete ${absence.user_name}'s absence?`)) e.preventDefault(); }}
-                        className="rounded border border-red-200 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                        disabled={isPending}
+                        className="rounded border border-red-200 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
                       >
                         Delete
                       </button>

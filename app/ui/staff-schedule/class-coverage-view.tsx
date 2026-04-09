@@ -19,6 +19,8 @@ function formatTimeRange(start: string, end: string) {
 }
 
 export function ClassCoverageView({ blocks, pickupCoverageRows }: ClassCoverageViewProps) {
+  const dateOrder = Array.from(new Set(blocks.map((b) => b.date)));
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -42,8 +44,15 @@ export function ClassCoverageView({ blocks, pickupCoverageRows }: ClassCoverageV
               </tr>
             </thead>
             <tbody>
-              {blocks.map((b, idx) => (
-                <tr key={`${b.date}-${b.start_time}-${idx}`} className="border-b border-gray-100 align-top">
+              {blocks.map((b, idx) => {
+                const dateIndex = dateOrder.indexOf(b.date);
+                const isNewDay = idx === 0 || blocks[idx - 1].date !== b.date;
+                const dayBandClass = dateIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50/60';
+                return (
+                <tr
+                  key={`${b.date}-${b.start_time}-${idx}`}
+                  className={`align-top border-b border-gray-100 ${dayBandClass} ${isNewDay ? 'border-t-2 border-t-slate-300' : ''}`}
+                >
                   <td className="px-2 py-2 text-gray-800">
                     {b.weekday}
                     <div className="text-xs text-gray-500">{b.date}</div>
@@ -87,7 +96,8 @@ export function ClassCoverageView({ blocks, pickupCoverageRows }: ClassCoverageV
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

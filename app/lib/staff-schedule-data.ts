@@ -219,8 +219,30 @@ async function fetchStaffScheduleAbsencesForDateRange(startDate: string, endDate
 }
 
 export async function fetchPendingStaffAbsenceRequests(fromDateInput?: string, throughDateInput?: string): Promise<StaffScheduleAbsence[]> {
+	const hasDateRange = Boolean(fromDateInput && throughDateInput);
 	const fromDate = fromDateInput || toIsoDate(new Date());
 	const throughDate = throughDateInput || fromDate;
+
+	if (!hasDateRange) {
+		const rows = await sql<StaffScheduleAbsence[]>`
+			SELECT
+				a.id,
+				a.user_id::text AS user_id,
+				u.name AS user_name,
+				a.start_date::text AS start_date,
+				a.end_date::text AS end_date,
+				a.start_time::text AS start_time,
+				a.end_time::text AS end_time,
+				COALESCE(a.status, 'approved')::text AS status,
+				a.note::text AS note
+			FROM staff_absence a
+			JOIN users u ON u.id::text = a.user_id::text
+			WHERE COALESCE(a.status, 'approved') = 'requested'
+			ORDER BY a.start_date ASC, a.start_time ASC
+		`;
+		return rows;
+	}
+
 	const rows = await sql<StaffScheduleAbsence[]>`
 		SELECT
 			a.id,
@@ -1002,7 +1024,7 @@ export async function fetchFutureStaffScheduleOverview(monthInput?: string): Pro
 	};
 
 	const [pendingAbsenceRequests, qualifications, users, staffAvailability, expandedShifts, allAbsencesForMonth, sessionBlocks] = await Promise.all([
-		fetchPendingStaffAbsenceRequests(fromDate, throughDate),
+		fetchPendingStaffAbsenceRequests(),
 		fetchStaffScheduleQualifications(),
 		fetchStaffScheduleUsers(),
 		sql<Array<{ user_id: string; weekday: string; start_time: string; end_time: string }>>`
@@ -1180,8 +1202,7 @@ export async function fetchFutureStaffScheduleOverview(monthInput?: string): Pro
 				const bCount = dayShiftCount.get(b.user_id) || 0;
 				if (aCount !== bCount) return aCount - bCount;
 				return a.user_name.localeCompare(b.user_name);
-			})
-			.slice(0, 3);
+			});
 	}
 
 	const warnings: StaffScheduleFutureWarning[] = [];

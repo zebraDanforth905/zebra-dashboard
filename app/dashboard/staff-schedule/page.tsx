@@ -21,7 +21,7 @@ import { TemplateView } from '@/app/ui/staff-schedule/template-view';
 import { WeeklyScheduleView } from '@/app/ui/staff-schedule/weekly-schedule-view';
 
 type SearchParams = Promise<{
-  view?: 'weekly' | 'coverage' | 'templates' | 'settings';
+  view?: 'future' | 'weekly' | 'coverage' | 'templates' | 'settings';
   weekStart?: string;
   warningMonth?: string;
 }>;
@@ -72,25 +72,15 @@ export default async function StaffSchedulePage(props: { searchParams?: SearchPa
         </p>
       </div>
 
-      <FutureAlertsOverview overview={futureOverview} users={users} />
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Link
-          className="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700"
-          href={`/dashboard/staff-schedule?view=${view}&weekStart=${prevWeek}&warningMonth=${futureOverview.selected_month}`}
-        >
-          Previous Week
-        </Link>
-        <div className="rounded bg-gray-100 px-3 py-2 text-sm font-medium text-gray-800">Week of {weekly.weekStart}</div>
-        <Link
-          className="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700"
-          href={`/dashboard/staff-schedule?view=${view}&weekStart=${nextWeek}&warningMonth=${futureOverview.selected_month}`}
-        >
-          Next Week
-        </Link>
-      </div>
-
       <div className="flex flex-wrap gap-2">
+        <Link
+          className={`rounded px-3 py-2 text-sm font-medium ${
+            view === 'future' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 border border-gray-300'
+          }`}
+          href={`/dashboard/staff-schedule?view=future&weekStart=${weekly.weekStart}&warningMonth=${futureOverview.selected_month}`}
+        >
+          Future Staffing
+        </Link>
         <Link
           className={`rounded px-3 py-2 text-sm font-medium ${
             view === 'weekly' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 border border-gray-300'
@@ -124,6 +114,26 @@ export default async function StaffSchedulePage(props: { searchParams?: SearchPa
           Staff Settings
         </Link>
       </div>
+
+      {view !== 'future' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            className="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700"
+            href={`/dashboard/staff-schedule?view=${view}&weekStart=${prevWeek}&warningMonth=${futureOverview.selected_month}`}
+          >
+            Previous Week
+          </Link>
+          <div className="rounded bg-gray-100 px-3 py-2 text-sm font-medium text-gray-800">Week of {weekly.weekStart}</div>
+          <Link
+            className="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700"
+            href={`/dashboard/staff-schedule?view=${view}&weekStart=${nextWeek}&warningMonth=${futureOverview.selected_month}`}
+          >
+            Next Week
+          </Link>
+        </div>
+      )}
+
+      {view === 'future' && <FutureAlertsOverview overview={futureOverview} users={users} />}
 
       {view === 'weekly' && (
         <WeeklyScheduleView
