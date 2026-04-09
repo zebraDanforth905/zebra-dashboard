@@ -102,6 +102,7 @@ export default function IncidentReportButton() {
                   </label>
                   <input
                     type="time"
+                    step={900}
                     id="incident_time"
                     name="incident_time"
                     required

@@ -44,12 +44,21 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
       console.log(r.student_id, r.name, r.day, r.start_date, r.end_date, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date);
       const sessionId = await getSessionId(tx, r.day, r.start_time, r.end_time);
 
+      const trial = (r.trial_date || '').toString().trim();
+      const makeup = (r.makeup_date || '').toString().trim();
+      const defaultLoad = trial ? 2 : 1;
+
       // student
       await tx`
-        INSERT INTO students (id, name)
-        VALUES (${r.student_id}, ${r.name})
+        INSERT INTO students (id, name, load)
+        VALUES (${r.student_id}, ${r.name}, ${defaultLoad})
         ON CONFLICT (id) DO UPDATE
-          SET name = EXCLUDED.name;
+          SET name = EXCLUDED.name,
+              load = CASE
+                WHEN students.load IS NULL THEN EXCLUDED.load
+                WHEN ${trial !== ''} AND students.load = 1 THEN 2
+                ELSE students.load
+              END;
       `;
 
       // course
@@ -62,9 +71,6 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
       }
 
       // trial / makeup / regular enrolment
-      const trial = (r.trial_date || "").toString().trim();
-      const makeup = (r.makeup_date || "").toString().trim();
-
       if (trial) {
         seenTrials.add(`${sessionId}|${r.name}|${r.course_code}|${trial}`);
         await tx`

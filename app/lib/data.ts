@@ -1942,6 +1942,7 @@ export async function searchStudents(query: string) {
     const students = await sql<Array<{
       id: string;
       name: string;
+      load: number;
       customer_id: string;
       customer_name: string;
       customer_email: string;
@@ -1981,7 +1982,7 @@ export async function searchStudents(query: string) {
       }>;
     }>>`
       WITH student_matches AS (
-        SELECT s.id, s.name, s.customer_id, c.name as customer_name, c.email as customer_email
+        SELECT s.id, s.name, s.load, s.customer_id, c.name as customer_name, c.email as customer_email
         FROM students s
         LEFT JOIN customers c ON c.id = s.customer_id
         WHERE s.name ILIKE '%' || ${query} || '%'
@@ -2092,6 +2093,7 @@ export async function searchStudents(query: string) {
       SELECT 
         sm.id,
         sm.name,
+        COALESCE(sm.load, 1)::float8 AS load,
         sm.customer_id,
         sm.customer_name,
         sm.customer_email,
