@@ -1,4 +1,5 @@
 import { StaffScheduleClassBlock, StaffSchedulePickupCoverageRow } from '@/app/lib/staff-schedule-types';
+import { formatDate } from '@/app/lib/utils';
 
 type ClassCoverageViewProps = {
   blocks: StaffScheduleClassBlock[];
@@ -55,7 +56,7 @@ export function ClassCoverageView({ blocks, pickupCoverageRows }: ClassCoverageV
                 >
                   <td className="px-2 py-2 text-gray-800">
                     {b.weekday}
-                    <div className="text-xs text-gray-500">{b.date}</div>
+                    <div className="text-xs text-gray-500">{formatDate(b.date)}</div>
                   </td>
                   <td className="px-2 py-2 text-gray-800">
                     {formatTimeRange(b.start_time, b.end_time)}
@@ -125,7 +126,7 @@ export function ClassCoverageView({ blocks, pickupCoverageRows }: ClassCoverageV
                 <tr key={`${row.date}-${row.school_name}`} className="border-b border-gray-100 align-top">
                   <td className="px-2 py-2 text-gray-800">
                     {row.weekday}
-                    <div className="text-xs text-gray-500">{row.date}</div>
+                    <div className="text-xs text-gray-500">{formatDate(row.date)}</div>
                   </td>
                   <td className="px-2 py-2 text-gray-800">{row.school_name}</td>
                   <td className="px-2 py-2 font-medium text-gray-900">{row.pickup_count}</td>

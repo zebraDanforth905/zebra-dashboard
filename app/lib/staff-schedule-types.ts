@@ -197,7 +197,7 @@ export type StaffScheduleWarningSuggestion = {
 };
 
 export type StaffScheduleFutureWarning = {
-	type: 'understaffed' | 'qualification';
+	type: 'understaffed' | 'qualification' | 'pickup';
 	date: string;
 	weekday: StaffScheduleWeekday;
 	start_time: string;

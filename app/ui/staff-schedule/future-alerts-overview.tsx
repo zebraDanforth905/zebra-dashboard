@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { createStaffAbsence, deleteStaffAbsence, updateStaffAbsence } from '@/app/lib/actions';
 import { StaffScheduleFutureOverview, StaffScheduleUser } from '@/app/lib/staff-schedule-types';
+import { formatDate } from '@/app/lib/utils';
 import { useState, useTransition } from 'react';
 
 function formatDisplayTime(value: string) {
@@ -59,7 +60,7 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
         <div>
           <h2 className="text-lg font-semibold text-amber-900">Future Staffing Overview</h2>
           <p className="mt-1 text-sm text-amber-800">
-            Upcoming warnings from {activeOverview.from_date} through {activeOverview.through_date}, plus all pending absence requests.
+            Upcoming warnings from {formatDate(activeOverview.from_date)} through {formatDate(activeOverview.through_date)}, plus all pending absence requests.
           </p>
         </div>
         <div className="text-xs font-medium text-amber-800">
@@ -117,7 +118,7 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                     <div>
                       <div className="font-medium text-gray-900">{request.user_name}</div>
                       <div className="text-xs text-gray-600">
-                        {request.start_date} to {request.end_date} • {formatTimeRange(request.start_time, request.end_time)}
+                        {formatDate(request.start_date)} to {formatDate(request.end_date)} • {formatTimeRange(request.start_time, request.end_time)}
                       </div>
                       {request.note ? <div className="mt-1 text-xs text-gray-700">Note: {request.note}</div> : null}
                     </div>
@@ -170,7 +171,7 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
         </div>
 
         <div className="rounded border border-amber-200 bg-white p-3">
-          <h3 className="text-sm font-semibold text-gray-900">Future Understaffed or Qualification Warnings</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Future Staffing Warnings</h3>
           {activeOverview.warnings.length === 0 ? (
             <p className="mt-2 text-sm text-gray-600">No upcoming staffing warnings.</p>
           ) : (
@@ -179,8 +180,12 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                 <li key={`${warning.type}-${warning.date}-${warning.start_time}-${index}`} className="rounded border border-gray-200 p-2">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">{warning.type === 'understaffed' ? 'Understaffed' : 'Qualification'}</div>
-                      <div className="font-medium text-gray-900">{warning.weekday} {warning.date} • {formatTimeRange(warning.start_time, warning.end_time)}</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                        {warning.type === 'understaffed' ? 'Understaffed' : warning.type === 'qualification' ? 'Qualification' : 'Pickup'}
+                      </div>
+                      <div className="font-medium text-gray-900">
+                        {warning.weekday} {formatDate(warning.date)} {warning.type !== 'pickup' && `• ${formatTimeRange(warning.start_time, warning.end_time)}`}
+                      </div>
                       <div className="mt-0.5 text-sm text-gray-700">{warning.message}</div>
                     </div>
                     <Link
@@ -191,22 +196,22 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                     </Link>
                   </div>
 
-                  <div className="mt-2 text-xs text-gray-600">Suggested coaches</div>
-                  {warning.suggestions.length === 0 ? (
-                    <div className="text-xs text-gray-500">No qualified and available coach found for this time slot.</div>
-                  ) : (
-                    <details className="mt-1 rounded border border-gray-200 bg-gray-50 p-2">
-                      <summary className="cursor-pointer text-xs font-medium text-gray-700">
-                        Show {warning.suggestions.length} suggested coach{warning.suggestions.length === 1 ? '' : 'es'}
-                      </summary>
-                      <ul className="mt-2 space-y-1">
-                        {warning.suggestions.map((suggestion) => (
-                          <li key={`${warning.date}-${warning.start_time}-${suggestion.user_id}`} className="text-xs text-gray-800">
-                            {suggestion.user_name}: {suggestion.reason}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
+                  {warning.suggestions.length > 0 && (
+                    <>
+                      <div className="mt-2 text-xs text-gray-600">Suggested coaches</div>
+                      <details className="mt-1 rounded border border-gray-200 bg-gray-50 p-2">
+                        <summary className="cursor-pointer text-xs font-medium text-gray-700">
+                          Show {warning.suggestions.length} suggested coach{warning.suggestions.length === 1 ? '' : 'es'}
+                        </summary>
+                        <ul className="mt-2 space-y-1">
+                          {warning.suggestions.map((suggestion) => (
+                            <li key={`${warning.date}-${warning.start_time}-${suggestion.user_id}`} className="text-xs text-gray-800">
+                              {suggestion.user_name}: {suggestion.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </>
                   )}
                 </li>
               ))}
@@ -364,7 +369,7 @@ export function FutureAlertsOverview({ overview, users }: FutureAlertsOverviewPr
                   <div className="min-w-0">
                     <span className="font-medium text-gray-900">{absence.user_name}</span>
                     <span className="mx-1.5 text-gray-400">·</span>
-                    <span className="text-gray-700">{absence.start_date}{absence.start_date !== absence.end_date ? ` → ${absence.end_date}` : ''}</span>
+                    <span className="text-gray-700">{formatDate(absence.start_date)}{absence.start_date !== absence.end_date ? ` → ${formatDate(absence.end_date)}` : ''}</span>
                     <span className="mx-1.5 text-gray-400">·</span>
                     <span className="text-gray-700">{formatTimeRange(absence.start_time.slice(0, 5), absence.end_time.slice(0, 5))}</span>
                     {absence.status === 'requested' && (

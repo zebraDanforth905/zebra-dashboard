@@ -13,6 +13,7 @@ import {
   StaffScheduleTemplateViewData,
   StaffScheduleUser,
 } from '@/app/lib/staff-schedule-types';
+import { formatDate } from '@/app/lib/utils';
 
 const SHIFT_TYPE_OPTIONS = [
   { value: 'office', label: 'Office' },
@@ -93,7 +94,7 @@ export function TemplateView({ templateData, users }: TemplateViewProps) {
                 <span className="font-medium text-gray-900">Date Ranges</span>
                 {ranges.map((range) => (
                   <span key={range.id} className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 ring-1 ring-gray-200">
-                    <span>{range.start_date} to {range.end_date}</span>
+                    <span>{formatDate(range.start_date)} to {formatDate(range.end_date)}</span>
                     <form action={deleteTemplateDateRange}>
                       <input type="hidden" name="id" value={String(range.id)} />
                       <button className="text-xs font-medium text-red-600">Delete</button>

@@ -776,30 +776,69 @@ export async function fetchClassCoverageView(weekStartInput?: string): Promise<S
 				(${weekStart}::date + i * INTERVAL '1 day')::date AS date,
 				LOWER(TO_CHAR((${weekStart}::date + i * INTERVAL '1 day')::date, 'FMDay')) AS weekday
 			FROM GENERATE_SERIES(0, 6) AS gs(i)
+		), all_loads AS (
+			-- Regular enrolled students (excluding absences)
+			SELECT
+				wd.date,
+				wd.weekday,
+				s.start_time,
+				s.end_time,
+				COALESCE(st.load, 1) AS load,
+				c.id AS course_id,
+				c.name AS course_name
+			FROM week_days wd
+			JOIN sessions s ON LOWER(s.weekday) = wd.weekday
+			JOIN enrolments e ON e.session_id = s.id
+				AND (e.start_date IS NULL OR e.start_date <= wd.date)
+				AND (e.end_date IS NULL OR e.end_date >= wd.date)
+			JOIN students st ON st.id = e.student_id
+			JOIN courses c ON c.id = e.course_id
+			LEFT JOIN absences a ON a.enrolment_id = e.id AND a.date = wd.date
+			WHERE a.id IS NULL
+			UNION ALL
+			-- Makeup students
+			SELECT
+				wd.date,
+				wd.weekday,
+				s.start_time,
+				s.end_time,
+				COALESCE(st.load, 1) AS load,
+				c.id AS course_id,
+				c.name AS course_name
+			FROM week_days wd
+			JOIN makeups m ON m.date = wd.date
+			JOIN sessions s ON s.id = m.session_id
+			JOIN students st ON st.id = m.student_id
+			JOIN courses c ON c.id = m.course_id
+			UNION ALL
+			-- Trial students
+			SELECT
+				wd.date,
+				wd.weekday,
+				s.start_time,
+				s.end_time,
+				1.0 AS load,
+				c.id AS course_id,
+				c.name AS course_name
+			FROM week_days wd
+			JOIN trials t ON t.date = wd.date
+			JOIN sessions s ON s.id = t.session_id
+			JOIN courses c ON c.id = t.course_id
 		)
 		SELECT
-			wd.date::text AS date,
-			INITCAP(wd.weekday) AS weekday,
-			s.start_time::text AS start_time,
-			s.end_time::text AS end_time,
-			COALESCE(SUM(COALESCE(st.load, 1)), 0)::float8 AS total_load,
+			date::text AS date,
+			INITCAP(weekday) AS weekday,
+			start_time::text AS start_time,
+			end_time::text AS end_time,
+			COALESCE(SUM(load), 0)::float8 AS total_load,
 			COALESCE(
-				JSONB_AGG(DISTINCT JSONB_BUILD_OBJECT('course_id', c.id::text, 'course_name', c.name))
-					FILTER (WHERE c.id IS NOT NULL),
+				JSONB_AGG(DISTINCT JSONB_BUILD_OBJECT('course_id', course_id::text, 'course_name', course_name))
+					FILTER (WHERE course_id IS NOT NULL),
 				'[]'::jsonb
 			) AS courses
-		FROM week_days wd
-		JOIN sessions s ON LOWER(s.weekday) = wd.weekday
-		JOIN enrolments e ON e.session_id = s.id
-			AND (e.start_date IS NULL OR e.start_date <= wd.date)
-			AND (e.end_date IS NULL OR e.end_date >= wd.date)
-		JOIN students st ON st.id = e.student_id
-		JOIN courses c ON c.id = e.course_id
-		LEFT JOIN absences a ON a.enrolment_id = e.id
-			AND a.date = wd.date
-		WHERE a.id IS NULL
-		GROUP BY wd.date, wd.weekday, s.start_time, s.end_time
-		ORDER BY wd.date ASC, s.start_time ASC
+		FROM all_loads
+		GROUP BY date, weekday, start_time, end_time
+		ORDER BY date ASC, start_time ASC
 	`;
 
 	const qualifications = await fetchStaffScheduleQualifications();
@@ -1010,6 +1049,70 @@ export async function fetchWeeklyPickupCoverageRows(weekStartInput?: string): Pr
 	});
 }
 
+async function fetchPickupCoverageRowsForDateRange(startDate: string, endDate: string): Promise<StaffSchedulePickupCoverageRow[]> {
+	const days = buildDateRangeDays(startDate, endDate);
+	const dayMap = new Map(days.map((d) => [d.date, d.weekday]));
+
+	const pickupDemand = await sql<Array<{
+		date: string;
+		weekday: string;
+		school_name: string;
+		pickup_count: number;
+	}>>`
+		WITH date_range AS (
+			SELECT
+				d::date AS date,
+				INITCAP(LOWER(TO_CHAR(d::date, 'FMDay'))) AS weekday
+			FROM GENERATE_SERIES(${startDate}::date, ${endDate}::date, INTERVAL '1 day') AS d
+		)
+		SELECT
+			dr.date::text AS date,
+			dr.weekday,
+			LOWER(TRIM(p.school_name)) AS school_name,
+			COUNT(*)::int AS pickup_count
+		FROM date_range dr
+		JOIN pickups p ON LOWER(TRIM(p.weekday)) = LOWER(TRIM(dr.weekday))
+		LEFT JOIN pickup_absences pa ON pa.pickup_id = p.id AND pa.date = dr.date
+		WHERE pa.id IS NULL
+		GROUP BY dr.date, dr.weekday, LOWER(TRIM(p.school_name))
+	`;
+
+	const expandedShifts = await fetchExpandedStaffShiftsForDateRange(startDate, endDate);
+	const pickupWindowStart = '15:15:00';
+	const pickupWindowEnd = '15:30:00';
+
+	const rows: StaffSchedulePickupCoverageRow[] = [];
+	for (const demand of pickupDemand) {
+		const requiredType = schoolToShiftType(demand.school_name);
+		if (!requiredType) {
+			continue;
+		}
+
+		const assignedCoaches = Array.from(
+			new Set(
+				expandedShifts
+					.filter((shift) => shift.date === demand.date && shift.shift_types.includes(requiredType))
+					.filter((shift) => overlaps(shift.start_time, shift.end_time, pickupWindowStart, pickupWindowEnd))
+					.map((shift) => shift.user_name),
+			),
+		).sort((a, b) => a.localeCompare(b));
+
+		rows.push({
+			date: demand.date,
+			weekday: (dayMap.get(demand.date) || 'Monday') as StaffScheduleWeekday,
+			school_name: demand.school_name,
+			pickup_count: demand.pickup_count,
+			assigned_coaches: assignedCoaches,
+			has_coverage: assignedCoaches.length > 0,
+		});
+	}
+
+	return rows.sort((a, b) => {
+		if (a.date !== b.date) return a.date.localeCompare(b.date);
+		return a.school_name.localeCompare(b.school_name);
+	});
+}
+
 export async function fetchFutureStaffScheduleOverview(monthInput?: string): Promise<StaffScheduleFutureOverview> {
 	const { selectedMonth, fromDate, throughDate } = monthDateRange(monthInput);
 	const days = buildDateRangeDays(fromDate, throughDate);
@@ -1023,7 +1126,7 @@ export async function fetchFutureStaffScheduleOverview(monthInput?: string): Pro
 		courses: Array<{ course_id: string; course_name: string }>;
 	};
 
-	const [pendingAbsenceRequests, qualifications, users, staffAvailability, expandedShifts, allAbsencesForMonth, sessionBlocks] = await Promise.all([
+	const [pendingAbsenceRequests, qualifications, users, staffAvailability, expandedShifts, allAbsencesForMonth, sessionBlocks, pickupRows] = await Promise.all([
 		fetchPendingStaffAbsenceRequests(),
 		fetchStaffScheduleQualifications(),
 		fetchStaffScheduleUsers(),
@@ -1043,30 +1146,71 @@ export async function fetchFutureStaffScheduleOverview(monthInput?: string): Pro
 					d::date AS date,
 					LOWER(TO_CHAR(d::date, 'FMDay')) AS weekday
 				FROM GENERATE_SERIES(${fromDate}::date, ${throughDate}::date, INTERVAL '1 day') AS d
+			), all_loads AS (
+				-- Regular enrolled students (excluding absences)
+				SELECT
+					dr.date,
+					dr.weekday,
+					s.start_time,
+					s.end_time,
+					COALESCE(st.load, 1) AS load,
+					c.id AS course_id,
+					c.name AS course_name
+				FROM date_range dr
+				JOIN sessions s ON LOWER(s.weekday) = dr.weekday
+				JOIN enrolments e ON e.session_id = s.id
+					AND (e.start_date IS NULL OR e.start_date <= dr.date)
+					AND (e.end_date IS NULL OR e.end_date >= dr.date)
+				JOIN students st ON st.id = e.student_id
+				JOIN courses c ON c.id = e.course_id
+				LEFT JOIN absences a ON a.enrolment_id = e.id AND a.date = dr.date
+				WHERE a.id IS NULL
+				UNION ALL
+				-- Makeup students
+				SELECT
+					dr.date,
+					dr.weekday,
+					s.start_time,
+					s.end_time,
+					COALESCE(st.load, 1) AS load,
+					c.id AS course_id,
+					c.name AS course_name
+				FROM date_range dr
+				JOIN makeups m ON m.date = dr.date
+				JOIN sessions s ON s.id = m.session_id
+				JOIN students st ON st.id = m.student_id
+				JOIN courses c ON c.id = m.course_id
+				UNION ALL
+				-- Trial students
+				SELECT
+					dr.date,
+					dr.weekday,
+					s.start_time,
+					s.end_time,
+					1.0 AS load,
+					c.id AS course_id,
+					c.name AS course_name
+				FROM date_range dr
+				JOIN trials t ON t.date = dr.date
+				JOIN sessions s ON s.id = t.session_id
+				JOIN courses c ON c.id = t.course_id
 			)
 			SELECT
-				dr.date::text AS date,
-				INITCAP(dr.weekday) AS weekday,
-				s.start_time::text AS start_time,
-				s.end_time::text AS end_time,
-				COALESCE(SUM(COALESCE(st.load, 1)), 0)::float8 AS total_load,
+				date::text AS date,
+				INITCAP(weekday) AS weekday,
+				start_time::text AS start_time,
+				end_time::text AS end_time,
+				COALESCE(SUM(load), 0)::float8 AS total_load,
 				COALESCE(
-					JSONB_AGG(DISTINCT JSONB_BUILD_OBJECT('course_id', c.id::text, 'course_name', c.name))
-						FILTER (WHERE c.id IS NOT NULL),
+					JSONB_AGG(DISTINCT JSONB_BUILD_OBJECT('course_id', course_id::text, 'course_name', course_name))
+						FILTER (WHERE course_id IS NOT NULL),
 					'[]'::jsonb
 				) AS courses
-			FROM date_range dr
-			JOIN sessions s ON LOWER(s.weekday) = dr.weekday
-			JOIN enrolments e ON e.session_id = s.id
-				AND (e.start_date IS NULL OR e.start_date <= dr.date)
-				AND (e.end_date IS NULL OR e.end_date >= dr.date)
-			JOIN students st ON st.id = e.student_id
-			JOIN courses c ON c.id = e.course_id
-			LEFT JOIN absences a ON a.enrolment_id = e.id AND a.date = dr.date
-			WHERE a.id IS NULL
-			GROUP BY dr.date, dr.weekday, s.start_time, s.end_time
-			ORDER BY dr.date ASC, s.start_time ASC
+			FROM all_loads
+			GROUP BY date, weekday, start_time, end_time
+			ORDER BY date ASC, start_time ASC
 		`,
+		fetchPickupCoverageRowsForDateRange(fromDate, throughDate),
 	]);
 
 	const qualificationsByUser = new Map<string, Set<string>>();
@@ -1274,6 +1418,60 @@ export async function fetchFutureStaffScheduleOverview(monthInput?: string): Pro
 					presentUserIds,
 					requiredCourseIds: missingCourseIds,
 				}),
+			});
+		}
+	}
+
+	// Add pickup warnings
+	for (const pickupRow of pickupRows) {
+		if (!pickupRow.has_coverage) {
+			const pickupType = schoolToShiftType(pickupRow.school_name) || pickupRow.school_name;
+			const suggestions: StaffScheduleWarningSuggestion[] = [];
+
+			// Find coaches available for pickup on that day with the required shift type
+			for (const user of users) {
+				// Check if they have a shift conflict on that day
+				const hasShiftConflict = expandedShifts.some(
+					(shift) => shift.date === pickupRow.date && shift.user_id === user.id && shift.shift_types.includes(pickupType),
+				);
+				if (hasShiftConflict) continue;
+
+				// Check if they have an approved absence on that day
+				const hasAbsenceConflict = allAbsencesForMonth.some((absence) => {
+					if (absence.status !== 'approved') return false;
+					if (absence.user_id !== user.id) return false;
+					const window = effectiveAbsenceWindowForDate(absence, pickupRow.date);
+					if (!window) return false;
+					// Pickup window is 15:15-15:30
+					return overlaps(window.start, window.end, '15:15:00', '15:30:00');
+				});
+				if (hasAbsenceConflict) continue;
+
+				// Check if they have availability set for this weekday
+				const availability = availabilityByUser.get(user.id) || [];
+				const hasSavedAvailability = availability.length > 0;
+				const isAvailable = !hasSavedAvailability || availability.some((slot) =>
+					slot.weekday === pickupRow.weekday
+					&& slot.start_time <= '15:15:00'
+					&& slot.end_time >= '15:30:00',
+				);
+				if (!isAvailable) continue;
+
+				suggestions.push({
+					user_id: user.id,
+					user_name: user.name,
+					reason: 'Available for pickup',
+				});
+			}
+
+			warnings.push({
+				type: 'pickup',
+				date: pickupRow.date,
+				weekday: pickupRow.weekday,
+				start_time: '15:15:00',
+				end_time: '15:30:00',
+				message: `${pickupRow.pickup_count} pickup student(s) at ${pickupRow.school_name} but no assigned pickup coach.`,
+				suggestions,
 			});
 		}
 	}

@@ -67,15 +67,39 @@ export function computeNextDate(opts: {
   return candidate; // UTC midnight on the correct next calendar day
 }
 
+function getOrdinalSuffix(day: number): string {
+  if (day % 100 >= 11 && day % 100 <= 13) return "th";
+  switch (day % 10) {
+    case 1: return "st";
+    case 2: return "nd";
+    case 3: return "rd";
+    default: return "th";
+  }
+}
+
 export function formatDate(d: Date | string, locale = "en-CA") {
     const date = typeof d === "string" ? new Date(d) : d;
-    // Force UTC so midnight dates don’t move to the previous day locally
-    return new Intl.DateTimeFormat(locale, {
+    // Force UTC so midnight dates don't move to the previous day locally
+    const dateFormatter = new Intl.DateTimeFormat(locale, {
         year: "numeric",
         month: "short",
-        day: "2-digit",
+        day: "numeric",
         timeZone: "UTC",
-    }).format(date);
+    });
+    const parts = dateFormatter.formatToParts(date);
+    const monthPart = parts.find(p => p.type === "month")?.value;
+    const dayPart = parts.find(p => p.type === "day")?.value;
+    const yearPart = parts.find(p => p.type === "year")?.value;
+    
+    if (!monthPart || !dayPart || !yearPart) {
+        // Fallback to original format if parts are unavailable
+        return dateFormatter.format(date);
+    }
+    
+    const dayNum = parseInt(dayPart, 10);
+    const suffix = getOrdinalSuffix(dayNum);
+    
+    return `${monthPart} ${dayNum}${suffix}, ${yearPart}`;
 }
 
 export function localMidnightFromISODate(isoYmd: string) {

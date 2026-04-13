@@ -8,6 +8,7 @@ import {
   StaffScheduleUser,
   StaffScheduleWeeklyDay,
 } from '@/app/lib/staff-schedule-types';
+import { formatDate } from '@/app/lib/utils';
 
 const SHIFT_TYPE_OPTIONS = [
   { value: 'office', label: 'Office' },
@@ -59,7 +60,7 @@ export function WeeklyScheduleView({
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Weekly Staff Schedule</h2>
             <p className="mt-1 text-sm text-gray-600">
-              {weekStart} to {weekEnd}. Shifts are trimmed around absences, and each day cell supports quick shift entry.
+              {formatDate(weekStart)} to {formatDate(weekEnd)}. Shifts are trimmed around absences, and each day cell supports quick shift entry.
             </p>
           </div>
         </div>
@@ -74,7 +75,7 @@ export function WeeklyScheduleView({
                 {days.map((day) => (
                   <th key={day.date} className="w-40 border border-gray-200 bg-gray-50 px-3 py-3 text-left align-top">
                     <div className="font-semibold text-gray-900">{day.weekday}</div>
-                    <div className="text-xs font-medium text-gray-500">{day.date}</div>
+                    <div className="text-xs font-medium text-gray-500">{formatDate(day.date)}</div>
                   </th>
                 ))}
               </tr>
@@ -171,7 +172,7 @@ export function WeeklyScheduleView({
               <li key={`${s.id}-${s.date}`} className="rounded border border-gray-200 p-2">
                 <div className="font-medium text-gray-900">{s.template_name || 'Template shift'}</div>
                 <div className="text-gray-700">
-                  {s.weekday} {s.date} {formatTimeRange(s.start_time, s.end_time)}
+                  {s.weekday} {formatDate(s.date)} {formatTimeRange(s.start_time, s.end_time)}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {s.shift_types.map((type) => (
