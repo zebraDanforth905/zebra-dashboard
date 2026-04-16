@@ -39,6 +39,19 @@ function formatTimeRange(start: string, end: string) {
   return `${formatDisplayTime(start)} - ${formatDisplayTime(end)}`;
 }
 
+function durationMinutes(start: string, end: string) {
+  const [startHour, startMinute] = start.split(':').map(Number);
+  const [endHour, endMinute] = end.split(':').map(Number);
+  return endHour * 60 + endMinute - (startHour * 60 + startMinute);
+}
+
+function formatHoursFromMinutes(minutes: number) {
+  const hours = minutes / 60;
+  if (Number.isInteger(hours)) return `${hours}h`;
+  const formatted = hours.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+  return `${formatted}h`;
+}
+
 function shiftTypeLabel(type: string) {
   if (type === 'pickup_frankland') return 'Frankland';
   if (type === 'pickup_jackman') return 'Jackman';
@@ -53,6 +66,32 @@ export function WeeklyScheduleView({
   absences,
   openShifts,
 }: WeeklyScheduleViewProps) {
+  const userMinutesByDate = new Map<string, Map<string, number>>();
+  const dayMinutesTotals = new Map<string, number>();
+  const userWeekMinutesTotals = new Map<string, number>();
+  let weekMinutesTotal = 0;
+
+  for (const day of days) {
+    let dayMinutesTotal = 0;
+
+    for (const shift of day.shifts) {
+      const minutes = durationMinutes(shift.start_time, shift.end_time);
+      dayMinutesTotal += minutes;
+
+      const byDate = userMinutesByDate.get(shift.user_id) || new Map<string, number>();
+      byDate.set(day.date, (byDate.get(day.date) || 0) + minutes);
+      userMinutesByDate.set(shift.user_id, byDate);
+
+      userWeekMinutesTotals.set(
+        shift.user_id,
+        (userWeekMinutesTotals.get(shift.user_id) || 0) + minutes,
+      );
+    }
+
+    dayMinutesTotals.set(day.date, dayMinutesTotal);
+    weekMinutesTotal += dayMinutesTotal;
+  }
+
   return (
     <div className="space-y-8">
       <section className="rounded-lg border border-gray-200 bg-white p-4">
@@ -66,7 +105,7 @@ export function WeeklyScheduleView({
         </div>
 
         <div className="mt-4 overflow-x-auto">
-          <table className="min-w-[1180px] table-fixed border-separate border-spacing-0 text-sm">
+          <table className="min-w-[1320px] table-fixed border-separate border-spacing-0 text-sm">
             <thead>
               <tr>
                 <th className="sticky left-0 z-10 w-44 border border-gray-200 bg-gray-50 px-3 py-3 text-left font-semibold text-gray-900">
@@ -78,6 +117,9 @@ export function WeeklyScheduleView({
                     <div className="text-xs font-medium text-gray-500">{formatDate(day.date)}</div>
                   </th>
                 ))}
+                <th className="w-36 border border-gray-200 bg-gray-50 px-3 py-3 text-left font-semibold text-gray-900">
+                  Weekly Total
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -91,6 +133,7 @@ export function WeeklyScheduleView({
                     const shifts = day.shifts.filter((shift) => shift.user_id === user.id);
                     const flags = day.absence_flags.filter((flag) => flag.user_id === user.id);
                     const hasContent = shifts.length > 0 || flags.length > 0;
+                    const dayTotalMinutes = userMinutesByDate.get(user.id)?.get(day.date) || 0;
 
                     return (
                       <td
@@ -110,6 +153,9 @@ export function WeeklyScheduleView({
                           {shifts.map((shift, idx) => (
                             <div key={`${shift.user_id}-${shift.date}-${shift.start_time}-${idx}`} className="rounded bg-yellow-100 px-2 py-2 shadow-sm ring-1 ring-yellow-200">
                               <div className="font-semibold text-gray-900">{formatTimeRange(shift.start_time, shift.end_time)}</div>
+                              <div className="mt-1 text-[11px] font-medium text-gray-700">
+                                {formatHoursFromMinutes(durationMinutes(shift.start_time, shift.end_time))}
+                              </div>
                               <div className="mt-1 text-[11px] text-gray-600">
                                 {shift.source}
                                 {shift.template_name ? ` • ${shift.template_name}` : ''}
@@ -152,13 +198,37 @@ export function WeeklyScheduleView({
                               <button className="w-full rounded bg-gray-900 px-2 py-1.5 text-xs font-medium text-white">Save</button>
                             </form>
                           </details>
+
+                          {dayTotalMinutes > 0 && (
+                            <div className="rounded border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-800">
+                              Day total: {formatHoursFromMinutes(dayTotalMinutes)}
+                            </div>
+                          )}
                         </div>
                       </td>
                     );
                   })}
+                  <td className="border border-gray-200 bg-gray-50 px-3 py-3 align-top font-semibold text-gray-900">
+                    {formatHoursFromMinutes(userWeekMinutesTotals.get(user.id) || 0)}
+                  </td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr>
+                <td className="sticky left-0 z-10 border border-gray-300 bg-gray-100 px-3 py-3 font-semibold text-gray-900">
+                  Weekly Totals
+                </td>
+                {days.map((day) => (
+                  <td key={`total-${day.date}`} className="border border-gray-300 bg-gray-100 px-3 py-3 font-semibold text-gray-900">
+                    {formatHoursFromMinutes(dayMinutesTotals.get(day.date) || 0)}
+                  </td>
+                ))}
+                <td className="border border-gray-300 bg-gray-200 px-3 py-3 font-bold text-gray-900">
+                  {formatHoursFromMinutes(weekMinutesTotal)}
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </section>
@@ -198,7 +268,6 @@ export function WeeklyScheduleView({
             {openShifts.length === 0 && <li className="text-sm text-gray-500">No open weekly shifts.</li>}
           </ul>
         </div>
-
       </section>
     </div>
   );
