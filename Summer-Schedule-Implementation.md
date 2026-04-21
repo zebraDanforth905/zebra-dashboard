@@ -15,7 +15,7 @@ Built for:
 
 ## Executive Summary
 
-Parents receive a tokenized per-family link (`/summer-reg?token=abc123`). They open it, see each of their active students, pick the summer evening sessions they want to enroll in(if any)(multiple allowed), and submit. Staff review responses in `/dashboard/summer` and approve → enrolments are created automatically with course auto-inherited.
+Parents receive a tokenized per-family link (`/summer-reg?token=abc123`). They open it, see each of their active students, see each child's current class context, pick the summer evening sessions they want to enroll in(if any)(multiple allowed), and submit. Staff review responses in `/dashboard/summer`, sort/filter them into action queues, and approve → enrolments are created automatically with course auto-inherited.
 
 **Key framing:** This is an **enrolment form**, not a preference form. Parents choose actual sessions. Course is always inherited from existing enrolments — no course-picker UI anywhere.
 
@@ -62,6 +62,19 @@ Staff dashboard /dashboard/summer
 ├── Approve All Enrolling (bulk)
 └── Remove from Summer (delete enrolments, keep request record)
 ```
+
+---
+
+## Operational Requirements (Non-Code)
+
+These items are part of the real launch plan and should be tracked alongside the coding work.
+
+- **Family email source of truth:** The current system assumes one deliverable family email in `customers.email`. Before send, staff must audit missing/blank emails and decide how to handle families where both parents want the link.
+- **One link per family:** `parent_tokens` enforces one token per `customer_id`, and the CSV/export flow must stay deduplicated at the customer level even when multiple students or enrolments exist.
+- **Family link QA before send:** Staff must be able to preview any generated family link while logged in so they can verify the correct children and current class context appear before emailing that family.
+- **Internal end-to-end test:** Before the first campaign send, staff should send at least one real token to an internal address, open the email, submit the form, and run the approval flow through to enrolment creation.
+- **Response triage for schedule building:** Staff need both filters and sorting on the response dashboard so they can work queues such as `enrolling`, `no_change`, `pausing`, `needs_followup`, and requested session/time.
+- **Email send tracking:** If links are sent manually through Constant Contact, `email_sent_at` / `email_sent_count` will not update automatically unless we add a manual "mark as sent" action. The dashboard should not show an "Emailed" count as authoritative until that is handled.
 
 ---
 
@@ -252,9 +265,10 @@ All follow data.ts patterns: `'use server'`, `'use cache'` + `cacheTag` inside f
 // fetchSummerStats() → SummerStats
 // cacheTag('summer-responses')
 
-// fetchSummerResponseRows(filter) → SummerResponseRow[]
+// fetchSummerResponseRows(filter, sort) → SummerResponseRow[]
 // cacheTag('summer-responses')
 // filter: 'all' | 'pending' | 'enrolling' | 'pausing' | 'needs_followup' | 'approved'
+// sort: 'submitted_desc' | 'submitted_asc' | 'parent_name' | 'student_name' | 'summer_status' | 'current_slot'
 
 // fetchParentLinkRows() → ParentLinkRow[]
 // cacheTag('summer-tokens', 'summer-responses')
@@ -334,12 +348,13 @@ Sessions are grouped by weekday from live DB rows (`is_summer=TRUE`). No hardcod
 
 - **`SummerStatsCards`** — Total Families, Responded, Enrolling, Pausing, Pending, Needs Follow-up, Emailed
 - **`SummerTabs`** — `?tab=responses` / `?tab=links`
-- **`SummerResponsesSection`** — table: Student, Parent, Choice, Sessions, Sept Slot, Submitted, Actions
+- **`SummerResponsesSection`** — table: Student, Parent, Choice, Sessions, Sept Slot, Submitted, Actions; sortable by submitted date, family, student, response type, and current slot
 - **`ApproveModal`** — start_date only (sessions already stored; course auto-inherited). No session or course picker.
 - **`ApproveAllModal`** — start_date only, bulk. Shows count of enrolling students.
 - **`RemoveButton`** — inline confirm before `removeFromSummer`
-- **`SummerLinkManagement`** — Generate All Tokens, Export CSV, Copy individual links
+- **`SummerLinkManagement`** — Generate All Tokens, Export CSV, Copy individual links, Preview link, and flag rows missing a usable email
 - **`CopyLinkButton`** — `navigator.clipboard.writeText(origin + '/summer-reg?token=' + token)`
+- **`PreviewLinkButton`** — opens `/summer-reg?token=...` in a new tab so staff can QA a family's form before send
 - **`ExportCsvButton`** — client-side CSV, **one row per family** (deduplicated at customer level)
 
 **CSV column names match Constant Contact variable names:**
@@ -375,26 +390,29 @@ Staff uploads to CC → creates email template with `{{Full Name}}`, `{{Students
 ### Step 3 — Link Management Dashboard
 11. `fetchParentLinkRows` + `generateAllParentTokens`
 12. `app/dashboard/summer/page.tsx` (links tab)
-13. `SummerLinkManagement`, `CopyLinkButton`, `ExportCsvButton`
+13. `SummerLinkManagement`, `CopyLinkButton`, `PreviewLinkButton`, `ExportCsvButton`
 14. Add `Summer Reg` nav link
 15. **Test:** generate all tokens → export CSV → verify URL format
+16. **Test:** preview selected family links while logged in → correct children + current class context appear
+17. **Operational:** review blank/missing family emails before importing into Constant Contact
 
 ### Step 4 — Response Review
-16. `fetchSummerStats` + `fetchSummerResponseRows`
-17. `SummerStatsCards`, `SummerTabs`, `SummerResponsesSection`
-18. **Test:** submit responses → dashboard shows correct data
+18. `fetchSummerStats` + `fetchSummerResponseRows`
+19. `SummerStatsCards`, `SummerTabs`, `SummerResponsesSection`
+20. Add response sorting controls needed for schedule triage
+21. **Test:** submit responses → dashboard shows correct data and sorting/filtering work for staff queues
 
 ### Step 5 — Approval Flow
-19. `approveSummerRequest`, `approveAllEnrolling`, `removeFromSummer`, `markReviewed`
-20. `ApproveModal`, `ApproveAllModal`, `RemoveButton`
-21. **Test full cycle:** submit → approve → enrolment on schedule → remove → enrolment gone, request kept
+22. `approveSummerRequest`, `approveAllEnrolling`, `removeFromSummer`, `markReviewed`
+23. `ApproveModal`, `ApproveAllModal`, `RemoveButton`
+24. **Test full cycle:** submit → approve → enrolment on schedule → remove → enrolment gone, request kept
 
 ### Step 6 — Email Automation (Phase 4, after core flow proven)
-22. Set up Resend account + domain DNS verification for zebrarobotics.com
-23. `pnpm add resend @react-email/components`
-24. `app/lib/email/resend.ts` + `app/lib/email/summer-form-email.tsx`
-25. `sendSummerFormEmails` server action
-26. `SendSummerEmailsButton` in link management dashboard
+25. Set up Resend account + domain DNS verification for zebrarobotics.com
+26. `pnpm add resend @react-email/components`
+27. `app/lib/email/resend.ts` + `app/lib/email/summer-form-email.tsx`
+28. `sendSummerFormEmails` server action
+29. `SendSummerEmailsButton` in link management dashboard
 
 ---
 
@@ -446,6 +464,7 @@ The only change to existing behavior is the `auth.config.ts` fix to allow `/summ
 |----------|--------------|
 | Which sessions should have `is_summer=TRUE`? | Need to flip the flag in DB to test the form. Can create test sessions if no real ones exist yet. |
 | What URL is the dashboard hosted at? | Needed for `NEXT_PUBLIC_APP_URL` in `.env.local` — used in CSV export link column and email links. |
+| Is `customers.email` the single source of truth for one family email, or do some families need two parent recipients? | Current design sends one family link per customer. If both parents need delivery, decide whether that is operational-only in Constant Contact or needs data model support. |
 
 ### Can answer anytime before Step 6 (email)
 | Question | Notes |
@@ -489,7 +508,9 @@ The only change to existing behavior is the `auth.config.ts` fix to allow `/summ
 6. **Confirmation page**: Shows student name + selected session labels + September messaging
 7. **Form pre-fill on revisit**: Visit link after submitting → form pre-filled with last response
 8. **Link management**: Generate all tokens → export CSV → verify URL format + all columns present
-9. **Approval creates enrolment**: Approve → check `enrolments` table → verify student on schedule page
-10. **Remove from summer**: Remove → enrolments deleted, `parent_requests` row still exists with payload intact
-11. **Approve All**: N enrolling responses → Approve All → N students' enrolments created, all marked `completed`
-12. **"Other" request**: Select "Other" + type note → `status='needs_manual_followup'`, `custom_notes` populated
+9. **Family link preview**: From the dashboard, open a generated family link while logged in → verify the correct children and current class context appear
+10. **Approval creates enrolment**: Approve → check `enrolments` table → verify student on schedule page
+11. **Remove from summer**: Remove → enrolments deleted, `parent_requests` row still exists with payload intact
+12. **Approve All**: N enrolling responses → Approve All → N students' enrolments created, all marked `completed`
+13. **"Other" request**: Select "Other" + type note → `status='needs_manual_followup'`, `custom_notes` populated
+14. **Response sorting**: Sort the dashboard by response type / current slot / submitted date → verify queue order matches staff expectations for applying the summer schedule
