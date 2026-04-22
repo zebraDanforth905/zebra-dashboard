@@ -141,6 +141,16 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_summer BOOLEAN NOT NULL DEFAULT
 CREATE INDEX idx_sessions_is_summer ON sessions(is_summer) WHERE is_summer = TRUE;
 ```
 
+### `migrations/010_add_alternate_email_to_customers.sql`
+
+```sql
+-- Staff-fillable alternate contact email for families where both parents want the summer link.
+-- Non-breaking: existing rows receive NULL; populated manually before the CC import.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS alternate_email TEXT;
+```
+
+Decision: treat alternate_email as a staff-managed field. Staff fill it in for two-parent families before exporting the CSV. Constant Contact can CC the alternate address or staff can import it as a second recipient list — that is an operational choice, not a code choice. The column gives the CSV a real DB source rather than relying on a staff spreadsheet.
+
 ### Payload shapes (JSONB)
 
 ```typescript
@@ -221,6 +231,7 @@ authorized({ auth, request: { nextUrl } }) {
 |------|---------|
 | `migrations/008_create_parent_request_tables.sql` | Generalized schema |
 | `migrations/009_add_summer_flag_to_sessions.sql` | Live session control |
+| `migrations/010_add_alternate_email_to_customers.sql` | Staff-fillable alternate family email |
 | `app/lib/summer-data.ts` | Read queries (follows data.ts patterns) |
 | `app/lib/summer-actions.ts` | Server actions |
 | `app/summer-reg/page.tsx` | Public parent form (no auth) |
@@ -272,6 +283,32 @@ All follow data.ts patterns: `'use server'`, `'use cache'` + `cacheTag` inside f
 
 // fetchParentLinkRows() → ParentLinkRow[]
 // cacheTag('summer-tokens', 'summer-responses')
+// JOIN: parent_tokens
+//   → customers            (email, alternate_email)
+//   → students             (for student_names[])
+//   → enrolments → sessions → courses  (course_name, weekday, start_time per student)
+// Aggregate into student_courses[] on the customer row so ExportCsvButton can render the
+// "Current Courses" CSV column without a second query.
+//
+// ParentLinkRow shape (definitions.ts):
+// {
+//   token_id: string;
+//   customer_id: string;
+//   customer_name: string;
+//   email: string;
+//   alternate_email: string | null;          ← new: from customers.alternate_email
+//   student_names: string[];
+//   student_courses: Array<{                 ← new: one entry per active enrolment
+//     student_name: string;
+//     course_name: string;
+//     weekday: string;
+//     start_time: string;
+//   }>;
+//   token: string;
+//   email_sent_at: Date | null;
+//   email_sent_count: number;
+//   has_responded: boolean;
+// }
 
 // fetchSummerSessions() → Session[]    — WHERE is_summer=TRUE
 // cacheTag('schedule')
@@ -357,15 +394,19 @@ Sessions are grouped by weekday from live DB rows (`is_summer=TRUE`). No hardcod
 - **`PreviewLinkButton`** — opens `/summer-reg?token=...` in a new tab so staff can QA a family's form before send
 - **`ExportCsvButton`** — client-side CSV, **one row per family** (deduplicated at customer level)
 
-**CSV column names match Constant Contact variable names:**
+**CSV columns — first four are Constant Contact template variables; last two are staff QA reference only (CC ignores extra columns):**
 ```
-Full Name, Email Address, Students, Link
+Full Name, Email Address, Alternate Email, Students, Current Courses, Link
 ```
 Example row:
 ```
-"John Smith","john@example.com","Emma, Liam","https://dashboard.zebrarobotics.com/summer-reg?token=abc123"
+"John Smith","john@example.com","jane@example.com","Emma, Liam","Emma — Robotics Wed 5:15 PM; Liam — Robotics Sat 10:00 AM","https://dashboard.zebrarobotics.com/summer-reg?token=abc123"
 ```
-Staff uploads to CC → creates email template with `{{Full Name}}`, `{{Students}}`, `{{Link}}` variables → CC sends one personalized email per family.
+- **Alternate Email** — pulled from `customers.alternate_email`; empty string `""` if null (CC handles blank gracefully).
+- **Current Courses** — staff-only reference so they can QA that each child's class context is correct before send. Populated from the `student_courses[]` JOIN in `fetchParentLinkRows`. Format: `"[Student] — [Course] [Weekday] [Time]"`, multiple students separated by `"; "`.
+- CC template uses `{{Full Name}}`, `{{Students}}`, `{{Link}}` as personalization variables. `{{Alternate Email}}` can optionally be wired to CC's built-in "also email" feature.
+
+Staff uploads to CC → creates email template → CC sends one personalized email per family.
 
 **Why deduplication is built-in:** The portal exports data at the session level (one row per class), so a family with two kids in three classes appears six times. Our system avoids this entirely — `parent_tokens` has `UNIQUE(customer_id)` and `generateAllParentTokens()` works from the `customers` table, not from enrolments or sessions. The exported CSV will always be one row per family.
 
@@ -373,50 +414,148 @@ Staff uploads to CC → creates email template with `{{Full Name}}`, `{{Students
 
 ## Implementation Order
 
-### Step 1 — Foundation
-1. Run migration `008` (parent_tokens + parent_requests)
-2. Run migration `009` (is_summer on sessions)
-3. Add types to `definitions.ts`
-4. Fix `auth.config.ts`
+Time estimates are realistic single-session focused work. Total Steps 1–5: ~22–25 hrs.
 
-### Step 2 — Public Form
-5. `fetchParentFormData` in `summer-data.ts`
-6. `generateParentToken` + `submitSummerForm` in `summer-actions.ts`
-7. `app/summer-reg/page.tsx`
-8. `app/summer-reg/submitted/page.tsx`
-9. `SummerRegForm` + `StudentCard`
-10. **Test:** insert token → visit form → submit → verify DB row
+### Step 1 — Foundation (~2 hrs)
+1. Run migration `008` (parent_tokens + parent_requests) — 5 min
+2. Run migration `009` (is_summer on sessions) — 5 min
+3. Run migration `010` (alternate_email on customers) — 5 min
+4. Add types to `definitions.ts` (ParentToken, ParentRequest, ParentLinkRow with alternate_email + student_courses, SummerResponseRow, SummerStats) — 45 min
+5. Fix `auth.config.ts` — 20 min
 
-### Step 3 — Link Management Dashboard
-11. `fetchParentLinkRows` + `generateAllParentTokens`
-12. `app/dashboard/summer/page.tsx` (links tab)
-13. `SummerLinkManagement`, `CopyLinkButton`, `PreviewLinkButton`, `ExportCsvButton`
-14. Add `Summer Reg` nav link
-15. **Test:** generate all tokens → export CSV → verify URL format
-16. **Test:** preview selected family links while logged in → correct children + current class context appear
-17. **Operational:** review blank/missing family emails before importing into Constant Contact
+### Step 2 — Public Form (~7 hrs)
+6. `fetchParentFormData` in `summer-data.ts` (JOIN across 5 tables — hardest query) — 60 min
+7. `generateParentToken` + `submitSummerForm` in `summer-actions.ts` — 75 min
+8. `app/summer-reg/page.tsx` — 30 min
+9. `app/summer-reg/submitted/page.tsx` — 20 min
+10. `SummerRegForm` + `StudentCard` — 2.5 hrs
+11. **Test:** insert token → visit form → submit → verify DB row — 30 min
 
-### Step 4 — Response Review
-18. `fetchSummerStats` + `fetchSummerResponseRows`
-19. `SummerStatsCards`, `SummerTabs`, `SummerResponsesSection`
-20. Add response sorting controls needed for schedule triage
-21. **Test:** submit responses → dashboard shows correct data and sorting/filtering work for staff queues
+### Step 3 — Link Management Dashboard (~5 hrs)
+12. `fetchParentLinkRows` (with alternate_email + student_courses JOIN) + `generateAllParentTokens` — 90 min
+13. `app/dashboard/summer/page.tsx` (links tab) — 30 min
+14. `SummerLinkManagement`, `CopyLinkButton`, `PreviewLinkButton` — 60 min
+15. `ExportCsvButton` (6-column CSV: Full Name, Email Address, Alternate Email, Students, Current Courses, Link) — 45 min
+16. Add `Summer Reg` nav link — 10 min
+17. **Test:** generate all tokens → export CSV → open in Sheets → verify 6 columns, one row per family
+18. **Test:** preview selected family links while logged in → correct children + current class context appear
+19. **Operational:** review blank/missing `email` and `alternate_email` before importing into Constant Contact
 
-### Step 5 — Approval Flow
-22. `approveSummerRequest`, `approveAllEnrolling`, `removeFromSummer`, `markReviewed`
-23. `ApproveModal`, `ApproveAllModal`, `RemoveButton`
-24. **Test full cycle:** submit → approve → enrolment on schedule → remove → enrolment gone, request kept
+### Step 4 — Response Review (~5 hrs)
+20. `fetchSummerStats` + `fetchSummerResponseRows` (filter + sort) — 90 min
+21. `SummerStatsCards`, `SummerTabs`, `SummerResponsesSection` — 2.5 hrs
+22. Add response sorting controls needed for schedule triage — 30 min
+23. **Test:** submit responses → dashboard shows correct data and sorting/filtering work for staff queues
 
-### Step 6 — Email Automation (Phase 4, after core flow proven)
-25. Set up Resend account + domain DNS verification for zebrarobotics.com
-26. `pnpm add resend @react-email/components`
-27. `app/lib/email/resend.ts` + `app/lib/email/summer-form-email.tsx`
-28. `sendSummerFormEmails` server action
-29. `SendSummerEmailsButton` in link management dashboard
+### Step 5 — Approval Flow (~5 hrs)
+24. `approveSummerRequest`, `approveAllEnrolling`, `removeFromSummer`, `markReviewed`, `markNeedsFollowup` — 2.5 hrs
+25. `ApproveModal`, `ApproveAllModal`, `RemoveButton` — 2 hrs
+26. **Test full cycle:** submit → approve → enrolment on schedule → remove → enrolment gone, request kept — 30 min
+
+### Step 6 — Email Automation (Phase 4, after core flow proven) (~4 hrs when ready)
+27. Set up Resend account + domain DNS verification for zebrarobotics.com
+28. `pnpm add resend @react-email/components`
+29. `app/lib/email/resend.ts` + `app/lib/email/summer-form-email.tsx`
+30. `sendSummerFormEmails` server action
+31. `SendSummerEmailsButton` in link management dashboard
 
 ---
 
-## Edge Cases
+## Daily Implementation Schedule (April 22 → May 11)
+
+Assumes ~3–4 hrs of focused coding per day alongside regular studio work. Adjust if bandwidth changes — the order matters more than the exact dates. Weekends are intentionally left as buffer.
+
+---
+
+### Apr 22 (Tue) — Foundation
+**WHY:** Every subsequent step is blocked until migrations are in the DB and types are defined. Auth fix is needed for staff to preview the form.
+**HOW:** Run migrations 008, 009, 010 in Supabase/psql. Update `definitions.ts` with all parent self-serve types including updated `ParentLinkRow` (add `alternate_email`, `student_courses[]`). Apply the `auth.config.ts` `/summer-reg` exemption.
+
+---
+
+### Apr 23 (Wed) — Public form data layer
+**WHY:** `fetchParentFormData` is the most complex query in the project (JOIN: token → customer → students → enrolments → sessions + latest request per student). Getting it right before building UI prevents rework.
+**HOW:** Write `fetchParentFormData` in `summer-data.ts`. Write `generateParentToken`. Test by manually inserting a row into `parent_tokens` and calling the function from a test script or a temporary route.
+
+---
+
+### Apr 24 (Thu) — Public form UI
+**WHY:** The parent form is the externally-facing core of the entire feature. Completing it unlocks real end-to-end testing.
+**HOW:** Build `SummerRegForm` + `StudentCard`. Build `app/summer-reg/page.tsx`. Build `app/summer-reg/submitted/page.tsx`. Manual test: open form in incognito with a real token — verify student cards, session checkboxes, and "No change / Pause" options render correctly.
+
+---
+
+### Apr 25 (Fri) — Form submission + resubmission
+**WHY:** Need to prove the data round-trip works before building the staff side. Supersede logic is subtle and must be correct.
+**HOW:** Implement `submitSummerForm` (validate token, validate session IDs are still `is_summer=TRUE`, supersede old row, INSERT new row). Test: submit → query `parent_requests`. Test: submit twice → first row `status='superseded'`, `is_latest=FALSE`; second row `is_latest=TRUE`.
+
+---
+
+### Apr 28 (Mon) — Link management data layer
+**WHY:** Staff cannot export the CSV or preview family links until `fetchParentLinkRows` and `generateAllParentTokens` are working.
+**HOW:** Write `fetchParentLinkRows` with full JOIN (customers → alternate_email, enrolments → sessions → courses for `student_courses[]`). Write `generateAllParentTokens` (bulk INSERT, idempotent — skip existing tokens). Manual test: call generate → query `parent_tokens` → verify row count matches active customer count.
+
+---
+
+### Apr 29 (Tue) — Link management UI
+**WHY:** Staff need to export the CSV and preview links before anything goes out via Constant Contact. This is the last step before operational QA.
+**HOW:** Build `SummerLinkManagement`, `CopyLinkButton`, `PreviewLinkButton`. Build `ExportCsvButton` with the 6-column CSV spec (Full Name, Email Address, Alternate Email, Students, Current Courses, Link). Build `app/dashboard/summer/page.tsx` with the links tab. Add `Summer Reg` to nav links.
+
+---
+
+### Apr 30 (Wed) — CSV export QA + operational email review
+**WHY:** The CSV is the primary send mechanism. One wrong column breaks the Constant Contact import. Blank emails must be identified before the send date.
+**HOW:** Generate all tokens → export CSV → open in Google Sheets → verify 6 columns, one row per family, no duplicate families. Audit the `email` column for blanks. Fill in `alternate_email` for any two-parent families identified by staff. Confirm the exported link URLs resolve correctly.
+
+---
+
+### May 1 (Thu) — Response review data + UI
+**WHY:** Staff need the dashboard working as soon as the first responses arrive. Sorting/filtering matters for schedule triage — a flat list is unusable at volume.
+**HOW:** Write `fetchSummerStats`, `fetchSummerResponseRows` (filter by status + summer_status, sort by submitted date / family / student / response type / current slot). Build `SummerStatsCards`, `SummerTabs`, `SummerResponsesSection` table. Test with manually-inserted `parent_requests` rows.
+
+---
+
+### May 2 (Fri) — Approval flow (actions)
+**WHY:** Core business logic: auto-inherit course, insert enrolments, handle re-approval cleanly. This is the highest-stakes code in the system.
+**HOW:** Implement `approveSummerRequest` (fetch request → inherit course_id from latest enrolment → `sql.begin`: INSERT enrolments, UPDATE request). Implement `approveAllEnrolling` (filter `status='pending'` AND `payload->>'summer_status'='enrolling'`). Implement `removeFromSummer`, `markReviewed`, `markNeedsFollowup`. Write Zod schemas. Test each action directly before wiring to UI.
+
+---
+
+### May 5 (Mon) — Approval flow (UI)
+**WHY:** Staff cannot approve without modals. `ApproveAllModal` needs a count of enrolling students so staff can confirm before bulk-acting.
+**HOW:** Build `ApproveModal` (start_date picker only — sessions already stored, course auto-inherited). Build `ApproveAllModal` (start_date + enrolling count). Build `RemoveButton` (inline confirm). Wire all to their server actions and `revalidateTag`.
+
+---
+
+### May 6 (Tue) — Full end-to-end internal test
+**WHY:** Required before any real family link is emailed. Integration bugs only surface in a real flow: real token, real email, real form submit, real approval.
+**HOW:** Send a real token link to an internal address (e.g., Kyle's email). Open it, fill in the form, submit. From the dashboard: review the response, approve it, check the `enrolments` table for the new row, verify the student appears on the schedule page, then remove from summer and verify the enrolment is deleted. Fix any bugs found.
+
+---
+
+### May 7 (Wed) — Staff walkthrough + gap review
+**WHY:** Amanda and Taite need to understand the workflow before first send. Undocumented UX gaps are cheaper to fix now than after families have received emails.
+**HOW:** Walk through the full workflow live: generate tokens → preview a family link → export CSV → show how to import into CC → show response dashboard → show approval flow. Note any UX confusion or missing features. Confirm any outstanding questions (response deadline date, "Other" handling, inactive sibling decision).
+
+---
+
+### May 8 (Thu) — Buffer / polish
+**WHY:** Pad for bugs found during walkthrough or any missing edge-case UX (empty states, loading skeletons, error messages).
+**HOW:** Address open items from May 7. Verify "no summer sessions yet" empty state on parent form. Confirm error handling if token is invalid. Ensure `alternate_email` is populated for all two-parent families identified earlier.
+
+---
+
+### May 9 (Fri) — Constant Contact import dry run
+**WHY:** CC has its own CSV import UI with column-mapping steps. Confirming the format works now avoids a last-minute scramble on send day.
+**HOW:** Import the exported CSV into a Constant Contact test list. Verify Full Name, Email Address, Alternate Email map as expected. Preview a templated email using `{{Full Name}}`, `{{Students}}`, `{{Link}}` variables. Confirm list count matches expected active family count.
+
+---
+
+### May 11 (Sun) — Target: first live send
+**WHY:** Gives families approximately two weeks to respond before staff need to finalize the summer schedule.
+**HOW:** Staff sends the Constant Contact campaign. Monitor for email bounces. Dashboard stays open — first responses may arrive within hours.
+
+---
 
 | Risk | Mitigation |
 |------|-----------|
