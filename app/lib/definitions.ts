@@ -397,6 +397,9 @@ export type ParentToken = {
   created_at: Date;
 };
 
+// portal_parent_id is set automatically by the portal scrape
+// alternate_name is set manually by staff or auto-parsed from alternate_emails if the portal provides "Name <email>" format
+
 export type SummerSchedulingPayload = {
   summer_status: 'enrolling' | 'pausing' | 'no_change';
   session_ids: string[];
@@ -482,6 +485,7 @@ export type ParentFormData = {
   token_id: string;
   customer_id: string;
   customer_name: string;
+  customer_alternate_name: string | null;
   students: ParentFormStudentData[];
   summer_sessions: (Session & { is_summer: boolean })[];
   fall_sessions: (Session & { student_count: number; coach_capacity: number })[];
@@ -526,6 +530,7 @@ export type ParentLinkRow = {
   token_id: string;
   customer_id: string;
   customer_name: string;
+  alternate_name: string | null;
   email: string;
   alternate_email: string | null;
   student_names: string[];

@@ -3,6 +3,7 @@ import CopyLinkButton from './copy-link-button';
 import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
 import AlternateEmailCell from './alternate-email-cell';
+import AlternateNameCell from './alternate-name-cell';
 import MarkSentButton from './mark-sent-button';
 import Link from 'next/link';
 
@@ -60,7 +61,10 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
             <tbody className="divide-y divide-slate-100">
               {rows.map(row => (
                 <tr key={row.token_id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800">{row.customer_name}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-800">{row.customer_name}</div>
+                    <AlternateNameCell customerId={row.customer_id} initialName={row.alternate_name} />
+                  </td>
                   <td className="px-4 py-3">
                     {row.email ? (
                       <span className="text-slate-600">{row.email}</span>

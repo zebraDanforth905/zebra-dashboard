@@ -94,35 +94,193 @@ export async function updateAlternateEmail(customerId: string, email: string | n
   revalidateTag('summer-tokens', 'max');
 }
 
+export async function updateAlternateName(customerId: string, name: string | null): Promise<void> {
+  const trimmed = name?.trim() || null;
+  await sql`
+    UPDATE customers SET alternate_name = ${trimmed} WHERE id = ${customerId}::uuid
+  `;
+  revalidateTag('summer-tokens', 'max');
+}
+
 // ── Request approval ─────────────────────────────────────────────────────────
 
-export async function approveSummerRequest(requestId: string): Promise<void> {
+export async function approveSummerRequest(
+  requestId: string,
+  startDate?: string,
+): Promise<{ error?: string }> {
+  const reqs = await sql<{
+    id: string;
+    student_id: string;
+    payload: { summer_status: string; session_ids?: string[] };
+  }[]>`
+    SELECT id, student_id, payload
+    FROM parent_requests
+    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    LIMIT 1
+  `;
+  if (reqs.length === 0) return { error: 'Request not found.' };
+  const req = reqs[0];
+  const summerStatus = req.payload?.summer_status;
+
+  if (summerStatus === 'enrolling') {
+    const sessionIds = req.payload?.session_ids ?? [];
+    if (sessionIds.length === 0) return { error: 'No sessions on this request to enrol into.' };
+    if (!startDate) return { error: 'Start date is required for enrolling requests.' };
+
+    // Auto-inherit course_id from student's most recent enrolment
+    const courseRows = await sql<{ course_id: string }[]>`
+      SELECT course_id::text
+      FROM enrolments
+      WHERE student_id = ${req.student_id}
+      ORDER BY start_date DESC NULLS LAST
+      LIMIT 1
+    `;
+    if (courseRows.length === 0) {
+      return { error: 'No existing enrolment found to inherit course from. Approve manually.' };
+    }
+    const courseId = courseRows[0].course_id;
+
+    const newEnrolmentIds: string[] = [];
+    await sql.begin(async tx => {
+      for (const sessionId of sessionIds) {
+        const inserted = await tx<{ id: string }[]>`
+          INSERT INTO enrolments (student_id, course_id, session_id, start_date)
+          VALUES (
+            ${req.student_id},
+            ${courseId}::uuid,
+            ${sessionId}::uuid,
+            ${startDate}::date
+          )
+          ON CONFLICT (student_id, session_id)
+          DO UPDATE SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date
+          RETURNING id::text
+        `;
+        if (inserted.length > 0) newEnrolmentIds.push(inserted[0].id);
+      }
+      await tx`
+        UPDATE parent_requests
+        SET
+          status = 'completed',
+          enrolment_ids = ${newEnrolmentIds}::uuid[],
+          reviewed_at = NOW(),
+          reviewed_by = 'staff',
+          updated_at = NOW()
+        WHERE id = ${requestId}::uuid
+      `;
+    });
+  } else {
+    // pausing / no_change / other — just mark completed, no enrolment action
+    await sql`
+      UPDATE parent_requests
+      SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
+      WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    `;
+  }
+
+  revalidateTag('summer-responses', 'max');
+  return {};
+}
+
+export async function approveAllEnrolling(startDate: string): Promise<{ created: number; skipped: number }> {
+  const pending = await sql<{
+    id: string;
+    student_id: string;
+    payload: { session_ids?: string[] };
+  }[]>`
+    SELECT id, student_id, payload
+    FROM parent_requests
+    WHERE is_latest = TRUE
+      AND status = 'pending'
+      AND request_type = 'summer_scheduling'
+      AND payload->>'summer_status' = 'enrolling'
+  `;
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const req of pending) {
+    const sessionIds = req.payload?.session_ids ?? [];
+    if (sessionIds.length === 0) { skipped++; continue; }
+
+    const courseRows = await sql<{ course_id: string }[]>`
+      SELECT course_id::text FROM enrolments WHERE student_id = ${req.student_id}
+      ORDER BY start_date DESC NULLS LAST LIMIT 1
+    `;
+    if (courseRows.length === 0) { skipped++; continue; }
+    const courseId = courseRows[0].course_id;
+
+    const newEnrolmentIds: string[] = [];
+    await sql.begin(async tx => {
+      for (const sessionId of sessionIds) {
+        const inserted = await tx<{ id: string }[]>`
+          INSERT INTO enrolments (student_id, course_id, session_id, start_date)
+          VALUES (${req.student_id}, ${courseId}::uuid, ${sessionId}::uuid, ${startDate}::date)
+          ON CONFLICT (student_id, session_id)
+          DO UPDATE SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date
+          RETURNING id::text
+        `;
+        if (inserted.length > 0) newEnrolmentIds.push(inserted[0].id);
+      }
+      await tx`
+        UPDATE parent_requests
+        SET
+          status = 'completed',
+          enrolment_ids = ${newEnrolmentIds}::uuid[],
+          reviewed_at = NOW(),
+          reviewed_by = 'staff',
+          updated_at = NOW()
+        WHERE id = ${req.id}::uuid
+      `;
+    });
+    created++;
+  }
+
+  revalidateTag('summer-responses', 'max');
+  return { created, skipped };
+}
+
+export async function removeFromSummer(requestId: string): Promise<void> {
+  const reqs = await sql<{ enrolment_ids: string[] }[]>`
+    SELECT enrolment_ids FROM parent_requests WHERE id = ${requestId}::uuid LIMIT 1
+  `;
+  if (reqs.length > 0 && reqs[0].enrolment_ids.length > 0) {
+    await sql`DELETE FROM enrolments WHERE id = ANY(${reqs[0].enrolment_ids}::uuid[])`;
+  }
   await sql`
     UPDATE parent_requests
-    SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    SET enrolment_ids = '{}', status = 'pending', reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
   `;
   revalidateTag('summer-responses', 'max');
 }
 
-export async function approveAllEnrolling(): Promise<{ updated: number }> {
+export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
   const rows = await sql<{ id: string }[]>`
     UPDATE parent_requests
     SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
     WHERE is_latest = TRUE
       AND status = 'pending'
       AND request_type = 'summer_scheduling'
-      AND payload->>'summer_status' = 'enrolling'
+      AND payload->>'summer_status' = 'no_change'
     RETURNING id
   `;
   revalidateTag('summer-responses', 'max');
   return { updated: rows.length };
 }
 
-export async function resetSummerRequest(requestId: string): Promise<void> {
+export async function markReviewed(requestId: string): Promise<void> {
   await sql`
     UPDATE parent_requests
-    SET status = 'pending', reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
+    SET status = 'reviewed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
+    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+  `;
+  revalidateTag('summer-responses', 'max');
+}
+
+export async function markNeedsFollowup(requestId: string): Promise<void> {
+  await sql`
+    UPDATE parent_requests
+    SET status = 'needs_manual_followup', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
     WHERE id = ${requestId}::uuid AND is_latest = TRUE
   `;
   revalidateTag('summer-responses', 'max');

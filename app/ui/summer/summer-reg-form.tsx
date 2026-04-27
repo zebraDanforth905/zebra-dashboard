@@ -7,7 +7,7 @@ import { ParentFormData } from '@/app/lib/definitions';
 
 type StudentFormEntry = {
   student_id: string;
-  summer_status: 'enrolling' | 'pausing' | 'other';
+  summer_status: 'enrolling' | 'pausing' | 'no_change' | 'other';
   session_ids: string[];
   custom_notes?: string;
   fall_status: 'same' | 'change' | 'pause';
@@ -19,7 +19,7 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
   const req = student.latest_request;
   if (req) {
     return {
-      summer_status: req.summer_status === 'no_change' ? null : req.summer_status,
+      summer_status: req.summer_status ?? null,
       session_ids: req.session_ids ?? [],
       custom_notes: '',
       fall_status: req.fall_status ?? null,
@@ -51,7 +51,7 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
     const sel = selections[s.student_id];
     return {
       student_id: s.student_id,
-      summer_status: sel.summer_status as StudentFormEntry['summer_status'],
+      summer_status: (sel.summer_status ?? 'other') as StudentFormEntry['summer_status'],
       session_ids: sel.session_ids,
       custom_notes: sel.custom_notes || undefined,
       fall_status: sel.fall_status as 'same' | 'change' | 'pause',

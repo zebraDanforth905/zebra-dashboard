@@ -3,7 +3,13 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { SummerResponseRow, SummerStats } from '@/app/lib/definitions';
-import { approveAllEnrolling, resetSummerRequest } from '@/app/lib/summer-actions';
+import {
+  approveAllEnrolling,
+  removeFromSummer,
+  markAllNoChangeComplete,
+  markReviewed,
+  markNeedsFollowup,
+} from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
 
 function formatTime(t: string | null): string {
@@ -29,6 +35,12 @@ const SUMMER_STATUS_LABEL: Record<string, string> = {
   pausing:   'Pausing',
   no_change: 'No Change',
   other:     'Other',
+};
+
+const FALL_STATUS_LABEL: Record<string, string> = {
+  same:   'Keep current',
+  change: 'Requesting change',
+  pause:  'Pausing fall',
 };
 
 const REQUEST_STATUS_STYLE: Record<string, string> = {
@@ -85,42 +97,137 @@ function FilterSelect({ value, onChange, options }: {
   );
 }
 
-function ApproveAllButton({ onDone }: { onDone: () => void }) {
+function ApproveAllModal({ enrollingCount, onClose, onDone }: {
+  enrollingCount: number;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [startDate, setStartDate] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [message, setMessage] = useState<string | null>(null);
 
-  function handleClick() {
-    setMessage(null);
+  function handleConfirm() {
+    if (!startDate) { setError('Start date is required.'); return; }
+    setError(null);
     startTransition(async () => {
-      const { updated } = await approveAllEnrolling();
-      setMessage(updated === 0 ? 'No pending enrolling requests.' : `Approved ${updated} request${updated !== 1 ? 's' : ''}.`);
-      if (updated > 0) onDone();
+      const { created, skipped } = await approveAllEnrolling(startDate);
+      onDone(
+        skipped > 0
+          ? `Approved ${created}, skipped ${skipped} (no course to inherit).`
+          : `Approved ${created} enrolment${created !== 1 ? 's' : ''}.`,
+      );
+      onClose();
     });
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={handleClick}
-        disabled={isPending}
-        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
-      >
-        {isPending ? 'Approving…' : 'Approve All Enrolling'}
-      </button>
-      {message && <span className="text-xs text-slate-500">{message}</span>}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6 space-y-4">
+        <h2 className="text-base font-semibold text-slate-900">Approve All Enrolling</h2>
+        <p className="text-sm text-slate-600">
+          This will create enrolments for <span className="font-semibold text-emerald-700">{enrollingCount}</span> pending enrolling student{enrollingCount !== 1 ? 's' : ''}.
+        </p>
+        <div>
+          <label className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-1">
+            Start Date <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={e => setStartDate(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
+          />
+        </div>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="flex justify-end gap-3 pt-1">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={isPending}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
+          >
+            {isPending ? 'Approving…' : 'Confirm & Approve'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ResetButton({ requestId, onDone }: { requestId: string; onDone: () => void }) {
+function RemoveFromSummerButton({ requestId, onDone }: { requestId: string; onDone: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  if (!confirm) {
+    return (
+      <button
+        onClick={() => setConfirm(true)}
+        className="text-xs text-slate-400 hover:text-red-600 underline"
+      >
+        Remove
+      </button>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1">
+      <button
+        disabled={isPending}
+        onClick={() => startTransition(async () => { await removeFromSummer(requestId); onDone(); })}
+        className="text-xs text-red-600 font-medium disabled:opacity-50"
+      >
+        {isPending ? '…' : 'Yes, remove'}
+      </button>
+      <button onClick={() => setConfirm(false)} className="text-xs text-slate-400">Cancel</button>
+    </span>
+  );
+}
+
+function MarkReviewedButton({ requestId, onDone }: { requestId: string; onDone: () => void }) {
   const [isPending, startTransition] = useTransition();
   return (
     <button
       disabled={isPending}
-      onClick={() => startTransition(async () => { await resetSummerRequest(requestId); onDone(); })}
-      className="text-xs text-slate-400 hover:text-slate-600 underline disabled:opacity-50"
+      onClick={() => startTransition(async () => { await markReviewed(requestId); onDone(); })}
+      className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
     >
-      {isPending ? '…' : 'Undo'}
+      {isPending ? '…' : 'Mark Reviewed'}
+    </button>
+  );
+}
+
+function MarkFollowupButton({ requestId, onDone }: { requestId: string; onDone: () => void }) {
+  const [isPending, startTransition] = useTransition();
+  return (
+    <button
+      disabled={isPending}
+      onClick={() => startTransition(async () => { await markNeedsFollowup(requestId); onDone(); })}
+      className="text-xs px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 transition disabled:opacity-50"
+    >
+      {isPending ? '…' : 'Needs Followup'}
+    </button>
+  );
+}
+
+function NoChangeCompleteButton({ onDone }: { onDone: (msg: string) => void }) {
+  const [isPending, startTransition] = useTransition();
+  return (
+    <button
+      onClick={() => startTransition(async () => {
+        const { updated } = await markAllNoChangeComplete();
+        onDone(updated === 0 ? 'No pending no-change requests.' : `Marked ${updated} no-change as complete.`);
+      })}
+      disabled={isPending}
+      className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 transition disabled:opacity-50"
+    >
+      {isPending ? 'Updating…' : 'Complete All No Change'}
     </button>
   );
 }
@@ -131,6 +238,8 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [modalRow, setModalRow] = useState<SummerResponseRow | null>(null);
+  const [showApproveAllModal, setShowApproveAllModal] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
 
   function refresh() { router.refresh(); }
 
@@ -145,6 +254,9 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
   });
 
   const notResponded = stats.total_families - stats.responded;
+  const pendingEnrollingCount = rows.filter(
+    r => r.summer_status === 'enrolling' && r.status === 'pending',
+  ).length;
 
   return (
     <div className="space-y-4">
@@ -166,7 +278,15 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
 
       {/* Toolbar */}
       <div className="flex flex-wrap gap-2 items-center">
-        <ApproveAllButton onDone={refresh} />
+        <button
+          onClick={() => { setBulkMessage(null); setShowApproveAllModal(true); }}
+          disabled={pendingEnrollingCount === 0}
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-40"
+        >
+          Approve All Enrolling ({pendingEnrollingCount})
+        </button>
+        <NoChangeCompleteButton onDone={msg => { setBulkMessage(msg); refresh(); }} />
+        {bulkMessage && <span className="text-xs text-slate-500">{bulkMessage}</span>}
         <div className="h-5 border-l border-slate-200 hidden sm:block" />
         <input
           type="search"
@@ -223,17 +343,19 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                 <th className="px-4 py-3">Family</th>
                 <th className="px-4 py-3">Current</th>
                 <th className="px-4 py-3">Summer</th>
-                <th className="px-4 py-3">Sessions</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Summer Sessions</th>
+                <th className="px-4 py-3">Fall Plan</th>
+                <th className="px-4 py-3">Fall Sessions</th>
                 <th className="px-4 py-3">Notes</th>
+                <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Submitted</th>
-                <th className="px-4 py-3" />
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={11} className="px-4 py-8 text-center text-slate-400 text-sm">
                     No matching responses.
                   </td>
                 </tr>
@@ -257,19 +379,29 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                   <td className="px-4 py-3 text-slate-600 text-xs">
                     {row.session_labels.length > 0
                       ? row.session_labels.map((l, i) => <div key={i}>{l}</div>)
-                      : '—'}
+                      : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">
+                    {row.fall_status ? (FALL_STATUS_LABEL[row.fall_status] ?? row.fall_status) : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-slate-600 text-xs">
+                    {row.fall_session_labels.length > 0
+                      ? row.fall_session_labels.map((l, i) => <div key={i}>{l}</div>)
+                      : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[140px]">
+                    {row.custom_notes
+                      ? <span className="italic">{row.custom_notes}</span>
+                      : <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={row.status} />
-                  </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[160px] truncate">
-                    {row.custom_notes || '—'}
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                     {formatDate(row.submitted_at)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-col gap-1">
                       {row.status !== 'completed' && (
                         <button
                           onClick={() => setModalRow(row)}
@@ -278,11 +410,17 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                           Review
                         </button>
                       )}
-                      {row.status === 'completed' && (
+                      {row.status === 'pending' && (
                         <>
-                          <span className="text-xs text-emerald-600 font-medium">✓ Approved</span>
-                          <ResetButton requestId={row.request_id} onDone={refresh} />
+                          <MarkReviewedButton requestId={row.request_id} onDone={refresh} />
+                          <MarkFollowupButton requestId={row.request_id} onDone={refresh} />
                         </>
+                      )}
+                      {row.status === 'reviewed' && (
+                        <MarkFollowupButton requestId={row.request_id} onDone={refresh} />
+                      )}
+                      {row.status === 'completed' && (
+                        <RemoveFromSummerButton requestId={row.request_id} onDone={refresh} />
                       )}
                     </div>
                   </td>
@@ -298,6 +436,14 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           row={modalRow}
           onClose={() => setModalRow(null)}
           onApproved={() => { setModalRow(null); refresh(); }}
+        />
+      )}
+
+      {showApproveAllModal && (
+        <ApproveAllModal
+          enrollingCount={pendingEnrollingCount}
+          onClose={() => setShowApproveAllModal(false)}
+          onDone={msg => { setBulkMessage(msg); refresh(); }}
         />
       )}
     </div>

@@ -1,7 +1,7 @@
 // app/lib/insert.ts
 import postgres from "postgres";
 import { ymd, assertAligned } from "./utils";
-import { normalizeAbsencesFromAttendance } from "./normalize";
+import { normalizeAbsencesFromAttendance, PortalCustomerRow } from "./normalize";
 
 // expects tables: students(student_id int PK?, first_name, last_name, lms_password?),
 // sessions(id serial/bigint, weekday text/enum, start_time time, end_time time) unique(weekday,start_time,end_time),
@@ -610,6 +610,53 @@ export async function insertCampEnrolments(
   return { inserted: insertedCount, updated: updatedCount, seen: rows.length };
 }
 
+// ── Customer sync ─────────────────────────────────────────────────────────────
 
+// Upserts customer records from portal parent data and links unassigned students.
+// Uses portal_parent_id as the stable conflict key.
+// Only links students that currently have no customer_id (never overrides manual assignments).
+export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ upserted: number; linked: number }> {
+  if (!customers.length) return { upserted: 0, linked: 0 };
 
+  let upserted = 0;
+  let linked = 0;
 
+  await sql.begin(async tx => {
+    for (const c of customers) {
+      const rows = await tx<{ id: string }[]>`
+        INSERT INTO customers (name, email, alternate_email, alternate_name, portal_parent_id)
+        VALUES (
+          ${c.name},
+          ${c.email},
+          ${c.alternate_email},
+          ${c.alternate_name},
+          ${c.portal_parent_id}
+        )
+        ON CONFLICT (portal_parent_id) WHERE portal_parent_id IS NOT NULL
+        DO UPDATE SET
+          name            = EXCLUDED.name,
+          email           = EXCLUDED.email,
+          alternate_email = COALESCE(EXCLUDED.alternate_email, customers.alternate_email),
+          alternate_name  = COALESCE(customers.alternate_name, EXCLUDED.alternate_name)
+        RETURNING id
+      `;
+      if (!rows.length) continue;
+      upserted++;
+
+      const customerId = rows[0].id;
+
+      if (c.student_ids.length > 0) {
+        const result = await tx<{ id: string }[]>`
+          UPDATE students
+          SET customer_id = ${customerId}::uuid
+          WHERE id = ANY(${c.student_ids}::numeric[])
+            AND customer_id IS NULL
+          RETURNING id
+        `;
+        linked += result.length;
+      }
+    }
+  });
+
+  return { upserted, linked };
+}

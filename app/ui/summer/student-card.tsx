@@ -20,7 +20,7 @@ function groupByWeekday<T extends { weekday: string }>(sessions: T[]) {
 }
 
 export type StudentCardState = {
-  summer_status: 'enrolling' | 'pausing' | 'other' | null;
+  summer_status: 'enrolling' | 'pausing' | 'no_change' | 'other' | null;
   session_ids: string[];
   custom_notes: string;
   fall_status: 'same' | 'change' | 'pause' | null;
@@ -49,7 +49,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
     onChange({
       ...state,
       summer_status: status,
-      session_ids: status !== 'enrolling' ? [] : state.session_ids,
+      session_ids: status === 'enrolling' ? state.session_ids : [],
     });
   }
 
@@ -92,11 +92,24 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
             <input
               type="radio"
               name={`summer_${student.student_id}`}
+              checked={state.summer_status === 'no_change'}
+              onChange={() => setSummerStatus('no_change')}
+              className="mt-0.5 accent-sky-600"
+            />
+            <span className="text-slate-700">
+              No change — keep my current schedule through summer
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="radio"
+              name={`summer_${student.student_id}`}
               checked={state.summer_status === 'enrolling'}
               onChange={() => setSummerStatus('enrolling')}
               className="mt-0.5 accent-sky-600"
             />
-            <span className="text-slate-700">Enroll in summer sessions</span>
+            <span className="text-slate-700">Enroll in different / additional summer sessions</span>
           </label>
 
           {state.summer_status === 'enrolling' && (

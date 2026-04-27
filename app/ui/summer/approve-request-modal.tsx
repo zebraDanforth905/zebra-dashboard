@@ -1,6 +1,6 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { approveSummerRequest } from '@/app/lib/summer-actions';
 import { SummerResponseRow } from '@/app/lib/definitions';
@@ -30,18 +30,30 @@ export default function ApproveRequestModal({
   onApproved: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [startDate, setStartDate] = useState('');
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const isEnrolling = row.summer_status === 'enrolling';
 
   const SUMMER_LABEL: Record<string, string> = {
     enrolling: 'Enrolling for summer',
     pausing:   'Pausing for summer',
-    no_change: 'No change',
+    no_change: 'No change — keeping current schedule',
     other:     'Other / needs followup',
   };
 
   function handleApprove() {
+    if (isEnrolling && !startDate) {
+      setApprovalError('Start date is required for enrolling requests.');
+      return;
+    }
+    setApprovalError(null);
     startTransition(async () => {
-      await approveSummerRequest(row.request_id);
-      onApproved();
+      const result = await approveSummerRequest(row.request_id, isEnrolling ? startDate : undefined);
+      if (result?.error) {
+        setApprovalError(result.error);
+      } else {
+        onApproved();
+      }
     });
   }
 
@@ -111,6 +123,24 @@ export default function ApproveRequestModal({
               <Field label="Notes">
                 <span className="italic text-slate-600">{row.custom_notes}</span>
               </Field>
+            )}
+
+            {isEnrolling && (
+              <div>
+                <label className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-1">
+                  Enrolment Start Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {approvalError && (
+              <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{approvalError}</p>
             )}
           </dl>
         </div>

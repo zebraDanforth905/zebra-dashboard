@@ -17,8 +17,17 @@ const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 // NO cache — public route, must always reflect current DB state
 export async function fetchParentFormData(token: string): Promise<ParentFormData | null> {
   try {
-    const tokenRows = await sql<{ token_id: string; customer_id: string; customer_name: string }[]>`
-      SELECT pt.id::text AS token_id, c.id::text AS customer_id, c.name AS customer_name
+    const tokenRows = await sql<{
+      token_id: string;
+      customer_id: string;
+      customer_name: string;
+      customer_alternate_name: string | null;
+    }[]>`
+      SELECT
+        pt.id::text   AS token_id,
+        c.id::text    AS customer_id,
+        c.name        AS customer_name,
+        c.alternate_name AS customer_alternate_name
       FROM parent_tokens pt
       JOIN customers c ON c.id = pt.customer_id
       WHERE pt.token = ${token}
@@ -26,7 +35,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
     `;
     if (tokenRows.length === 0) return null;
 
-    const { token_id, customer_id, customer_name } = tokenRows[0];
+    const { token_id, customer_id, customer_name, customer_alternate_name } = tokenRows[0];
 
     const studentRows = await sql<{
       student_id: string;
@@ -117,7 +126,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
       latest_request_status: r.latest_request_status as ParentFormStudentData['latest_request_status'],
     }));
 
-    return { token_id, customer_id, customer_name, students, summer_sessions: summerSessions, fall_sessions: fallSessions };
+    return { token_id, customer_id, customer_name, customer_alternate_name, students, summer_sessions: summerSessions, fall_sessions: fallSessions };
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch parent form data.');
@@ -133,6 +142,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       token_id: string;
       customer_id: string;
       customer_name: string;
+      alternate_name: string | null;
       email: string;
       alternate_email: string | null;
       token: string;
@@ -146,6 +156,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         pt.id::text AS token_id,
         c.id::text AS customer_id,
         c.name AS customer_name,
+        c.alternate_name,
         c.email,
         c.alternate_email,
         pt.token,
