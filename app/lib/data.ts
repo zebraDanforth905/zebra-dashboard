@@ -1000,6 +1000,7 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
               AND a.date = ${target}
           ) ac ON true
           WHERE s.weekday = ${day}
+            AND s.is_summer = FALSE
             AND (
               COALESCE(ec.student_count, 0) > 0
               OR COALESCE(mc.makeup_count, 0) > 0
@@ -1467,6 +1468,7 @@ export async function fetchTodaySummary(date?: Date) {
         WHERE m.session_id = s.id AND m.date = ${target}
       ) makeup_list ON true
       WHERE s.weekday = ${weekday}
+        AND s.is_summer = FALSE
       ORDER BY s.start_time;
     `;
 

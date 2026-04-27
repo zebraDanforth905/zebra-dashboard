@@ -400,13 +400,18 @@ export type ParentToken = {
 export type SummerSchedulingPayload = {
   summer_status: 'enrolling' | 'pausing' | 'no_change';
   session_ids: string[];
+  fall_status: 'same' | 'change' | 'pause';
+  fall_session_ids: string[];
 };
 
 export type RestartPayload = {
   session_id: string;
 };
 
-export type OtherPayload = Record<string, never>;
+export type OtherPayload = {
+  fall_status?: 'same' | 'change' | 'pause';
+  fall_session_ids?: string[];
+};
 
 export type ParentRequestType = 'summer_scheduling' | 'restart' | 'other';
 export type ParentRequestStatus = 'pending' | 'reviewed' | 'completed' | 'superseded' | 'needs_manual_followup';
@@ -479,6 +484,7 @@ export type ParentFormData = {
   customer_name: string;
   students: ParentFormStudentData[];
   summer_sessions: (Session & { is_summer: boolean })[];
+  fall_sessions: (Session & { student_count: number; coach_capacity: number })[];
 };
 
 export type SummerStats = {
@@ -500,6 +506,8 @@ export type SummerResponseRow = {
   parent_email: string;
   summer_status: SummerSchedulingPayload['summer_status'] | 'other';
   session_labels: string[];
+  fall_status: SummerSchedulingPayload['fall_status'] | null;
+  fall_session_labels: string[];
   current_weekday: string | null;
   current_start_time: string | null;
   status: ParentRequestStatus;
@@ -507,12 +515,21 @@ export type SummerResponseRow = {
   submitted_at: Date;
 };
 
+export type StudentCourseEntry = {
+  student_name: string;
+  course_name: string;
+  weekday: string;
+  start_time: string;
+};
+
 export type ParentLinkRow = {
   token_id: string;
   customer_id: string;
   customer_name: string;
   email: string;
+  alternate_email: string | null;
   student_names: string[];
+  student_courses: StudentCourseEntry[];
   token: string;
   email_sent_at: Date | null;
   email_sent_count: number;

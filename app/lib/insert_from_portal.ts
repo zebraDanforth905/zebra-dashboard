@@ -20,9 +20,9 @@ function splitName(full: string): { first: string; last: string } {
 
 async function getSessionId(tx: any, weekday: string, start: string, end: string): Promise<string> {
   const [{ id }] = await tx<{ id: string }[]>`
-    INSERT INTO sessions (weekday, start_time, end_time)
-    VALUES (${weekday}, ${start}, ${end})
-    ON CONFLICT (weekday, start_time, end_time)
+    INSERT INTO sessions (weekday, start_time, end_time, is_summer)
+    VALUES (${weekday}, ${start}, ${end}, FALSE)
+    ON CONFLICT (start_time, end_time, weekday, is_summer)
       DO UPDATE SET weekday = EXCLUDED.weekday
     RETURNING id;
   `;
@@ -217,10 +217,11 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
             `;
     }
 
-    // Delete sessions with no students (no enrolments, trials, or makeups)
+    // Delete non-summer sessions with no students (no enrolments, trials, or makeups)
     await tx`
       DELETE FROM sessions s
-      WHERE NOT EXISTS (
+      WHERE s.is_summer = FALSE
+      AND NOT EXISTS (
         SELECT 1 FROM enrolments e WHERE e.session_id = s.id
       )
       AND NOT EXISTS (
