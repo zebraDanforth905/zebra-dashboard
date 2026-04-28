@@ -8,7 +8,9 @@ import {
   ParentLinkRow,
   Session,
   StudentCourseEntry,
+  SubmittedChoices,
   SummerResponseRow,
+  SummerScheduleRow,
   SummerStats,
 } from './definitions';
 
@@ -83,35 +85,19 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
         WHERE is_summer = TRUE
         ORDER BY weekday, start_time
       `,
+      // Group by weekday+start_time to merge duplicate sessions; sum enrolment counts
       sql<(Session & { student_count: number; coach_capacity: number })[]>`
-        WITH session_capacities AS (
-          SELECT
-            s.id,
-            COALESCE(SUM(COALESCE(u.coach_capacity, 6)), 0)::int AS total_capacity
-          FROM sessions s
-          JOIN template_shift ts ON
-            ts.weekday = LOWER(s.weekday)
-            AND ts.start_time < s.end_time::time
-            AND ts.end_time > s.start_time::time
-          JOIN template_shift_type tst ON
-            tst.template_shift_id = ts.id
-            AND tst.shift_type = 'coach'
-          JOIN assigned_staff asf ON asf.template_shift_id = ts.id
-          JOIN users u ON u.id::text = asf.user_id::text
-          GROUP BY s.id
-        )
         SELECT
-          s.id::text,
+          MIN(s.id::text) AS id,
           s.weekday,
           s.start_time,
-          s.end_time,
+          MIN(s.end_time) AS end_time,
           COUNT(e.id)::int AS student_count,
-          COALESCE(sc.total_capacity, 0)::int AS coach_capacity
+          0::int AS coach_capacity
         FROM sessions s
         LEFT JOIN enrolments e ON e.session_id = s.id
-        LEFT JOIN session_capacities sc ON sc.id = s.id
         WHERE s.is_summer = FALSE
-        GROUP BY s.id, s.weekday, s.start_time, s.end_time, sc.total_capacity
+        GROUP BY s.weekday, s.start_time
         ORDER BY s.weekday, s.start_time
       `,
     ]);
@@ -126,7 +112,18 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
       latest_request_status: r.latest_request_status as ParentFormStudentData['latest_request_status'],
     }));
 
-    return { token_id, customer_id, customer_name, customer_alternate_name, students, summer_sessions: summerSessions, fall_sessions: fallSessions };
+    const WEEKEND = new Set(['Saturday', 'Sunday']);
+    const WEEKDAY_HOURS = new Set([16, 17, 18]); // 4, 5, 6 PM
+
+    const filteredFallSessions = fallSessions.filter(s => {
+      if (s.student_count > 0) return true; // always show times with enrolled students
+      const [h, m] = s.start_time.split(':').map(Number);
+      if (m !== 0) return false; // non-hourly with no students: hide
+      if (WEEKEND.has(s.weekday)) return h !== 12; // weekend: all hourly except noon
+      return WEEKDAY_HOURS.has(h); // weekday: only 4, 5, 6 PM
+    });
+
+    return { token_id, customer_id, customer_name, customer_alternate_name, students, summer_sessions: summerSessions, fall_sessions: filteredFallSessions };
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch parent form data.');
@@ -291,5 +288,112 @@ export async function fetchSummerSessions(): Promise<(Session & { is_summer: boo
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch summer sessions.');
+  }
+}
+
+// NO cache — called immediately after submit redirect; must be fresh
+export async function fetchSubmittedChoices(token: string): Promise<SubmittedChoices | null> {
+  try {
+    const header = await sql<{ customer_name: string; customer_alternate_name: string | null }[]>`
+      SELECT c.name AS customer_name, c.alternate_name AS customer_alternate_name
+      FROM parent_tokens pt
+      JOIN customers c ON c.id = pt.customer_id
+      WHERE pt.token = ${token}
+      LIMIT 1
+    `;
+    if (!header.length) return null;
+
+    const students = await sql<{
+      student_name: string;
+      summer_status: string;
+      session_labels: string[];
+      fall_status: string | null;
+      fall_session_labels: string[];
+      custom_notes: string | null;
+    }[]>`
+      SELECT
+        s.name AS student_name,
+        COALESCE(pr.payload->>'summer_status', 'other') AS summer_status,
+        COALESCE(sl.session_labels, '{}') AS session_labels,
+        pr.payload->>'fall_status' AS fall_status,
+        COALESCE(fsl.fall_session_labels, '{}') AS fall_session_labels,
+        pr.custom_notes
+      FROM parent_tokens pt
+      JOIN parent_requests pr ON pr.token_id = pt.id AND pr.is_latest = TRUE
+      JOIN students s ON s.id = pr.student_id
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_AGG(
+          se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+          ORDER BY se.weekday, se.start_time
+        ) AS session_labels
+        FROM jsonb_array_elements_text(pr.payload->'session_ids') AS sid
+        JOIN sessions se ON se.id = sid::uuid
+      ) sl ON true
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_AGG(
+          se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+          ORDER BY se.weekday, se.start_time
+        ) AS fall_session_labels
+        FROM jsonb_array_elements_text(pr.payload->'fall_session_ids') AS fsid
+        JOIN sessions se ON se.id = fsid::uuid
+      ) fsl ON true
+      WHERE pt.token = ${token}
+      ORDER BY s.name
+    `;
+
+    return {
+      customer_name: header[0].customer_name,
+      customer_alternate_name: header[0].customer_alternate_name,
+      students,
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch submitted choices.');
+  }
+}
+
+export async function fetchSummerSchedule(): Promise<SummerScheduleRow[]> {
+  'use cache';
+  cacheTag('summer-responses');
+  cacheTag('schedule');
+  try {
+    const rows = await sql<{
+      session_id: string;
+      weekday: string;
+      start_time: string;
+      end_time: string;
+      student_count: number;
+      students: SummerScheduleRow['students'];
+    }[]>`
+      SELECT
+        s.id::text AS session_id,
+        s.weekday,
+        s.start_time,
+        s.end_time,
+        COUNT(e.id)::int AS student_count,
+        COALESCE(
+          json_agg(
+            json_build_object('name', st.name, 'course', c.name)
+            ORDER BY st.name
+          ) FILTER (WHERE st.id IS NOT NULL),
+          '[]'::json
+        ) AS students
+      FROM sessions s
+      LEFT JOIN enrolments e ON e.session_id = s.id
+      LEFT JOIN students st ON st.id = e.student_id
+      LEFT JOIN courses c ON c.id = e.course_id
+      WHERE s.is_summer = TRUE
+      GROUP BY s.id, s.weekday, s.start_time, s.end_time
+      ORDER BY
+        ARRAY_POSITION(
+          ARRAY['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],
+          s.weekday
+        ),
+        s.start_time
+    `;
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch summer schedule.');
   }
 }

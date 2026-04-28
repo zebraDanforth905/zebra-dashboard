@@ -58,6 +58,16 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
   return { created: eligible.length };
 }
 
+export async function deleteAllParentTokens(): Promise<{ deleted: number }> {
+  const rows = await sql<{ id: string }[]>`DELETE FROM parent_tokens RETURNING id`;
+  revalidateTag('summer-tokens', 'max');
+  return { deleted: rows.length };
+}
+
+export async function refreshParentLinkData(): Promise<void> {
+  revalidateTag('summer-tokens', 'max');
+}
+
 // ── Email send tracking ───────────────────────────────────────────────────────
 
 export async function markAllEmailSent(): Promise<{ updated: number }> {
@@ -392,5 +402,5 @@ export async function submitSummerForm(
   });
 
   revalidateTag('summer-responses', 'max');
-  redirect('/summer-reg/submitted');
+  redirect(`/summer-reg/submitted?token=${token}`);
 }

@@ -7,7 +7,7 @@ import { ParentFormData } from '@/app/lib/definitions';
 
 type StudentFormEntry = {
   student_id: string;
-  summer_status: 'enrolling' | 'pausing' | 'no_change' | 'other';
+  summer_status: 'enrolling' | 'pausing' | 'other';
   session_ids: string[];
   custom_notes?: string;
   fall_status: 'same' | 'change' | 'pause';
@@ -19,12 +19,13 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
   const req = student.latest_request;
   if (req) {
     return {
-      summer_status: req.summer_status ?? null,
+      // 'no_change' removed from form; prior submissions with it start blank
+      summer_status: (req.summer_status === 'no_change' ? null : req.summer_status) ?? null,
       session_ids: req.session_ids ?? [],
       custom_notes: '',
       fall_status: req.fall_status ?? null,
       fall_session_ids: req.fall_session_ids ?? [],
-      fall_notes: '',
+      fall_notes: req.fall_notes ?? '',
     };
   }
   return { summer_status: null, session_ids: [], custom_notes: '', fall_status: null, fall_session_ids: [], fall_notes: '' };

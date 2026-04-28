@@ -19,7 +19,7 @@ function csv(val: string): string {
 export default function ExportCsvButton({ rows, label = 'Export CSV' }: { rows: ParentLinkRow[]; label?: string }) {
   function handleExport() {
     const origin = window.location.origin;
-    const header = 'Full Name,Email Address,Alternate Email,Students,Current Courses,Link';
+    const header = 'Full Name,Alternate Name,Email,Alternate Email,Students,Current Courses,Link';
     const body = rows.map(r => {
       const students = r.student_names.join(', ');
       const courses = r.student_courses
@@ -27,6 +27,7 @@ export default function ExportCsvButton({ rows, label = 'Export CSV' }: { rows: 
         .join('; ');
       return [
         csv(r.customer_name),
+        csv(r.alternate_name ?? ''),
         csv(r.email),
         csv(r.alternate_email ?? ''),
         csv(students),

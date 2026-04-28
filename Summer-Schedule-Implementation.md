@@ -581,6 +581,56 @@ The only change to existing behavior is the `auth.config.ts` fix to allow `/summ
 
 ---
 
+## Product Adjustments — April 28, 2026
+
+These changes were confirmed after initial build review. All code-level changes noted below are already applied unless marked **[TODO]**.
+
+### Summer form — options
+
+**"No Change" removed.** Summer time slots are all shifting; no student can keep their existing slot. Three options remain: Enroll (pick summer times), Pause for summer, Custom/unusual request.
+
+### Fall form — session display
+
+**Duplicate sessions merged.** Multiple session rows with the same weekday + start_time are now grouped by weekday+start_time in the DB query (MIN id, SUM student_count). Parents see one checkbox per distinct time, not one per session row.
+
+**Standard hourly filter applied.**
+- Weekdays: show 4:00, 5:00, 6:00 PM only. Also show any non-standard times (non-hourly, or outside 4–6 PM) if there are enrolled students.
+- Weekends: show all on-the-hour times except noon (12:00 PM). Show noon only if students are enrolled. Same rule for non-hourly.
+
+**Student count / capacity badge removed.** Previously showed "X enrolled / At capacity / Available." Staff feedback: not needed on parent form. Badge removed from fall session checkboxes.
+
+### Link management — alternate email
+
+**Manual edit removed.** Alternate email is now read-only in the table. It is auto-populated from portal sync when the portal provides a second parent email for a family. If the portal doesn't have it, nothing shows. Staff should not need to enter it manually.
+
+**Alternate name edit kept.** Staff can still manually correct alternate parent names via the inline edit in the Family column.
+
+### Session blocking
+
+**Existing mechanism:** Staff flip `is_summer=FALSE` on a session row to remove it from the parent form immediately. No code change needed for basic blocking. **[TODO] Admin UI:** consider adding a toggle on `/dashboard/summer` so staff can mark sessions full without a direct DB edit. Not built yet — low priority for MVP.
+
+### Summer schedule tab — ✅ DONE (refactor pending)
+
+**[TODO] Refactor summer schedule tab UI to match `/dashboard/schedule`.** Current implementation is a basic card list. Target: identical layout/styling to the regular Schedule page so staff have a consistent experience switching between summer and year-round views.
+
+
+
+Third tab on `/dashboard/summer?tab=schedule`. Shows all sessions WHERE `is_summer=TRUE` as cards, each with enrolled student roster and course names. Sourced from real `enrolments` rows — approvals flow directly into this view.
+
+**How staff use it:** After approving summer enrolments, open this tab to see the full per-session rosters. Replaces need to look at regular `/dashboard/schedule` during summer.
+
+**Session visibility control:** Staff flip `is_summer=TRUE` on a session row to add it to both the parent form AND this tab. Flip `is_summer=FALSE` to remove from both. No code change needed.
+
+**[TODO] Admin UI for session toggling:** Currently requires direct DB edit to flip `is_summer`. A future toggle UI on this tab would let staff manage session availability without DB access.
+
+### Portal integration on approval — [TODO, Post-MVP]
+
+When staff approves a summer enrolment, it currently only writes to the local `enrolments` table. Kyle has confirmed the intent to eventually push approved summer enrolments back to the portal system. This is deferred — no API contract defined yet.
+
+Billing integration is also deferred. `enrolment_ids` are stored on approved `parent_requests` rows so billing can pick them up later.
+
+---
+
 ## Explicitly Deferred
 
 | Item | Why |
@@ -593,6 +643,9 @@ The only change to existing behavior is the `auth.config.ts` fix to allow `/summ
 | Billing automation | Manual review preferred; store enrolment_ids for later |
 | Per-session capacity limits | Add when enrollment counts stabilize |
 | Parent login portal | Long-term vision; token-based sufficient for now |
+| Summer schedule tab | Needs design decisions — see Product Adjustments above |
+| Portal sync on approval | No API contract yet — deferred post-MVP |
+| Session blocking admin UI | MVP: DB edit; future: toggle on dashboard |
 
 ---
 

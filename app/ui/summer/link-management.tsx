@@ -2,9 +2,9 @@ import { ParentLinkRow } from '@/app/lib/definitions';
 import CopyLinkButton from './copy-link-button';
 import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
-import AlternateEmailCell from './alternate-email-cell';
 import AlternateNameCell from './alternate-name-cell';
 import MarkSentButton from './mark-sent-button';
+import RefreshLinksButton from './refresh-links-button';
 import Link from 'next/link';
 
 function formatDate(d: Date | null): string {
@@ -28,6 +28,8 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
         <ExportCsvButton rows={notResponded} label="Export Non-Responders" />
         <div className="h-5 border-l border-slate-200 hidden sm:block" />
         <MarkSentButton />
+        <div className="h-5 border-l border-slate-200 hidden sm:block" />
+        <RefreshLinksButton />
       </div>
 
       {/* Stats */}
@@ -71,12 +73,11 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
                     ) : (
                       <span className="text-amber-600 font-medium">⚠ Missing</span>
                     )}
-                    <div className="mt-0.5">
-                      <AlternateEmailCell
-                        customerId={row.customer_id}
-                        initialEmail={row.alternate_email}
-                      />
-                    </div>
+                    {row.alternate_email && (
+                      <div className="mt-0.5 text-xs text-slate-400">
+                        <span className="text-slate-300">2nd:</span> {row.alternate_email}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-600">
                     {row.student_names.length > 0 ? row.student_names.join(', ') : '—'}

@@ -405,6 +405,7 @@ export type SummerSchedulingPayload = {
   session_ids: string[];
   fall_status: 'same' | 'change' | 'pause';
   fall_session_ids: string[];
+  fall_notes?: string;
 };
 
 export type RestartPayload = {
@@ -491,6 +492,21 @@ export type ParentFormData = {
   fall_sessions: (Session & { student_count: number; coach_capacity: number })[];
 };
 
+export type SubmittedStudentSummary = {
+  student_name: string;
+  summer_status: string;
+  session_labels: string[];
+  fall_status: string | null;
+  fall_session_labels: string[];
+  custom_notes: string | null;
+};
+
+export type SubmittedChoices = {
+  customer_name: string;
+  customer_alternate_name: string | null;
+  students: SubmittedStudentSummary[];
+};
+
 export type SummerStats = {
   total_families: number;
   responded: number;
@@ -517,6 +533,20 @@ export type SummerResponseRow = {
   status: ParentRequestStatus;
   custom_notes: string | null;
   submitted_at: Date;
+};
+
+export type SummerScheduleStudent = {
+  name: string;
+  course: string | null;
+};
+
+export type SummerScheduleRow = {
+  session_id: string;
+  weekday: string;
+  start_time: string;
+  end_time: string;
+  student_count: number;
+  students: SummerScheduleStudent[];
 };
 
 export type StudentCourseEntry = {

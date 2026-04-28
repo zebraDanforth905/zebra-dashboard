@@ -1,6 +1,7 @@
-import { fetchParentLinkRows, fetchSummerResponseRows, fetchSummerStats } from '@/app/lib/summer-data';
+import { fetchParentLinkRows, fetchSummerResponseRows, fetchSummerSchedule, fetchSummerStats } from '@/app/lib/summer-data';
 import LinkManagement from '@/app/ui/summer/link-management';
 import ResponsesTab from '@/app/ui/summer/responses-tab';
+import SummerScheduleTab from '@/app/ui/summer/summer-schedule-tab';
 import { Metadata } from 'next';
 
 export const metadata: Metadata = { title: 'Summer Registration' };
@@ -12,17 +13,18 @@ export default async function SummerPage({
 }) {
   const { tab = 'links' } = await searchParams;
 
-  const [rows, stats, responseRows] = await Promise.all([
+  const [rows, stats, responseRows, scheduleRows] = await Promise.all([
     fetchParentLinkRows(),
     tab === 'responses' ? fetchSummerStats() : null,
     tab === 'responses' ? fetchSummerResponseRows() : null,
+    tab === 'schedule' ? fetchSummerSchedule() : null,
   ]);
 
   return (
     <div className="m-3 md:m-6">
       <div className="mb-6">
         <h1 className="text-xl md:text-2xl font-semibold text-slate-900">Summer Registration</h1>
-        <p className="text-sm text-slate-500 mt-1">Generate family links, export to Constant Contact, and review responses.</p>
+        <p className="text-sm text-slate-500 mt-1">Manage family links, review responses, and view the summer schedule.</p>
       </div>
 
       {/* Tabs */}
@@ -33,12 +35,19 @@ export default async function SummerPage({
         <TabLink href="/dashboard/summer?tab=responses" active={tab === 'responses'}>
           Responses
         </TabLink>
+        <TabLink href="/dashboard/summer?tab=schedule" active={tab === 'schedule'}>
+          Summer Schedule
+        </TabLink>
       </div>
 
       {tab === 'links' && <LinkManagement rows={rows} />}
 
       {tab === 'responses' && stats && responseRows && (
         <ResponsesTab rows={responseRows} stats={stats} />
+      )}
+
+      {tab === 'schedule' && scheduleRows && (
+        <SummerScheduleTab rows={scheduleRows} />
       )}
     </div>
   );

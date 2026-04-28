@@ -20,7 +20,7 @@ function groupByWeekday<T extends { weekday: string }>(sessions: T[]) {
 }
 
 export type StudentCardState = {
-  summer_status: 'enrolling' | 'pausing' | 'no_change' | 'other' | null;
+  summer_status: 'enrolling' | 'pausing' | 'other' | null;
   session_ids: string[];
   custom_notes: string;
   fall_status: 'same' | 'change' | 'pause' | null;
@@ -87,19 +87,6 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
 
         <fieldset className="space-y-3">
           <legend className="sr-only">Summer schedule choice for {student.student_name}</legend>
-
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="radio"
-              name={`summer_${student.student_id}`}
-              checked={state.summer_status === 'no_change'}
-              onChange={() => setSummerStatus('no_change')}
-              className="mt-0.5 accent-sky-600"
-            />
-            <span className="text-slate-700">
-              No change — keep my current schedule through summer
-            </span>
-          </label>
 
           <label className="flex items-start gap-3 cursor-pointer">
             <input
@@ -225,44 +212,20 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                   <div key={day}>
                     <p className="text-sm font-medium text-slate-600 mb-2">{day}</p>
                     <div className="flex flex-col gap-2">
-                      {sessions.map(s => {
-                        // Available spots = coach capacity minus 5-spot buffer minus current enrolments
-                        const hasCapacityData = s.coach_capacity > 0;
-                        const available = hasCapacityData
-                          ? Math.max(0, s.coach_capacity - 5) - s.student_count
-                          : null;
-                        const atCapacity = available !== null && available <= 0;
-
-                        return (
-                          <label
-                            key={s.id}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 cursor-pointer hover:bg-slate-50 has-[:checked]:border-emerald-400 has-[:checked]:bg-emerald-50"
-                          >
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={state.fall_session_ids.includes(s.id)}
-                                onChange={() => toggleFallSession(s.id)}
-                                className="accent-emerald-600"
-                              />
-                              <span className="text-sm text-slate-700">{formatTime(s.start_time)}</span>
-                            </div>
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${
-                              !hasCapacityData
-                                ? 'bg-slate-100 text-slate-500'
-                                : atCapacity
-                                  ? 'bg-amber-100 text-amber-700'
-                                  : 'bg-emerald-100 text-emerald-700'
-                            }`}>
-                              {!hasCapacityData
-                                ? `${s.student_count} enrolled`
-                                : atCapacity
-                                  ? 'At capacity'
-                                  : 'Available'}
-                            </span>
-                          </label>
-                        );
-                      })}
+                      {sessions.map(s => (
+                        <label
+                          key={s.id}
+                          className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 cursor-pointer hover:bg-slate-50 has-[:checked]:border-emerald-400 has-[:checked]:bg-emerald-50"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={state.fall_session_ids.includes(s.id)}
+                            onChange={() => toggleFallSession(s.id)}
+                            className="accent-emerald-600"
+                          />
+                          <span className="text-sm text-slate-700">{formatTime(s.start_time)}</span>
+                        </label>
+                      ))}
                     </div>
                   </div>
                 ))

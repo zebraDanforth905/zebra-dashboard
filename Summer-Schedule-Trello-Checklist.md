@@ -16,251 +16,190 @@
 
 ---
 
-## MVP — Step 1: Foundation
+## MVP — Step 1: Foundation ✅ CODE DONE
 **Target: April 22 ✅**
-
-**Goal:** Schema and auth are in place. The app can store family tokens and parent requests, and staff can preview the public form without being redirected.
-
-**Done when:**
-- `008_create_parent_request_tables.sql` applied — `parent_tokens` and `parent_requests` tables exist
-- `009_add_summer_flag_to_sessions.sql` applied — `is_summer` column exists on `sessions`
-- TypeScript types for `ParentToken`, `ParentRequest`, `SummerSchedulingPayload` added to `definitions.ts`
-- `auth.config.ts` updated — `/summer-reg` is exempt from the logged-in redirect
-- At least one session has `is_summer=TRUE` in DB (real or test) so the form can be tested
 
 **Checklist:**
 - [x] Write migration `008_create_parent_request_tables.sql`
 - [x] Write migration `009_add_summer_flag_to_sessions.sql`
+- [x] Write migration `010_add_alternate_email_to_customers.sql`
+- [x] Write migration `011_add_fall_columns_to_parent_requests.sql`
+- [x] Write migration `012_add_alternate_name_to_customers.sql`
+- [x] Write migration `013_add_portal_parent_id_to_customers.sql`
+- [x] Write migration `014_preserve_responses_on_token_delete.sql`
 - [x] Add parent self-serve types to `app/lib/definitions.ts`
 - [x] Fix `auth.config.ts` to exempt `/summer-reg`
-- [ ] Apply both migrations to production DB
-- [ ] Flip `is_summer=TRUE` on at least one session for testing (real or test row)
+- [ ] **Apply migrations 008–014 to production DB** ← BLOCKED: staff action
+- [ ] Flip `is_summer=TRUE` on real summer sessions in production DB
 - [ ] Confirm dashboard URL → set `NEXT_PUBLIC_APP_URL` in `.env.local`
 
 ---
 
-## MVP — Step 2: Public Parent Form
-**Target: April 25**
-
-**Goal:** A parent with a valid token link can open the form, see their children's current session info, choose their summer intent for each student, and submit. A confirmation page is shown. Re-visiting the link pre-fills with their last response.
-
-**Done when:**
-- `/summer-reg?token=abc123` loads in incognito with correct student names and live session options
-- Submitting creates a `parent_requests` row with correct `is_latest=TRUE` and `payload`
-- Re-submitting marks the old row `superseded` and creates a new `is_latest=TRUE` row
-- `/summer-reg/submitted` shows the student names and submitted choices
-- Logged-in staff can visit the form without being redirected
+## MVP — Step 2: Public Parent Form ✅ CODE DONE
 
 **Checklist:**
-- [ ] `fetchParentFormData(token)` in `summer-data.ts` — joins token → customer → students → active enrolments → sessions WHERE `is_summer=TRUE`
-- [ ] `generateParentToken(customerId)` in `summer-actions.ts` (idempotent)
-- [ ] `submitSummerForm(prevState, formData)` in `summer-actions.ts` — validates token, validates session IDs still `is_summer=TRUE`, supersedes old row, inserts new row
-- [ ] `app/summer-reg/page.tsx` — server page, calls `fetchParentFormData`, passes to form
-- [ ] `app/summer-reg/submitted/page.tsx` — confirmation page showing submitted choices
-- [ ] `SummerRegForm` client component — radio group per student (Enroll in summer sessions / No change — returning September / Stopping / Custom), session checkboxes grouped by weekday, resubmission banner when pre-filled
-- [ ] `StudentCard` client component — per-student section showing current slot (day + time)
-- [ ] Test: insert token manually → visit form → submit each option type → verify DB row payload
-- [ ] Test: submit twice → verify `superseded` + `is_latest` flags
-- [ ] Test: no `is_summer=TRUE` sessions → form shows "Summer times coming soon — check back shortly"
-- [ ] Test: student with no existing enrolment → card shows "No current class on file"
+- [x] `fetchParentFormData(token)` in `summer-data.ts`
+- [x] `generateParentToken(customerId)` in `summer-actions.ts` (idempotent)
+- [x] `submitSummerForm(prevState, formData)` in `summer-actions.ts`
+- [x] `app/summer-reg/page.tsx` — greeting shows both parent first names
+- [x] `app/summer-reg/submitted/page.tsx` — shows per-student summary + resubmit link
+- [x] `SummerRegForm` client component — 3 options: Enroll, Pause, Custom (No Change removed)
+- [x] `StudentCard` client component — shows current slot, fall section with standard hourly times only
+- [x] Form pre-fill on revisit (including fall_notes)
+- [ ] **Test: insert token → visit form → submit each option → verify DB row** ← needs prod DB
+- [ ] **Test: submit twice → verify superseded + is_latest flags** ← needs prod DB
+- [ ] Test: no `is_summer=TRUE` sessions → "coming soon" message
+- [ ] Test: student with no existing enrolment → "No current class on file"
 
 ---
 
-## MVP — Step 3: Link Management Dashboard
-**Target: April 27**
-
-**Goal:** Staff can generate a unique link for every active family in one click, copy individual links, and export a Constant Contact-ready CSV (one row per family: Full Name, Email Address, Students, Link).
-
-**Done when:**
-- "Generate All Tokens" creates tokens for all customers with at least one active enrolment (idempotent — safe to re-run)
-- Exported CSV has exactly one row per family regardless of how many students or sessions they have
-- Each link in the CSV resolves to the correct family's form in a browser
-- Staff can preview any single family's link from the dashboard before send
-- Families with blank/missing emails are visible before export/send
+## MVP — Step 3: Link Management Dashboard ✅ CODE DONE
 
 **Checklist:**
-- [ ] `generateAllParentTokens()` in `summer-actions.ts` — bulk upsert scoped to customers with active enrolments
-- [ ] `fetchParentLinkRows()` in `summer-data.ts` — customer name, email, student list, token, `email_sent_at`
-- [ ] `app/dashboard/summer/page.tsx` (initial version, links tab only)
-- [ ] `SummerLinkManagement` server component — table of families + links
-- [ ] `CopyLinkButton` client component — copies `${origin}/summer-reg?token=${token}` to clipboard
-- [ ] `PreviewLinkButton` client component — opens `${origin}/summer-reg?token=${token}` in a new tab for staff QA
-- [ ] `ExportCsvButton` client component — client-side CSV download, columns: `Full Name, Email Address, Students, Link`
-- [ ] Add an obvious "missing email" state in the link table so staff can fix families before sending
-- [ ] Add `Summer Reg` nav link in `app/ui/dashboard/nav-links.tsx` (admin only)
-- [ ] Test: generate all tokens → verify count matches active families
-- [ ] Test: export CSV → open in spreadsheet → confirm one row per family, correct columns, valid URLs
-- [ ] Test: copy link → paste in incognito → correct family's form loads
-- [ ] Test: preview link while logged in as staff → correct family's form loads without redirect
-- [ ] Operational: resolve blank/missing family emails before importing the CSV into Constant Contact
+- [x] `generateAllParentTokens()` in `summer-actions.ts`
+- [x] `fetchParentLinkRows()` in `summer-data.ts` — includes alternate_name, alternate_email
+- [x] `app/dashboard/summer/page.tsx` with 3 tabs: Link Management, Responses, Summer Schedule
+- [x] `LinkManagement` component — table with family, email (+ 2nd: alt email read-only), students, status
+- [x] `AlternateNameCell` — inline edit for second parent name
+- [x] `CopyLinkButton` — clipboard copy
+- [x] Link preview button (opens in new tab)
+- [x] `ExportCsvButton` — 7-column CSV: Full Name, Alternate Name, Email, Alternate Email, Students, Current Courses, Link
+- [x] Missing email warning in table
+- [x] `RefreshLinksButton` — busts cache + reloads (replaces Delete All Tokens)
+- [x] `MarkSentButton` — marks all tokens as emailed
+- [x] `nav-links.tsx` — Summer Reg nav link added
+- [ ] **Test: generate all tokens → verify count** ← needs prod DB
+- [ ] **Test: export CSV → confirm 7 columns, one row per family, valid URLs** ← needs prod DB
+- [ ] **Test: copy link → incognito → correct family form** ← needs prod DB
+- [ ] **Test: Refresh button updates table after portal sync** ← needs prod DB
 
 ---
 
-## MVP — Step 4: Response Review Dashboard
-**Target: April 29**
-
-**Goal:** Staff can see a live summary of how many families have responded and what they chose, and can filter/sort the response list into workable queues for building the summer schedule.
-
-**Done when:**
-- Stats cards show accurate counts: Total Families, Responded, Enrolling, No Change (returning September), Stopping, Needs Follow-up, Pending (not yet responded)
-- Response table shows each student's name, parent name, their choice, selected sessions, their current slot, and submission time
-- Filtering by status works correctly
-- Sorting by submitted date, family, student, response type, and current slot works correctly
-- Submitting a new parent response immediately updates the dashboard (cache invalidation working)
+## MVP — Step 4: Response Review Dashboard ✅ CODE DONE
 
 **Checklist:**
-- [ ] `fetchSummerStats()` in `summer-data.ts` — cacheTag `summer-responses`
-- [ ] `fetchSummerResponseRows(filter, sort)` in `summer-data.ts` — filter: `all | pending | enrolling | no_change | pausing | needs_followup | completed`; sort: `submitted_desc | submitted_asc | parent_name | student_name | summer_status | current_slot` — cacheTag `summer-responses`
-- [ ] `SummerStatsCards` server component — Total Families, Responded, Enrolling, No Change, Stopping, Pending, Needs Follow-up
-- [ ] `SummerTabs` client component — `?tab=responses` / `?tab=links`
-- [ ] `SummerResponsesSection` server component — table: Student, Parent, Choice, Sessions, Current Slot, Submitted, Actions
-- [ ] Add visible sort controls so staff can work queue views for Enrolling / No Change / Stopping / Needs Follow-up
-- [ ] Wire `revalidateTag('summer-responses')` in `submitSummerForm` action
-- [ ] Test: submit a response → dashboard stats update correctly
-- [ ] Test: each filter tab shows only the correct rows
-- [ ] Test: sort each queue by submitted date / current slot / family name and confirm stable ordering
+- [x] `fetchSummerStats()` in `summer-data.ts`
+- [x] `fetchSummerResponseRows()` in `summer-data.ts`
+- [x] Stats cards — Total Families, Responded, Not Responded, Emailed, Enrolling, Pausing, No Change, Needs Followup
+- [x] Filter by summer intent + request status + search by name
+- [x] Response table — Student, Family, Current slot, Summer choice, Summer sessions, Fall plan, Fall sessions, Notes, Status, Submitted, Actions
+- [x] Sort controls (filter dropdowns + search)
+- [ ] **Test: submit a response → stats update** ← needs prod DB
+- [ ] **Test: each filter shows correct rows** ← needs prod DB
 
 ---
 
-## MVP — Step 5: Approval Flow
-**Target: May 2**
-
-**Goal:** Staff can approve individual enrolling requests (creates real enrolments with auto-inherited course), bulk-approve all pending enrolling requests, remove a student from summer (deletes enrolments, keeps request record), and mark requests as reviewed or needing follow-up.
-
-**Done when:**
-- Approving an "enrolling" request creates one enrolment per selected session in the `enrolments` table with the correct inherited `course_id`
-- Approved student appears on the schedule page
-- Removing a student deletes those enrolments but leaves the `parent_requests` row intact with payload
-- "Approve All Enrolling" only operates on `status='pending'` rows — does not double-create for already-completed requests
-- Approval fails gracefully with a user-readable error if no existing enrolment exists to inherit a course from
-- Staff can bulk-complete "No Change" responses without any enrolment action
+## MVP — Step 5: Approval Flow ✅ CODE DONE
 
 **Checklist:**
-- [ ] `approveSummerRequest(formData)` — validates course inheritance, `sql.begin` insert enrolments, update request to `completed`
-- [ ] `approveAllEnrolling(formData)` — filters `status='pending' AND payload->>'summer_status'='enrolling'`, same insert logic
-- [ ] `markAllNoChangeComplete()` — bulk marks all `no_change` + `status='pending'` rows as `completed`, no enrolment action
-- [ ] `removeFromSummer(formData)` — deletes all `enrolment_ids`, resets request to `pending` (check absences `ON DELETE CASCADE` first)
-- [ ] `markReviewed(formData)` and `markNeedsFollowup(formData)`
-- [ ] `ApproveModal` client component — start_date picker only (no session or course picker)
-- [ ] `ApproveAllModal` client component — start_date picker + count of enrolling students
-- [ ] `RemoveButton` with inline confirmation
-- [ ] Test full cycle: submit enrolling → approve → verify enrolment in DB and on schedule page
-- [ ] Test: approve → remove → enrolment gone, `parent_requests` row still exists
-- [ ] Test: approve all → verify N enrolments created, all requests marked `completed`
-- [ ] Test: approve a student with no existing enrolment → error shown, no DB change
-- [ ] Test: resubmit after approved → old enrolments deleted, new request pending, staff re-approves
-- [ ] Test: submit no_change → mark all no-change complete → rows marked `completed`, no enrolments created
+- [x] `approveSummerRequest(requestId, startDate)` — auto-inherits course, creates enrolments
+- [x] `approveAllEnrolling(startDate)` — bulk approval, returns created/skipped counts
+- [x] `markAllNoChangeComplete()` — bulk complete no-change (historical only, option removed from form)
+- [x] `removeFromSummer(requestId)` — deletes enrolment_ids, resets to pending
+- [x] `markReviewed(requestId)` and `markNeedsFollowup(requestId)`
+- [x] `ApproveRequestModal` — start_date picker, shown only for enrolling requests
+- [x] `ApproveAllModal` — start_date + enrolling count
+- [x] `RemoveFromSummerButton` — inline confirm
+- [ ] **Test full cycle: submit → approve → verify enrolment in DB + on summer schedule tab** ← needs prod DB
+- [ ] **Test: approve → remove → enrolment gone, request row kept** ← needs prod DB
+- [ ] **Test: student with no existing enrolment → error shown** ← needs prod DB
+
+---
+
+## MVP — Step 6: Summer Schedule Tab ✅ CODE DONE
+
+- [x] `fetchSummerSchedule()` in `summer-data.ts` — sessions WHERE is_summer=TRUE with student rosters
+- [x] `SummerScheduleTab` component — session cards with weekday, time, enrolled students + courses
+- [x] Tab wired into `/dashboard/summer?tab=schedule`
+- [ ] **Test: approve summer enrolments → tab shows updated roster** ← needs prod DB
+- [ ] **Test: flip is_summer=FALSE on a session → disappears from tab** ← needs prod DB
 
 ---
 
 ## Operational — Pre-Send Setup
 **Target: May 4**
 
-**Goal:** System is fully tested end-to-end. Staff have confirmed the data, built the CC campaign, and are ready to send.
-
-**Data & Accounts:**
-- [ ] **Amanda: confirm which sessions should have `is_summer=TRUE`** — real summer evening sessions need the flag flipped before links go out
-- [ ] **Taite / Amanda: pull parent email list** — verify all active family emails are current in the portal / customer table (the CSV uses whatever is in `customers.email`)
-- [ ] Decide how to handle families that need more than one parent recipient — current system assumes one family email field in `customers.email`
-- [ ] Flip `is_summer=TRUE` on all confirmed summer sessions in production DB
-- [ ] Run "Generate All Tokens" on production — confirm count matches expected active family count
-- [ ] Export CSV from dashboard — spot-check 5–10 rows: correct names, emails, valid links
-- [ ] Use the dashboard preview action to QA family links before send, especially any row with unusual student grouping or a recently updated email
+- [ ] **Amanda: confirm which sessions should have `is_summer=TRUE`**
+- [ ] Apply migrations 008–014 to production DB
+- [ ] Run portal sync (`/jobs/scrape-now`) → verify `customers.portal_parent_id` populated
+- [ ] Verify dual-parent families have `alternate_name` + `alternate_email` populated
+- [ ] Flip `is_summer=TRUE` on confirmed summer sessions
+- [ ] Run "Generate All Tokens" → confirm count matches expected active families
+- [ ] Export CSV → spot-check 5–10 rows: names, emails, valid links, alternate names
+- [ ] Preview selected family links while logged in
+- [ ] Audit blank/missing `email` rows before CC import
+- [ ] **Amanda: confirm response deadline date** — add to email copy
 
 **Constant Contact:**
 - [ ] Log into Constant Contact account
-- [ ] Create a new list called "Summer Schedule 2026" — import the exported CSV into it
-- [ ] Verify CC field mapping: `Full Name` → First + Last name, `Email Address` → email, `Students` → custom field, `Link` → custom field
-- [ ] Create email campaign — subject: "Choose your child's summer class schedule"
-- [ ] Build email body using the three CC template variables: `{{Full Name}}`, `{{Students}}`, `{{Link}}`
-- [ ] Preview campaign — confirm variables populate correctly for a test contact
-- [ ] **Amanda: confirm response deadline date** — add to email body copy
+- [ ] Create list "Summer Schedule 2026" — import CSV
+- [ ] Verify CC field mapping: Full Name → name, Email Address → email, Alternate Email, Students, Link
+- [ ] Create campaign — subject: "Choose your child's summer class schedule"
+- [ ] Build email with `{{Full Name}}`, `{{Students}}`, `{{Link}}`
+- [ ] Preview campaign with test contact
+- [ ] Internal test send (see below)
 
 **Internal Test Send:**
-- [ ] Add an internal staff email as a test contact in CC with a real token link
-- [ ] Send test email to that address
-- [ ] Click the link in the email → confirm the form loads in a browser with the correct student shown
-- [ ] Submit the form (try at least: "Enroll" with a session selected, and "No change")
-- [ ] Open `/dashboard/summer` → confirm responses appear in the dashboard
-- [ ] Confirm the response table can be sorted into the expected approval queue after the test submission
-- [ ] Approve the "enrolling" test response → confirm student appears on the schedule page
-- [ ] Confirm "no change" response can be bulk-completed without touching enrolments
-- [ ] Fix any issues found before proceeding to send
+- [ ] Add internal staff email as test contact in CC with real token link
+- [ ] Send test email → click link → confirm form loads with correct student
+- [ ] Submit form (try Enroll + No Change)
+- [ ] Open `/dashboard/summer` → confirm response appears
+- [ ] Approve enrolling response → confirm student on Summer Schedule tab
+- [ ] Fix any issues before live send
 
 ---
 
 ## Operational — First Send
 **Target: May 5–7**
 
-**Goal:** Every active family receives their personalized link in one email campaign via Constant Contact.
-
-- [ ] Final review of CC campaign content with Amanda
-- [ ] Send campaign to "Summer Schedule 2026" list in Constant Contact
-- [ ] Decide whether `email_sent_at` / `email_sent_count` will be updated manually after the CC send or treated as unused until Phase 4 automation
-- [ ] Confirm delivery stats in CC (sent / opened / bounced)
-- [ ] Flag any hard bounces → update emails manually + resend individually if needed
-- [ ] Post send link in internal staff channel so anyone can monitor responses
+- [ ] Final review of CC campaign with Amanda
+- [ ] Send campaign to "Summer Schedule 2026" list
+- [ ] Confirm delivery stats in CC (sent/opened/bounced)
+- [ ] Flag hard bounces → update emails + resend individually
+- [ ] Post link in internal staff channel so anyone can monitor responses
 
 ---
 
 ## Operational — Monitor + Approve
 **Target: May 8–11**
 
-**Goal:** All responses processed. Enrolling students are on the summer schedule. No-change families are marked complete. Edge cases handled.
-
-- [ ] Check `/dashboard/summer` daily — track Responded vs Pending count
-- [ ] Approve enrolling students in batches using "Approve All Enrolling" (or individually where needed)
-- [ ] Bulk-complete all "No Change" responses (no enrolment action, just marks complete)
-- [ ] Review "Needs Follow-up" requests manually — contact family to clarify
-- [ ] For families who haven't responded by May 9 — consider a manual follow-up or resend
-- [ ] Verify approved students appear correctly on the schedule page
-- [ ] Final count: all responses should be `completed` or `needs_manual_followup` — no `pending` rows from active families
+- [ ] Check `/dashboard/summer` daily — track Responded vs Pending
+- [ ] Approve enrolling students in batches using "Approve All Enrolling"
+- [ ] Bulk-complete all "No Change" historical responses if any
+- [ ] Review "Needs Follow-up" manually
+- [ ] For non-responders by May 9 — consider manual follow-up or resend
+- [ ] Verify approved students on Summer Schedule tab
+- [ ] Final: all responses `completed` or `needs_manual_followup`, no active `pending` rows
 
 ---
 
-## Phase 3 — Restart / Inactive Sibling (Post-launch)
+## Deferred — Phase 3: Restart / Inactive Sibling (Post-launch)
 
-**Goal:** A family with an inactive sibling sees an additional "Restart [name]" card section on the same form link, auto-detected — no new link or token needed.
-
-**Done when:**
-- Family form detects students with no active enrolment and shows a "Restart" section
-- Restart submission creates a `parent_requests` row with `request_type='restart'`
-- Staff see restart requests in the dashboard alongside summer scheduling requests
-- Course auto-inherited from student's last known enrolment
-
-**Checklist:**
-- [ ] Confirm UX with Amanda — restart card on same form is the right experience
-- [ ] Update `fetchParentFormData` to also return inactive students with a last-known course
-- [ ] Add restart section to `StudentCard` / `SummerRegForm`
-- [ ] `submitSummerForm` handles `request_type='restart'` payload
-- [ ] Dashboard response table shows restart requests with distinct label
-- [ ] Approval creates enrolment using last known course
+- [ ] Confirm UX with Amanda
+- [ ] Update `fetchParentFormData` to return inactive students
+- [ ] Add restart section to `SummerRegForm` / `StudentCard`
+- [ ] `submitSummerForm` handles `request_type='restart'`
+- [ ] Dashboard shows restart requests with distinct label
 
 ---
 
-## Phase 4 — Automated Email Sending via Resend (Post-launch)
+## Deferred — Phase 4: Automated Email via Resend (Post-launch)
 
-**Goal:** Staff can send personalized form links directly from the dashboard without exporting to Constant Contact.
-
-**Done when:**
-- Clicking "Send Emails" fires one transactional email per family via Resend
-- Email contains the family's `{{Full Name}}`, `{{Students}}` list, and their unique `{{Link}}`
-- `email_sent_at` and `email_sent_count` update on `parent_tokens` after send
-- Stats card shows "Emailed" count
-
-**Pre-requisites to resolve before starting:**
-- [ ] Who manages DNS for zebrarobotics.com? (Resend requires SPF/DKIM records)
-- [ ] Confirm sending address (e.g. `noreply@zebrarobotics.com`)
-- [ ] Confirm response deadline date for email copy
-- [ ] Confirm active family count — if > 3,000, upgrade Resend plan before sending
-
-**Checklist:**
-- [ ] Set up Resend account + verify zebrarobotics.com domain
+- [ ] Resolve DNS for zebrarobotics.com (who manages it?)
+- [ ] Set up Resend account + verify domain
 - [ ] `pnpm add resend @react-email/components`
-- [ ] `app/lib/email/resend.ts` — Resend client singleton
-- [ ] `app/lib/email/summer-form-email.tsx` — React Email template with family name, student list, link, deadline
-- [ ] `sendSummerFormEmails(customerIds?)` server action — bulk or targeted send, updates `email_sent_at`
-- [ ] `SendSummerEmailsButton` client component in link management dashboard
-- [ ] Test: send to internal test address → verify email renders correctly on mobile
-- [ ] Test: `email_sent_at` and `email_sent_count` update after send
-- [ ] Test: bulk send to all un-emailed families → no duplicate sends
+- [ ] `app/lib/email/resend.ts` + `app/lib/email/summer-form-email.tsx`
+- [ ] `sendSummerFormEmails` server action
+- [ ] `SendSummerEmailsButton` in link management
+- [ ] Test send + verify `email_sent_at` / `email_sent_count` update
+
+---
+
+## Deferred — Future
+
+| Item | Notes |
+|------|-------|
+| Portal sync on approval | Push approved enrolments back to portal — no API contract yet |
+| Billing integration | `enrolment_ids` stored on approved requests; connect later |
+| Session toggle admin UI | Currently staff flip `is_summer` via direct DB edit; future: toggle on schedule tab |
+| Session blocking (capacity) | Staff flip `is_summer=FALSE` to close a session; future: auto-block on coach capacity |

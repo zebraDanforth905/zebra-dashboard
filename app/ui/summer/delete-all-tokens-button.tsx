@@ -2,22 +2,19 @@
 
 import { useTransition, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { generateAllParentTokens } from '@/app/lib/summer-actions';
+import { deleteAllParentTokens } from '@/app/lib/summer-actions';
 
-export default function GenerateTokensButton() {
+export default function DeleteAllTokensButton() {
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const router = useRouter();
 
   function handleClick() {
+    if (!confirm('Delete ALL parent tokens? This cannot be undone.')) return;
     setMessage(null);
     startTransition(async () => {
-      const { created } = await generateAllParentTokens();
-      setMessage(
-        created === 0
-          ? 'All families already have tokens.'
-          : `Generated ${created} new token${created !== 1 ? 's' : ''}.`,
-      );
+      const { deleted } = await deleteAllParentTokens();
+      setMessage(`Deleted ${deleted} token${deleted !== 1 ? 's' : ''}.`);
       router.refresh();
     });
   }
@@ -27,9 +24,9 @@ export default function GenerateTokensButton() {
       <button
         onClick={handleClick}
         disabled={isPending}
-        className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-500 transition disabled:opacity-50"
+        className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-500 transition disabled:opacity-50"
       >
-        {isPending ? 'Generating…' : 'Generate All Tokens'}
+        {isPending ? 'Deleting…' : 'Delete All Tokens'}
       </button>
       {message && <p className="text-sm text-slate-600">{message}</p>}
     </div>

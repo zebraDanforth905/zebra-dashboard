@@ -654,6 +654,43 @@ export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ u
           RETURNING id
         `;
         linked += result.length;
+
+        // If none of this parent's students were unlinked, they may already belong to
+        // a co-parent's customer row. Detect that case and bridge this parent's contact
+        // info onto the primary record as alternate contact data.
+        if (result.length === 0) {
+          const others = await tx<{ customer_id: string }[]>`
+            SELECT DISTINCT customer_id
+            FROM students
+            WHERE id = ANY(${c.student_ids}::numeric[])
+              AND customer_id IS NOT NULL
+              AND customer_id != ${customerId}::uuid
+          `;
+          if (others.length === 1) {
+            const primaryId = others[0].customer_id;
+            // Bridge secondary → primary
+            await tx`
+              UPDATE customers
+              SET
+                alternate_email = COALESCE(alternate_email, ${c.email}),
+                alternate_name  = COALESCE(alternate_name,  ${c.name})
+              WHERE id = ${primaryId}::uuid
+            `;
+            // Bridge primary → secondary (so both rows know about each other)
+            const primary = await tx<{ name: string; email: string }[]>`
+              SELECT name, email FROM customers WHERE id = ${primaryId}::uuid
+            `;
+            if (primary.length > 0) {
+              await tx`
+                UPDATE customers
+                SET
+                  alternate_email = COALESCE(alternate_email, ${primary[0].email}),
+                  alternate_name  = COALESCE(alternate_name,  ${primary[0].name})
+                WHERE id = ${customerId}::uuid
+              `;
+            }
+          }
+        }
       }
     }
   });

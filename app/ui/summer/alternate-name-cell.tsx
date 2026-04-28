@@ -68,11 +68,7 @@ export default function AlternateNameCell({
 
   return (
     <div className="flex items-center gap-1 group">
-      {saved ? (
-        <span className="text-xs text-slate-500">& {saved}</span>
-      ) : (
-        <span className="text-xs text-slate-300 italic">+ add 2nd parent</span>
-      )}
+      {saved && <span className="text-xs text-slate-500">& {saved}</span>}
       <button
         onClick={startEdit}
         className="text-xs text-slate-300 hover:text-sky-500 opacity-0 group-hover:opacity-100 transition"

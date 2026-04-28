@@ -69,15 +69,15 @@ export default function AlternateEmailCell({
   return (
     <div className="flex items-center gap-1 group">
       {saved ? (
-        <span className="text-xs text-slate-400">{saved}</span>
-      ) : (
-        <span className="text-xs text-slate-300 italic">—</span>
-      )}
+        <span className="text-xs text-slate-400">
+          <span className="text-slate-300">2nd:</span> {saved}
+        </span>
+      ) : null}
       <button
         onClick={startEdit}
         className="text-xs text-slate-300 hover:text-sky-500 opacity-0 group-hover:opacity-100 transition"
       >
-        edit
+        {saved ? 'edit' : '+ 2nd email'}
       </button>
     </div>
   );

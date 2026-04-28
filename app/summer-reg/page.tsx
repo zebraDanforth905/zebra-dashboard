@@ -40,7 +40,7 @@ export default async function SummerRegPage({
           Hi,{' '}
           <span className="font-medium text-slate-700">
             {data.customer_alternate_name
-              ? `${data.customer_name} & ${data.customer_alternate_name}`
+              ? `${data.customer_name.split(' ')[0]} & ${data.customer_alternate_name.split(' ')[0]}`
               : data.customer_name}
           </span>
         </p>
