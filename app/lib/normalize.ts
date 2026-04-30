@@ -117,6 +117,22 @@ function parseAlternateContact(raw: string): { email: string | null; name: strin
   return { email: first?.toLowerCase() ?? null, name: null };
 }
 
+function cleanAlternateContact(
+  alternate: { email: string | null; name: string | null },
+  primary: { email: string; name: string },
+): { email: string | null; name: string | null } {
+  const altEmail = alternate.email?.trim().toLowerCase() ?? null;
+  const altName = alternate.name?.trim() || null;
+  const primaryEmail = primary.email.trim().toLowerCase();
+  const primaryName = primary.name.trim().toLowerCase();
+
+  if (!altEmail || altEmail === primaryEmail) return { email: null, name: null };
+  if (altName && altName.toLowerCase() === primaryName) {
+    return { email: altEmail, name: null };
+  }
+  return { email: altEmail, name: altName };
+}
+
 // Extracts unique parent/customer records from raw portal rows.
 // Works for both class-report rows and camp-report rows.
 // Returns an empty array if the rows have no parent fields.
@@ -131,14 +147,19 @@ export function extractCustomerRows(rawRows: any[]): PortalCustomerRow[] {
 
     if (!parentId || !email) continue; // need both to safely upsert
 
-    const { email: altEmail, name: altName } = parseAlternateContact(
-      (r.alternate_emails ?? r.alternate_email ?? '').toString()
+    const { email: altEmail, name: altName } = cleanAlternateContact(
+      parseAlternateContact((r.alternate_emails ?? r.alternate_email ?? '').toString()),
+      { email, name: parentName },
     );
 
     if (map.has(parentId)) {
       const existing = map.get(parentId)!;
       if (studentId != null && !existing.student_ids.includes(studentId)) {
         existing.student_ids.push(studentId);
+      }
+      if (!existing.alternate_email && altEmail) existing.alternate_email = altEmail;
+      if (!existing.alternate_name && altName && existing.alternate_email === altEmail) {
+        existing.alternate_name = altName;
       }
     } else {
       map.set(parentId, {

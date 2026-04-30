@@ -668,19 +668,22 @@ export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ u
           `;
           if (others.length === 1) {
             const primaryId = others[0].customer_id;
-            // Bridge secondary → primary
-            await tx`
-              UPDATE customers
-              SET
-                alternate_email = COALESCE(alternate_email, ${c.email}),
-                alternate_name  = COALESCE(alternate_name,  ${c.name})
-              WHERE id = ${primaryId}::uuid
-            `;
-            // Bridge primary → secondary (so both rows know about each other)
             const primary = await tx<{ name: string; email: string }[]>`
               SELECT name, email FROM customers WHERE id = ${primaryId}::uuid
             `;
-            if (primary.length > 0) {
+            if (
+              primary.length > 0 &&
+              primary[0].email.trim().toLowerCase() !== c.email.trim().toLowerCase()
+            ) {
+              // Bridge secondary → primary
+              await tx`
+                UPDATE customers
+                SET
+                  alternate_email = COALESCE(alternate_email, ${c.email}),
+                  alternate_name  = COALESCE(alternate_name,  ${c.name})
+                WHERE id = ${primaryId}::uuid
+              `;
+              // Bridge primary → secondary (so both rows know about each other)
               await tx`
                 UPDATE customers
                 SET

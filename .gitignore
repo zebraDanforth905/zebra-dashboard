@@ -43,3 +43,5 @@ next-env.d.ts
 
 # Claude files
 .claude
+CLAUDE.md
+AGENTS.md

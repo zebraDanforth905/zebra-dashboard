@@ -168,24 +168,31 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       FROM parent_tokens pt
       JOIN customers c ON c.id = pt.customer_id
       LEFT JOIN LATERAL (
-        SELECT ARRAY_AGG(s.name ORDER BY s.name) AS student_names
+        SELECT ARRAY_AGG(DISTINCT s.name ORDER BY s.name) AS student_names
         FROM students s
         WHERE s.customer_id = c.id
       ) sn ON true
       LEFT JOIN LATERAL (
         SELECT json_agg(
           json_build_object(
-            'student_name', s.name,
-            'course_name', co.name,
-            'weekday', se.weekday,
-            'start_time', se.start_time
-          ) ORDER BY s.name, se.weekday, se.start_time
+            'student_name', student_name,
+            'course_name', course_name,
+            'weekday', weekday,
+            'start_time', start_time
+          ) ORDER BY student_name, weekday, start_time
         ) AS student_courses
-        FROM students s
-        JOIN enrolments e ON e.student_id = s.id
-        JOIN sessions se ON se.id = e.session_id
-        JOIN courses co ON co.id = e.course_id
-        WHERE s.customer_id = c.id
+        FROM (
+          SELECT DISTINCT
+            s.name AS student_name,
+            co.name AS course_name,
+            se.weekday,
+            se.start_time
+          FROM students s
+          JOIN enrolments e ON e.student_id = s.id
+          JOIN sessions se ON se.id = e.session_id
+          JOIN courses co ON co.id = e.course_id
+          WHERE s.customer_id = c.id
+        ) distinct_courses
       ) sc ON true
       ORDER BY c.name
     `;

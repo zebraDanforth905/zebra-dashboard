@@ -188,9 +188,7 @@ export async function scrapeEnrolmentNow(opts?: {
   const normalized = normalizeEnrolmentRows(raw);
   const res = await upsertEnrolmentFromNormalized(normalized);
 
-  if (raw.length > 0) console.log('[DEBUG customer sync] sample raw row keys:', Object.keys(raw[0]), '\nsample:', JSON.stringify(raw[0], null, 2));
   const customerRows = extractCustomerRows(raw);
-  console.log('[DEBUG customer sync] customerRows count:', customerRows.length, customerRows.length > 0 ? '\nsample:' + JSON.stringify(customerRows[0], null, 2) : '');
   const customerRes = await syncCustomers(customerRows);
 
   // refresh any pages that read from these tables

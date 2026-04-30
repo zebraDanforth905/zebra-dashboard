@@ -581,6 +581,34 @@ The only change to existing behavior is the `auth.config.ts` fix to allow `/summ
 
 ---
 
+## Billing Safety — Hard Constraints
+
+These rules apply to ALL work in this repo, not just summer reg. They exist because billing data (`invoices`, `payments`, `recurring_invoices`, `converge_recurring_payments`) is anchored to `customers.id` with no soft-delete or cascade protection.
+
+### Billing tables (never touched by summer reg or portal sync)
+| Table | FK |
+|-------|----|
+| `invoices` | `invoices.customer_id → customers.id` |
+| `payments` | `payments.customer_id → customers.id` |
+| `recurring_invoices` | `recurring_invoices.customer_id → customers.id` |
+| `converge_recurring_payments` | `converge_recurring_payments.customer_id → customers.id` |
+
+### Rules
+1. **Never DELETE a customer row.** Deletes orphan all four billing tables.
+2. **Never merge customer rows** without a migration that re-points every billing FK in the same transaction.
+3. **`syncCustomers` must keep `WHERE customer_id IS NULL`** on the students update. Overriding an existing student→customer link breaks billing aggregation for the evicted customer.
+4. **Customer upsert from portal sync may only update:** `name`, `email`, `alternate_email`, `alternate_name`, `portal_parent_id`. Never touch `set_up_qbo` or any other billing column.
+5. **Summer reg server actions may not reference billing tables** — only: `customers`, `students`, `parent_tokens`, `parent_requests`, `sessions`, `enrolments`, `courses`, `trials`, `makeups`, `absences`.
+
+### Verified safe (2026-04-28 audit)
+Branch `summer-responses` changes confirmed to only write:
+- `customers.(name, email, alternate_email, alternate_name, portal_parent_id)` — via portal sync upsert
+- `students.customer_id` where NULL only — via `syncCustomers`
+
+No billing tables read or written by any change on this branch.
+
+---
+
 ## Product Adjustments — April 28, 2026
 
 These changes were confirmed after initial build review. All code-level changes noted below are already applied unless marked **[TODO]**.
@@ -604,6 +632,27 @@ These changes were confirmed after initial build review. All code-level changes 
 **Manual edit removed.** Alternate email is now read-only in the table. It is auto-populated from portal sync when the portal provides a second parent email for a family. If the portal doesn't have it, nothing shows. Staff should not need to enter it manually.
 
 **Alternate name edit kept.** Staff can still manually correct alternate parent names via the inline edit in the Family column.
+
+**Portal sync guardrails added.** Customer extraction now ignores alternate contacts when the alternate email is the same as the primary parent email, and ignores alternate names that are the same as the primary parent name. Existing duplicate portal rows can otherwise make the same parent appear as their own second parent.
+
+**Bidirectional co-parent bridge guarded.** `syncCustomers` now skips the bridge when the candidate secondary parent has the same email as the existing primary customer row for the students. This prevents duplicate portal/customer rows for the same person from writing `alternate_email` / `alternate_name` back onto the same family as a fake co-parent.
+
+**Link table duplicate display guarded.** `fetchParentLinkRows` now uses distinct student names and distinct student/course/session rows before aggregating for link management and CSV export. This keeps duplicate enrolment rows from showing repeated student/course entries in the summer link table.
+
+**[TODO] Historical customer cleanup / audited backfill.** Do not run a blind `alternate_name` backfill yet. The DB has pre-existing duplicate customer rows, including rows with `portal_parent_id: null`, and some duplicates may share students/tokens. Claude should first run an audit query that lists:
+- customers where `alternate_email` equals `email` or where `alternate_name` equals `name`
+- customers with `alternate_email` matching another customer's email but no shared student relationship
+- duplicate customer rows by normalized email and by normalized name
+- token ownership for each duplicate group (`parent_tokens.customer_id`)
+
+After reviewing that output, write a one-time backfill that only fills `alternate_name` when:
+- `alternate_name IS NULL`
+- `alternate_email` is non-null and different from `email`
+- `alternate_email` matches exactly one other customer email
+- the matched customer is not the same normalized name/email
+- the two customer rows are connected through the same current student set or an already-established reverse `alternate_email`
+
+Do not merge/delete duplicate customer rows until token ownership and student `customer_id` assignments are explicitly audited.
 
 ### Session blocking
 
