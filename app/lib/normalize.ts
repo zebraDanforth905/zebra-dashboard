@@ -98,39 +98,22 @@ export type PortalCustomerRow = {
   name: string;
   email: string;
   alternate_email: string | null;
-  alternate_name: string | null;
-  student_ids: number[]; // portal numeric student IDs linked to this parent
+  student_ids: number[];
 };
 
-function parseAlternateContact(raw: string): { email: string | null; name: string | null } {
+// Portal sends alternate_emails as a plain email string (or comma-separated emails).
+// No name is ever included — extract the first valid email that differs from primary.
+function extractAltEmail(raw: string, primaryEmail: string): string | null {
   const s = (raw || '').trim();
-  if (!s) return { email: null, name: null };
-
-  // "Name <email>" format
-  const named = s.match(/^(.+?)\s*<([^>@]+@[^>]+)>$/);
-  if (named) {
-    return { email: named[2].trim().toLowerCase(), name: named[1].trim() || null };
-  }
-
-  // plain email (possibly comma/semicolon-separated — take first valid one)
-  const first = s.split(/[,;]/).map(x => x.trim()).find(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
-  return { email: first?.toLowerCase() ?? null, name: null };
-}
-
-function cleanAlternateContact(
-  alternate: { email: string | null; name: string | null },
-  primary: { email: string; name: string },
-): { email: string | null; name: string | null } {
-  const altEmail = alternate.email?.trim().toLowerCase() ?? null;
-  const altName = alternate.name?.trim() || null;
-  const primaryEmail = primary.email.trim().toLowerCase();
-  const primaryName = primary.name.trim().toLowerCase();
-
-  if (!altEmail || altEmail === primaryEmail) return { email: null, name: null };
-  if (altName && altName.toLowerCase() === primaryName) {
-    return { email: altEmail, name: null };
-  }
-  return { email: altEmail, name: altName };
+  if (!s) return null;
+  const primary = primaryEmail.trim().toLowerCase();
+  // Handle "Name <email>" just in case, then fall back to plain/comma-separated
+  const angleMatch = s.match(/<([^>@\s]+@[^>]+)>/);
+  const candidate = angleMatch
+    ? angleMatch[1].trim().toLowerCase()
+    : s.split(/[,;]/).map(x => x.trim()).find(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))?.toLowerCase() ?? null;
+  if (!candidate || candidate === primary) return null;
+  return candidate;
 }
 
 // Extracts unique parent/customer records from raw portal rows.
@@ -145,11 +128,11 @@ export function extractCustomerRows(rawRows: any[]): PortalCustomerRow[] {
     const email: string = (r.email ?? r.parent_email ?? '').toString().trim().toLowerCase();
     const studentId: number | null = r.student_id != null ? Number(r.student_id) : null;
 
-    if (!parentId || !email) continue; // need both to safely upsert
+    if (!parentId || !email) continue;
 
-    const { email: altEmail, name: altName } = cleanAlternateContact(
-      parseAlternateContact((r.alternate_emails ?? r.alternate_email ?? '').toString()),
-      { email, name: parentName },
+    const altEmail = extractAltEmail(
+      (r.alternate_emails ?? r.alternate_email ?? '').toString(),
+      email,
     );
 
     if (map.has(parentId)) {
@@ -158,16 +141,12 @@ export function extractCustomerRows(rawRows: any[]): PortalCustomerRow[] {
         existing.student_ids.push(studentId);
       }
       if (!existing.alternate_email && altEmail) existing.alternate_email = altEmail;
-      if (!existing.alternate_name && altName && existing.alternate_email === altEmail) {
-        existing.alternate_name = altName;
-      }
     } else {
       map.set(parentId, {
         portal_parent_id: parentId,
         name: parentName,
         email,
         alternate_email: altEmail,
-        alternate_name: altName,
         student_ids: studentId != null ? [studentId] : [],
       });
     }

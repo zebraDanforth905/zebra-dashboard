@@ -624,20 +624,18 @@ export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ u
   await sql.begin(async tx => {
     for (const c of customers) {
       const rows = await tx<{ id: string }[]>`
-        INSERT INTO customers (name, email, alternate_email, alternate_name, portal_parent_id)
+        INSERT INTO customers (name, email, alternate_email, portal_parent_id)
         VALUES (
           ${c.name},
           ${c.email},
           ${c.alternate_email},
-          ${c.alternate_name},
           ${c.portal_parent_id}
         )
         ON CONFLICT (portal_parent_id) WHERE portal_parent_id IS NOT NULL
         DO UPDATE SET
           name            = EXCLUDED.name,
           email           = EXCLUDED.email,
-          alternate_email = COALESCE(EXCLUDED.alternate_email, customers.alternate_email),
-          alternate_name  = COALESCE(customers.alternate_name, EXCLUDED.alternate_name)
+          alternate_email = COALESCE(EXCLUDED.alternate_email, customers.alternate_email)
         RETURNING id
       `;
       if (!rows.length) continue;
@@ -675,20 +673,16 @@ export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ u
               primary.length > 0 &&
               primary[0].email.trim().toLowerCase() !== c.email.trim().toLowerCase()
             ) {
-              // Bridge secondary → primary
+              // Bridge secondary email → primary (so primary knows the co-parent's email)
               await tx`
                 UPDATE customers
-                SET
-                  alternate_email = COALESCE(alternate_email, ${c.email}),
-                  alternate_name  = COALESCE(alternate_name,  ${c.name})
+                SET alternate_email = COALESCE(alternate_email, ${c.email})
                 WHERE id = ${primaryId}::uuid
               `;
-              // Bridge primary → secondary (so both rows know about each other)
+              // Bridge primary email → secondary
               await tx`
                 UPDATE customers
-                SET
-                  alternate_email = COALESCE(alternate_email, ${primary[0].email}),
-                  alternate_name  = COALESCE(alternate_name,  ${primary[0].name})
+                SET alternate_email = COALESCE(alternate_email, ${primary[0].email})
                 WHERE id = ${customerId}::uuid
               `;
             }
