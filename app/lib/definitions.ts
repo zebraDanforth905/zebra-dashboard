@@ -398,7 +398,6 @@ export type ParentToken = {
 };
 
 // portal_parent_id is set automatically by the portal scrape
-// alternate_name is set manually by staff or auto-parsed from alternate_emails if the portal provides "Name <email>" format
 
 export type SummerSchedulingPayload = {
   summer_status: 'enrolling' | 'pausing' | 'no_change';

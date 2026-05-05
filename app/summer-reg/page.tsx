@@ -37,7 +37,7 @@ export default async function SummerRegPage({
     <PageShell>
       <div className="space-y-2 mb-6">
         <p className="text-slate-500 text-sm">
-          Hi,{' '}
+          Hi {' '}
           <span className="font-medium text-slate-700">
             {data.customer_alternate_name
               ? `${data.customer_name.split(' ')[0]} & ${data.customer_alternate_name.split(' ')[0]}`
