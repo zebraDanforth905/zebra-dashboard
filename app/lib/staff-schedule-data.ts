@@ -456,6 +456,7 @@ export async function fetchTemplateViewData(): Promise<StaffScheduleTemplateView
 }
 
 type ExpandedShiftRow = {
+	id: number | null;
 	date: string;
 	weekday: StaffScheduleWeekday;
 	user_id: string;
@@ -483,6 +484,7 @@ async function fetchExpandedStaffShiftsForDateRange(
 ): Promise<StaffScheduleDailyShift[]> {
 	const days = buildDateRangeDays(startDate, endDate);
 	const templateRows = await sql<Array<{
+		id: number;
 		template_name: string;
 		weekday: string;
 		start_time: string;
@@ -495,6 +497,7 @@ async function fetchExpandedStaffShiftsForDateRange(
 		shift_types: string[];
 	}>>`
 		SELECT
+			ts.id,
 			t.name AS template_name,
 			LOWER(ts.weekday) AS weekday,
 			ts.start_time::text AS start_time,
@@ -551,6 +554,7 @@ async function fetchExpandedStaffShiftsForDateRange(
 				continue;
 			}
 			expanded.push({
+				id: row.id,
 				date: day.date,
 				weekday: day.weekday,
 				user_id: row.user_id,
@@ -568,6 +572,7 @@ async function fetchExpandedStaffShiftsForDateRange(
 	for (const row of untemplatedRows) {
 		const dateObj = new Date(`${row.date}T00:00:00`);
 		expanded.push({
+			id: row.id,
 			date: row.date,
 			weekday: weekdayForDate(dateObj),
 			user_id: row.user_id,
