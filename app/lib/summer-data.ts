@@ -57,7 +57,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
         pr.payload AS latest_request,
         pr.status AS latest_request_status
       FROM students s
-      LEFT JOIN LATERAL (
+      JOIN LATERAL (
         SELECT se.weekday, se.start_time
         FROM enrolments e
         JOIN sessions se ON se.id = e.session_id
@@ -80,7 +80,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
 
     const [summerSessions, fallSessions] = await Promise.all([
       sql<(Session & { is_summer: boolean })[]>`
-        SELECT id::text, weekday, start_time, end_time, is_summer
+        SELECT id::text, weekday, start_time, end_time, is_summer, is_full
         FROM sessions
         WHERE is_summer = TRUE
         ORDER BY weekday, start_time
@@ -92,6 +92,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
           s.weekday,
           s.start_time,
           MIN(s.end_time) AS end_time,
+          BOOL_OR(s.is_full) AS is_full,
           COUNT(e.id)::int AS student_count,
           0::int AS coach_capacity
         FROM sessions s
@@ -112,15 +113,22 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
       latest_request_status: r.latest_request_status as ParentFormStudentData['latest_request_status'],
     }));
 
-    const WEEKEND = new Set(['Saturday', 'Sunday']);
     const WEEKDAY_HOURS = new Set([16, 17, 18]); // 4, 5, 6 PM
+    const SATURDAY_HOURS = new Set([9, 10, 11, 13]); // 9, 10, 11 AM, 1 PM
 
     const filteredFallSessions = fallSessions.filter(s => {
-      if (s.student_count > 0) return true; // always show times with enrolled students
       const [h, m] = s.start_time.split(':').map(Number);
-      if (m !== 0) return false; // non-hourly with no students: hide
-      if (WEEKEND.has(s.weekday)) return h !== 12; // weekend: all hourly except noon
-      return WEEKDAY_HOURS.has(h); // weekday: only 4, 5, 6 PM
+      if (s.weekday === 'Saturday') {
+        if (m !== 0) return false;
+        return SATURDAY_HOURS.has(h);
+      }
+      if (s.weekday === 'Sunday') {
+        if (s.student_count > 0) return true;
+        if (m !== 0) return false;
+        return h !== 12;
+      }
+      if (m !== 0) return false;
+      return WEEKDAY_HOURS.has(h);
     });
 
     return { token_id, customer_id, customer_name, customer_alternate_name, students, summer_sessions: summerSessions, fall_sessions: filteredFallSessions };
@@ -143,8 +151,8 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       email: string;
       alternate_email: string | null;
       token: string;
-      email_sent_at: Date | null;
-      email_sent_count: number;
+      last_exported_at: Date | null;
+      export_count: number;
       student_names: string[];
       student_courses: StudentCourseEntry[];
       has_responded: boolean;
@@ -157,8 +165,8 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         c.email,
         c.alternate_email,
         pt.token,
-        pt.email_sent_at,
-        pt.email_sent_count,
+        pt.last_exported_at,
+        pt.export_count,
         COALESCE(sn.student_names, '{}') AS student_names,
         COALESCE(sc.student_courses, '[]'::json) AS student_courses,
         EXISTS (
@@ -171,6 +179,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         SELECT ARRAY_AGG(DISTINCT s.name ORDER BY s.name) AS student_names
         FROM students s
         WHERE s.customer_id = c.id
+          AND EXISTS (SELECT 1 FROM enrolments e WHERE e.student_id = s.id)
       ) sn ON true
       LEFT JOIN LATERAL (
         SELECT json_agg(
@@ -217,7 +226,7 @@ export async function fetchSummerStats(): Promise<SummerStats> {
         (SELECT COUNT(*)::int FROM parent_requests WHERE is_latest = TRUE AND request_type = 'summer_scheduling' AND payload->>'summer_status' = 'no_change') AS no_change,
         (SELECT COUNT(*)::int FROM parent_requests WHERE is_latest = TRUE AND status = 'pending')                           AS pending,
         (SELECT COUNT(*)::int FROM parent_requests WHERE is_latest = TRUE AND status = 'needs_manual_followup')             AS needs_followup,
-        (SELECT COUNT(*)::int FROM parent_tokens WHERE email_sent_count > 0)                                                AS emailed
+        (SELECT COUNT(*)::int FROM parent_tokens WHERE export_count > 0)                                                    AS exported
     `;
     return rows[0];
   } catch (error) {
@@ -239,19 +248,29 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         c.email                                                              AS parent_email,
         COALESCE(pr.payload->>'summer_status', 'other')                      AS summer_status,
         COALESCE(sl.session_labels, '{}')                                    AS session_labels,
+        COALESCE((pr.payload->>'pickup_requested')::boolean, FALSE)          AS pickup_requested,
+        pr.payload->>'pickup_school'                                         AS pickup_school,
+        pr.payload->>'pickup_school_other'                                   AS pickup_school_other,
         pr.payload->>'fall_status'                                           AS fall_status,
         COALESCE(fsl.fall_session_labels, '{}')                              AS fall_session_labels,
         le.weekday                                                           AS current_weekday,
         le.start_time                                                        AS current_start_time,
         pr.status,
         pr.custom_notes,
-        pr.submitted_at
+        pr.submitted_at,
+        pr.added_to_portal_at
       FROM parent_requests pr
       JOIN students s  ON s.id  = pr.student_id
       JOIN customers c ON c.id  = s.customer_id
       LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(
           se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+          || COALESCE(
+               ' (start ' ||
+               to_char((pr.payload->'session_start_dates'->>(se.id::text))::date, 'Mon DD')
+               || ')',
+               ''
+             )
           ORDER BY se.weekday, se.start_time
         ) AS session_labels
         FROM jsonb_array_elements_text(pr.payload->'session_ids') AS sid
@@ -260,6 +279,12 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
       LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(
           se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+          || COALESCE(
+               ' (start ' ||
+               to_char((pr.payload->'fall_session_start_dates'->>(se.id::text))::date, 'Mon DD')
+               || ')',
+               ''
+             )
           ORDER BY se.weekday, se.start_time
         ) AS fall_session_labels
         FROM jsonb_array_elements_text(pr.payload->'fall_session_ids') AS fsid
@@ -287,7 +312,7 @@ export async function fetchSummerSessions(): Promise<(Session & { is_summer: boo
   cacheTag('schedule');
   try {
     return await sql<(Session & { is_summer: boolean })[]>`
-      SELECT id::text, weekday, start_time, end_time, is_summer
+      SELECT id::text, weekday, start_time, end_time, is_summer, is_full
       FROM sessions
       WHERE is_summer = TRUE
       ORDER BY weekday, start_time
@@ -314,6 +339,9 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
       student_name: string;
       summer_status: string;
       session_labels: string[];
+      pickup_requested: boolean;
+      pickup_school: string | null;
+      pickup_school_other: string | null;
       fall_status: string | null;
       fall_session_labels: string[];
       custom_notes: string | null;
@@ -322,6 +350,9 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
         s.name AS student_name,
         COALESCE(pr.payload->>'summer_status', 'other') AS summer_status,
         COALESCE(sl.session_labels, '{}') AS session_labels,
+        COALESCE((pr.payload->>'pickup_requested')::boolean, FALSE) AS pickup_requested,
+        pr.payload->>'pickup_school' AS pickup_school,
+        pr.payload->>'pickup_school_other' AS pickup_school_other,
         pr.payload->>'fall_status' AS fall_status,
         COALESCE(fsl.fall_session_labels, '{}') AS fall_session_labels,
         pr.custom_notes
@@ -331,6 +362,12 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
       LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(
           se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+          || COALESCE(
+               ' (start ' ||
+               to_char((pr.payload->'session_start_dates'->>(se.id::text))::date, 'Mon DD')
+               || ')',
+               ''
+             )
           ORDER BY se.weekday, se.start_time
         ) AS session_labels
         FROM jsonb_array_elements_text(pr.payload->'session_ids') AS sid
@@ -339,6 +376,12 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
       LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(
           se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+          || COALESCE(
+               ' (start ' ||
+               to_char((pr.payload->'fall_session_start_dates'->>(se.id::text))::date, 'Mon DD')
+               || ')',
+               ''
+             )
           ORDER BY se.weekday, se.start_time
         ) AS fall_session_labels
         FROM jsonb_array_elements_text(pr.payload->'fall_session_ids') AS fsid
@@ -369,6 +412,7 @@ export async function fetchSummerSchedule(): Promise<SummerScheduleRow[]> {
       weekday: string;
       start_time: string;
       end_time: string;
+      is_full: boolean;
       student_count: number;
       students: SummerScheduleRow['students'];
     }[]>`
@@ -377,6 +421,7 @@ export async function fetchSummerSchedule(): Promise<SummerScheduleRow[]> {
         s.weekday,
         s.start_time,
         s.end_time,
+        s.is_full,
         COUNT(e.id)::int AS student_count,
         COALESCE(
           json_agg(
@@ -390,7 +435,7 @@ export async function fetchSummerSchedule(): Promise<SummerScheduleRow[]> {
       LEFT JOIN students st ON st.id = e.student_id
       LEFT JOIN courses c ON c.id = e.course_id
       WHERE s.is_summer = TRUE
-      GROUP BY s.id, s.weekday, s.start_time, s.end_time
+      GROUP BY s.id, s.weekday, s.start_time, s.end_time, s.is_full
       ORDER BY
         ARRAY_POSITION(
           ARRAY['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],

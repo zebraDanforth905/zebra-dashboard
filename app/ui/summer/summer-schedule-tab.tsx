@@ -1,4 +1,5 @@
 import { SummerScheduleRow } from '@/app/lib/definitions';
+import SessionFullToggle from './session-full-toggle';
 
 function formatTime(t: string): string {
   const [h, m] = t.split(':').map(Number);
@@ -35,20 +36,25 @@ export default function SummerScheduleTab({ rows }: { rows: SummerScheduleRow[] 
             className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden"
           >
             {/* Session header */}
-            <div className="bg-sky-50 border-b border-sky-100 px-4 py-3 flex items-center justify-between">
+            <div className={`border-b px-4 py-3 flex items-center justify-between ${
+              session.is_full ? 'bg-red-50 border-red-100' : 'bg-sky-50 border-sky-100'
+            }`}>
               <div>
                 <p className="font-semibold text-slate-800 text-sm">{session.weekday}</p>
                 <p className="text-xs text-slate-500">
                   {formatTime(session.start_time)} – {formatTime(session.end_time)}
                 </p>
               </div>
-              <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
-                session.student_count === 0
-                  ? 'bg-slate-100 text-slate-400'
-                  : 'bg-sky-100 text-sky-700'
-              }`}>
-                {session.student_count} student{session.student_count !== 1 ? 's' : ''}
-              </span>
+              <div className="flex flex-col items-end gap-1">
+                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                  session.student_count === 0
+                    ? 'bg-slate-100 text-slate-400'
+                    : 'bg-sky-100 text-sky-700'
+                }`}>
+                  {session.student_count} student{session.student_count !== 1 ? 's' : ''}
+                </span>
+                <SessionFullToggle sessionId={session.session_id} isFull={session.is_full} />
+              </div>
             </div>
 
             {/* Student roster */}

@@ -1,13 +1,8 @@
 'use client';
 
+import { useTransition } from 'react';
 import { ParentLinkRow } from '@/app/lib/definitions';
-
-function formatTime(t: string): string {
-  const [h, m] = t.split(':').map(Number);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const hour = h % 12 || 12;
-  return m === 0 ? `${hour} ${ampm}` : `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
-}
+import { markTokensExported } from '@/app/lib/summer-actions';
 
 function csv(val: string): string {
   const s = val ?? '';
@@ -16,22 +11,33 @@ function csv(val: string): string {
     : s;
 }
 
-export default function ExportCsvButton({ rows, label = 'Export CSV' }: { rows: ParentLinkRow[]; label?: string }) {
+export function formatStudentNamesGrammar(names: string[]): string {
+  if (names.length === 0) return '';
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+}
+
+export default function ExportCsvButton({
+  rows,
+  label = 'Export CSV',
+  disabled = false,
+}: {
+  rows: ParentLinkRow[];
+  label?: string;
+  disabled?: boolean;
+}) {
+  const [isPending, startTransition] = useTransition();
+
   function handleExport() {
     const origin = window.location.origin;
-    const header = 'Full Name,Alternate Name,Email,Alternate Email,Students,Current Courses,Link';
+    const header = 'Email,Alternate Email,Students,Link';
     const body = rows.map(r => {
-      const students = r.student_names.join(', ');
-      const courses = r.student_courses
-        .map(c => `${c.student_name} — ${c.course_name} ${c.weekday} ${formatTime(c.start_time)}`)
-        .join('; ');
+      const students = formatStudentNamesGrammar(r.student_names);
       return [
-        csv(r.customer_name),
-        csv(r.alternate_name ?? ''),
         csv(r.email),
         csv(r.alternate_email ?? ''),
         csv(students),
-        csv(courses),
         csv(`${origin}/summer-reg?token=${r.token}`),
       ].join(',');
     });
@@ -42,14 +48,22 @@ export default function ExportCsvButton({ rows, label = 'Export CSV' }: { rows: 
     a.download = `summer-reg-links-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
+
+    const tokenIds = rows.map(r => r.token_id);
+    if (tokenIds.length > 0) {
+      startTransition(async () => {
+        await markTokensExported(tokenIds);
+      });
+    }
   }
 
   return (
     <button
       onClick={handleExport}
-      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition"
+      disabled={disabled || isPending || rows.length === 0}
+      className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-500 transition disabled:opacity-40"
     >
-      {label}
+      {isPending ? 'Exporting…' : `${label} (${rows.length})`}
     </button>
   );
 }

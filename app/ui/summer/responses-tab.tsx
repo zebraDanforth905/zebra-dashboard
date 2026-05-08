@@ -7,8 +7,8 @@ import {
   approveAllEnrolling,
   removeFromSummer,
   markAllNoChangeComplete,
-  markReviewed,
-  markNeedsFollowup,
+  markAddedToPortal,
+  clearAddedToPortal,
 } from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
 
@@ -170,48 +170,61 @@ function RemoveFromSummerButton({ requestId, onDone }: { requestId: string; onDo
     return (
       <button
         onClick={() => setConfirm(true)}
+        title="Test-only: deletes enrolments and resets request"
         className="text-xs text-slate-400 hover:text-red-600 underline"
       >
-        Remove
+        Remove (test)
       </button>
     );
   }
   return (
-    <span className="flex items-center gap-1">
-      <button
-        disabled={isPending}
-        onClick={() => startTransition(async () => { await removeFromSummer(requestId); onDone(); })}
-        className="text-xs text-red-600 font-medium disabled:opacity-50"
-      >
-        {isPending ? '…' : 'Yes, remove'}
-      </button>
-      <button onClick={() => setConfirm(false)} className="text-xs text-slate-400">Cancel</button>
+    <span className="flex flex-col gap-1">
+      <span className="text-[10px] text-red-700 leading-tight">
+        Deletes enrolments. For testing only.
+      </span>
+      <span className="flex items-center gap-2">
+        <button
+          disabled={isPending}
+          onClick={() => startTransition(async () => { await removeFromSummer(requestId); onDone(); })}
+          className="text-xs text-red-600 font-medium disabled:opacity-50"
+        >
+          {isPending ? '…' : 'Confirm remove'}
+        </button>
+        <button onClick={() => setConfirm(false)} className="text-xs text-slate-400">Cancel</button>
+      </span>
     </span>
   );
 }
 
-function MarkReviewedButton({ requestId, onDone }: { requestId: string; onDone: () => void }) {
+function AddedToPortalButton({
+  requestId,
+  addedAt,
+  onDone,
+}: {
+  requestId: string;
+  addedAt: Date | null;
+  onDone: () => void;
+}) {
   const [isPending, startTransition] = useTransition();
+  if (addedAt) {
+    return (
+      <button
+        disabled={isPending}
+        onClick={() => startTransition(async () => { await clearAddedToPortal(requestId); onDone(); })}
+        title={`Added to portal ${formatDate(addedAt)} — click to undo`}
+        className="text-xs px-2 py-1 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition disabled:opacity-50"
+      >
+        {isPending ? '…' : `✓ In Portal (${formatDate(addedAt)})`}
+      </button>
+    );
+  }
   return (
     <button
       disabled={isPending}
-      onClick={() => startTransition(async () => { await markReviewed(requestId); onDone(); })}
+      onClick={() => startTransition(async () => { await markAddedToPortal(requestId); onDone(); })}
       className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
     >
-      {isPending ? '…' : 'Mark Reviewed'}
-    </button>
-  );
-}
-
-function MarkFollowupButton({ requestId, onDone }: { requestId: string; onDone: () => void }) {
-  const [isPending, startTransition] = useTransition();
-  return (
-    <button
-      disabled={isPending}
-      onClick={() => startTransition(async () => { await markNeedsFollowup(requestId); onDone(); })}
-      className="text-xs px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 transition disabled:opacity-50"
-    >
-      {isPending ? '…' : 'Needs Followup'}
+      {isPending ? '…' : 'Added to Portal'}
     </button>
   );
 }
@@ -265,7 +278,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         <StatCard label="Total Families"  value={stats.total_families} />
         <StatCard label="Responded"       value={stats.responded}   color="text-emerald-700" />
         <StatCard label="Not Responded"   value={notResponded}      color={notResponded > 0 ? 'text-amber-600' : 'text-slate-800'} />
-        <StatCard label="Emailed"         value={stats.emailed} />
+        <StatCard label="Exported"        value={stats.exported} />
       </div>
 
       {/* Stats row 2 */}
@@ -344,6 +357,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                 <th className="px-4 py-3">Current</th>
                 <th className="px-4 py-3">Summer</th>
                 <th className="px-4 py-3">Summer Sessions</th>
+                <th className="px-4 py-3">Pickup</th>
                 <th className="px-4 py-3">Fall Plan</th>
                 <th className="px-4 py-3">Fall Sessions</th>
                 <th className="px-4 py-3">Notes</th>
@@ -355,7 +369,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={12} className="px-4 py-8 text-center text-slate-400 text-sm">
                     No matching responses.
                   </td>
                 </tr>
@@ -381,6 +395,17 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                       ? row.session_labels.map((l, i) => <div key={i}>{l}</div>)
                       : <span className="text-slate-400">—</span>}
                   </td>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {row.pickup_requested ? (
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 font-medium bg-amber-100 text-amber-700">
+                        {row.pickup_school === 'other'
+                          ? (row.pickup_school_other ?? 'Other')
+                          : (row.pickup_school ?? 'Yes')}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">
                     {row.fall_status ? (FALL_STATUS_LABEL[row.fall_status] ?? row.fall_status) : <span className="text-slate-400">—</span>}
                   </td>
@@ -402,26 +427,18 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex flex-col gap-1">
-                      {row.status !== 'completed' && (
-                        <button
-                          onClick={() => setModalRow(row)}
-                          className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
-                        >
-                          Review
-                        </button>
-                      )}
-                      {row.status === 'pending' && (
-                        <>
-                          <MarkReviewedButton requestId={row.request_id} onDone={refresh} />
-                          <MarkFollowupButton requestId={row.request_id} onDone={refresh} />
-                        </>
-                      )}
-                      {row.status === 'reviewed' && (
-                        <MarkFollowupButton requestId={row.request_id} onDone={refresh} />
-                      )}
-                      {row.status === 'completed' && (
-                        <RemoveFromSummerButton requestId={row.request_id} onDone={refresh} />
-                      )}
+                      <button
+                        onClick={() => setModalRow(row)}
+                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
+                      >
+                        {row.status === 'completed' ? 'Details' : 'Review'}
+                      </button>
+                      <AddedToPortalButton
+                        requestId={row.request_id}
+                        addedAt={row.added_to_portal_at}
+                        onDone={refresh}
+                      />
+                      <RemoveFromSummerButton requestId={row.request_id} onDone={refresh} />
                     </div>
                   </td>
                 </tr>

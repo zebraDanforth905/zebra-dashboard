@@ -36,14 +36,7 @@ export default async function SummerRegPage({
   return (
     <PageShell>
       <div className="space-y-2 mb-6">
-        <p className="text-slate-500 text-sm">
-          Hi {' '}
-          <span className="font-medium text-slate-700">
-            {data.customer_alternate_name
-              ? `${data.customer_name.split(' ')[0]} & ${data.customer_alternate_name.split(' ')[0]}`
-              : data.customer_name}
-          </span>
-        </p>
+        <p className="text-slate-500 text-sm">Hi Zebra family,</p>
         <h1 className="text-2xl font-semibold text-slate-800">Summer & Fall Schedule</h1>
         <div className="rounded-xl bg-sky-50 ring-1 ring-sky-100 px-4 py-3 text-sm text-sky-800 space-y-1">
           <p>Choose your child's summer evening class schedule below.</p>

@@ -4,13 +4,23 @@ import postgres from 'postgres';
 import { revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { randomBytes } from 'crypto';
+import { auth } from '@/auth';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+
+async function requireAdmin(): Promise<void> {
+  const session = await auth();
+  const userType = (session?.user as any)?.user_type;
+  if (userType !== 'admin') {
+    throw new Error('Forbidden: admin access required');
+  }
+}
 
 // ── Token management ──────────────────────────────────────────────────────────
 
 // Idempotent: if a token already exists for this customer, returns the existing one.
 export async function generateParentToken(customerId: string): Promise<string> {
+  await requireAdmin();
   const existing = await sql<{ token: string }[]>`
     SELECT token FROM parent_tokens WHERE customer_id = ${customerId}::uuid LIMIT 1
   `;
@@ -33,6 +43,7 @@ export async function generateParentToken(customerId: string): Promise<string> {
 
 // Bulk-generates tokens for every customer with at least one enrolment. Skips existing tokens.
 export async function generateAllParentTokens(): Promise<{ created: number }> {
+  await requireAdmin();
   const eligible = await sql<{ customer_id: string }[]>`
     SELECT DISTINCT c.id::text AS customer_id
     FROM customers c
@@ -59,35 +70,26 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
 }
 
 export async function deleteAllParentTokens(): Promise<{ deleted: number }> {
+  await requireAdmin();
   const rows = await sql<{ id: string }[]>`DELETE FROM parent_tokens RETURNING id`;
   revalidateTag('summer-tokens', 'max');
   return { deleted: rows.length };
 }
 
 export async function refreshParentLinkData(): Promise<void> {
+  await requireAdmin();
   revalidateTag('summer-tokens', 'max');
 }
 
 // ── Email send tracking ───────────────────────────────────────────────────────
 
-export async function markAllEmailSent(): Promise<{ updated: number }> {
+export async function markTokensExported(tokenIds: string[]): Promise<{ updated: number }> {
+  await requireAdmin();
+  if (tokenIds.length === 0) return { updated: 0 };
   const rows = await sql<{ id: string }[]>`
     UPDATE parent_tokens
-    SET email_sent_at = NOW(), email_sent_count = email_sent_count + 1
-    RETURNING id
-  `;
-  revalidateTag('summer-tokens', 'max');
-  return { updated: rows.length };
-}
-
-export async function markNonRespondersEmailSent(): Promise<{ updated: number }> {
-  const rows = await sql<{ id: string }[]>`
-    UPDATE parent_tokens pt
-    SET email_sent_at = NOW(), email_sent_count = email_sent_count + 1
-    WHERE NOT EXISTS (
-      SELECT 1 FROM parent_requests pr
-      WHERE pr.token_id = pt.id AND pr.is_latest = TRUE
-    )
+    SET last_exported_at = NOW(), export_count = export_count + 1
+    WHERE id::text = ANY(${tokenIds}::text[])
     RETURNING id
   `;
   revalidateTag('summer-tokens', 'max');
@@ -97,15 +99,43 @@ export async function markNonRespondersEmailSent(): Promise<{ updated: number }>
 // ── Customer alternate email ──────────────────────────────────────────────────
 
 export async function updateAlternateEmail(customerId: string, email: string | null): Promise<void> {
+  await requireAdmin();
   const trimmed = email?.trim() || null;
+  if (trimmed) {
+    if (/[,;]/.test(trimmed)) {
+      throw new Error("Alternate email must be a single email address (no commas or semicolons).");
+    }
+    if ((trimmed.match(/@/g) ?? []).length !== 1) {
+      throw new Error("Alternate email must contain exactly one '@'.");
+    }
+  }
   await sql`
     UPDATE customers SET alternate_email = ${trimmed} WHERE id = ${customerId}::uuid
   `;
   revalidateTag('summer-tokens', 'max');
 }
 
+// ── Session full toggle ──────────────────────────────────────────────────────
+
+export async function toggleSessionFull(sessionId: string, isFull: boolean): Promise<void> {
+  await requireAdmin();
+  await sql`
+    UPDATE sessions SET is_full = ${isFull} WHERE id = ${sessionId}::uuid
+  `;
+  revalidateTag('schedule', 'max');
+  revalidateTag('summer-responses', 'max');
+}
+
 export async function updateAlternateName(customerId: string, name: string | null): Promise<void> {
+  await requireAdmin();
   const trimmed = name?.trim() || null;
+  if (trimmed) {
+    if (trimmed.includes("&") || /\s\b(and)\b\s/i.test(trimmed) || trimmed.includes(",")) {
+      throw new Error(
+        "Alternate name must be a single person's name (no '&', ' and ', or commas). Enter only the second parent.",
+      );
+    }
+  }
   await sql`
     UPDATE customers SET alternate_name = ${trimmed} WHERE id = ${customerId}::uuid
   `;
@@ -118,6 +148,7 @@ export async function approveSummerRequest(
   requestId: string,
   startDate?: string,
 ): Promise<{ error?: string }> {
+  await requireAdmin();
   const reqs = await sql<{
     id: string;
     student_id: string;
@@ -192,6 +223,7 @@ export async function approveSummerRequest(
 }
 
 export async function approveAllEnrolling(startDate: string): Promise<{ created: number; skipped: number }> {
+  await requireAdmin();
   const pending = await sql<{
     id: string;
     student_id: string;
@@ -250,21 +282,29 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
 }
 
 export async function removeFromSummer(requestId: string): Promise<void> {
-  const reqs = await sql<{ enrolment_ids: string[] }[]>`
-    SELECT enrolment_ids FROM parent_requests WHERE id = ${requestId}::uuid LIMIT 1
+  await requireAdmin();
+  const reqs = await sql<{
+    enrolment_ids: string[];
+    token_id: string;
+    student_id: number;
+  }[]>`
+    SELECT enrolment_ids, token_id::text, student_id
+    FROM parent_requests WHERE id = ${requestId}::uuid LIMIT 1
   `;
-  if (reqs.length > 0 && reqs[0].enrolment_ids.length > 0) {
-    await sql`DELETE FROM enrolments WHERE id = ANY(${reqs[0].enrolment_ids}::uuid[])`;
+  if (reqs.length === 0) return;
+  const { enrolment_ids, token_id, student_id } = reqs[0];
+  if (enrolment_ids?.length > 0) {
+    await sql`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
   }
   await sql`
-    UPDATE parent_requests
-    SET enrolment_ids = '{}', status = 'pending', reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
-    WHERE id = ${requestId}::uuid
+    DELETE FROM parent_requests
+    WHERE token_id = ${token_id}::uuid AND student_id = ${student_id}
   `;
   revalidateTag('summer-responses', 'max');
 }
 
 export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
+  await requireAdmin();
   const rows = await sql<{ id: string }[]>`
     UPDATE parent_requests
     SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
@@ -278,16 +318,28 @@ export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
   return { updated: rows.length };
 }
 
-export async function markReviewed(requestId: string): Promise<void> {
+export async function markAddedToPortal(requestId: string): Promise<void> {
+  await requireAdmin();
   await sql`
     UPDATE parent_requests
-    SET status = 'reviewed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
+    SET added_to_portal_at = NOW(), updated_at = NOW()
+    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+  `;
+  revalidateTag('summer-responses', 'max');
+}
+
+export async function clearAddedToPortal(requestId: string): Promise<void> {
+  await requireAdmin();
+  await sql`
+    UPDATE parent_requests
+    SET added_to_portal_at = NULL, updated_at = NOW()
     WHERE id = ${requestId}::uuid AND is_latest = TRUE
   `;
   revalidateTag('summer-responses', 'max');
 }
 
 export async function markNeedsFollowup(requestId: string): Promise<void> {
+  await requireAdmin();
   await sql`
     UPDATE parent_requests
     SET status = 'needs_manual_followup', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
@@ -298,13 +350,32 @@ export async function markNeedsFollowup(requestId: string): Promise<void> {
 
 // ── Parent form submission ────────────────────────────────────────────────────
 
+function pickStartDates(
+  raw: Record<string, string> | undefined,
+  ids: string[],
+): Record<string, string> | null {
+  if (!raw || ids.length === 0) return null;
+  const out: Record<string, string> = {};
+  for (const id of ids) {
+    const v = raw[id];
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) out[id] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+
 type StudentFormEntry = {
   student_id: string;
   summer_status: 'enrolling' | 'pausing' | 'no_change' | 'other';
   session_ids: string[];
+  session_start_dates?: Record<string, string>;
   custom_notes?: string;
+  pickup_requested?: boolean;
+  pickup_school?: 'Jackman' | 'Frankland' | 'other';
+  pickup_school_other?: string;
   fall_status: 'same' | 'change' | 'pause';
   fall_session_ids: string[];
+  fall_session_start_dates?: Record<string, string>;
   fall_notes?: string;
 };
 
@@ -376,14 +447,30 @@ export async function submitSummerForm(
       const isOther = entry.summer_status === 'other';
       const request_type = isOther ? 'other' : 'summer_scheduling';
       const status = isOther ? 'needs_manual_followup' : 'pending';
+      const pickupFields = entry.pickup_requested
+        ? {
+            pickup_requested: true,
+            pickup_school: entry.pickup_school,
+            ...(entry.pickup_school === 'other' ? { pickup_school_other: entry.pickup_school_other } : {}),
+          }
+        : {};
+      const fallStartDates = pickStartDates(entry.fall_session_start_dates, entry.fall_session_ids);
       const fallFields = {
         fall_status: entry.fall_status,
         fall_session_ids: entry.fall_session_ids,
+        ...(fallStartDates ? { fall_session_start_dates: fallStartDates } : {}),
+        ...pickupFields,
         ...(entry.fall_notes ? { fall_notes: entry.fall_notes } : {}),
       };
+      const summerStartDates = pickStartDates(entry.session_start_dates, entry.session_ids);
       const payload = isOther
         ? fallFields
-        : { summer_status: entry.summer_status, session_ids: entry.session_ids, ...fallFields };
+        : {
+            summer_status: entry.summer_status,
+            session_ids: entry.session_ids,
+            ...(summerStartDates ? { session_start_dates: summerStartDates } : {}),
+            ...fallFields,
+          };
 
       await tx`
         INSERT INTO parent_requests
@@ -394,7 +481,7 @@ export async function submitSummerForm(
           ${request_type},
           ${status},
           TRUE,
-          ${JSON.stringify(payload)},
+          ${sql.json(payload)},
           ${entry.custom_notes ?? null}
         )
       `;

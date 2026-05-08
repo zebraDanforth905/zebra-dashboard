@@ -36,7 +36,7 @@ for (const r of selfLoop) console.log(JSON.stringify(r));
 
 // ── 2. Duplicate email groups ────────────────────────────────────────────────
 // Multiple customer rows with the same primary email.
-// Shows token ownership, email_sent_count, and student assignments per row.
+// Shows token ownership, export_count, and student assignments per row.
 hr('2. DUPLICATE CUSTOMER ROWS — BY EMAIL (with token + student ownership)');
 
 const emailDups = await sql`
@@ -56,7 +56,7 @@ const emailDups = await sql`
     c.portal_parent_id,
     pt.id                       AS token_id,
     pt.token,
-    pt.email_sent_count,
+    pt.export_count,
     COUNT(s.id)::int            AS student_count,
     string_agg(s.name, ', ' ORDER BY s.name) AS students
   FROM dup_emails de
@@ -64,7 +64,7 @@ const emailDups = await sql`
   LEFT JOIN parent_tokens pt ON pt.customer_id = c.id
   LEFT JOIN students s ON s.customer_id = c.id
   GROUP BY de.norm_email, c.id, c.name, c.email, c.alternate_email,
-           c.alternate_name, c.portal_parent_id, pt.id, pt.token, pt.email_sent_count
+           c.alternate_name, c.portal_parent_id, pt.id, pt.token, pt.export_count
   ORDER BY de.norm_email, c.id
 `;
 console.log(`Found: ${emailDups.length} rows across ${new Set(emailDups.map(r => r.norm_email)).size} duplicate email groups`);
@@ -154,14 +154,14 @@ const nullPortal = await sql`
     c.alternate_email,
     c.alternate_name,
     (pt.id IS NOT NULL)       AS has_token,
-    pt.email_sent_count,
+    pt.export_count,
     COUNT(s.id)::int          AS student_count,
     string_agg(s.name, ', ' ORDER BY s.name) AS students
   FROM customers c
   LEFT JOIN parent_tokens pt ON pt.customer_id = c.id
   LEFT JOIN students s ON s.customer_id = c.id
   WHERE c.portal_parent_id IS NULL
-  GROUP BY c.id, c.name, c.email, c.alternate_email, c.alternate_name, pt.id, pt.email_sent_count
+  GROUP BY c.id, c.name, c.email, c.alternate_email, c.alternate_name, pt.id, pt.export_count
   ORDER BY c.name
 `;
 console.log(`Found: ${nullPortal.length}`);

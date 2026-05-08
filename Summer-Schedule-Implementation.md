@@ -654,9 +654,116 @@ After reviewing that output, write a one-time backfill that only fills `alternat
 
 Do not merge/delete duplicate customer rows until token ownership and student `customer_id` assignments are explicitly audited.
 
+### Alternate Names + Emails — Coverage Gap [TODO — IN PROGRESS]
+
+**Status (2026-05-06):** Portal endpoint discovered. Backfill route built and validated locally in dry run. **Apply step deferred** until full polish pass + prod migration window.
+
+**Endpoint discovered:** `GET /node/api/family-view/family/{familyId}` where `familyId` = `customers.portal_parent_id` (same ID space as class report `parent_id`).
+
+**Response shape (confirmed):**
+```typescript
+{
+  results: {
+    parents: Array<{
+      user_id: number;
+      name: string;
+      email: string;
+      alternate_email: string;
+      primary_ind: 0 | 1;   // 1 = primary parent, 0 = secondary
+      address, mobile, homephone, ...
+    }>;
+    students: Array<{ user_id, name, dob, gender, ... }>;
+    user: Array<{ ... }>;   // requested user echoed back
+  }
+}
+```
+
+**Co-parent extraction logic:** Find the row in `parents[]` whose `user_id` ≠ the queried `familyId` (cast both to `Number` — the DB returns `portal_parent_id` as string). Fall back to `primary_ind === 0` if user_id match fails. Apply self-loop guards: skip when co-parent email or name normalizes equal to the primary's. Migration `015` cleaned up the same self-loop pattern from earlier broken bridge code.
+
+**Backfill route:** `app/jobs/backfill-alt-parents/route.ts`
+- Default = DRY RUN. Apply with `?apply=1`.
+- Optional `?limit=N` and `?customerId=<uuid>` for targeted runs.
+- Batches of 10 with `Promise.all` (JWT cached, fits inside 50-min window).
+- Only writes `alternate_name` / `alternate_email` when current value is `null` (`COALESCE` guarded). Never overwrites existing data.
+
+**Dry run results (2026-05-06, full DB, 267 customers, 2.1s):**
+| Outcome | Count |
+|---|---|
+| Would update (gain alt name) | **169** |
+| Already set | 59 |
+| Self-loop (correctly filtered) | 25 |
+| No co-parent (single-parent families) | 14 |
+| Fetch failed | 0 |
+
+Spot-check sample (first 5):
+- 6849 Bronwyn Lam → Waiman Lam (`ray.waiman.lam@gmail.com` already set as alt_email)
+- 7734 Colin Kish → Cathy Cancilla
+- 7736 Megan Collins → Richard Deitsch
+- 8290 Michelle Yagelsky → Evgene Yagelsky
+- 8539 Rebecca Green → Matthew Green
+
+Full list saved to `backfill-alt-parents-dryrun.txt` (gitignored — review locally before apply).
+
+**Plan to ship:**
+1. ✅ Endpoint discovered + schema confirmed
+2. ✅ Backfill route built with self-loop guards + dry run validated
+3. ✅ Spot-check 5–10 entries against known families — names match
+4. ⏳ Polish pass on remaining items (responses Details modal, schedule tab refactor, etc.)
+5. ⏳ Prod migration window: run `?apply=1` once → verify row counts → delete probe + backfill routes
+6. ⏳ Phase B: integrate `fetchFamilyView` into daily scrape so new families gain alt name automatically (separate work, after Phase A apply confirmed)
+7. ⏳ Restore `alternate_name` to `syncCustomers` upsert + `DO UPDATE SET COALESCE(...)` clause so future portal syncs don't wipe what backfill set
+8. ⏳ Add `Alternate Name` column to CSV export for CC personalization
+
+**Files added (delete after apply):**
+- `app/jobs/probe-portal/route.ts` — discovery probe
+- `app/jobs/backfill-alt-parents/route.ts` — one-shot enrichment
+
+**Why historical context still matters:** Portal sync currently captures `alternate_email` only. `alternate_name` was removed from sync in commit `ee0b561` because the portal's `alternate_emails` field is plain email text — no name attached. The bidirectional co-parent bridge (in `syncCustomers`) was also stripped of its `alternate_name` writes at the same time to avoid self-loops; migration `015` cleared the resulting bad rows. The `family-view` endpoint solves both problems: it returns each parent as a structured row with `name` and clear `primary_ind` so co-parent identification is unambiguous.
+
+**Goal:** Capture BOTH alternate email AND alternate name for every two-parent family, automatically where possible, with staff manual edit as fallback. *Resolved approach below — fed by `/family-view/family/{id}` endpoint, validated against full DB in dry run on 2026-05-06.*
+
+**Why we want both:**
+- CSV export to Constant Contact ideally addresses the alternate parent by name (`{{Alternate Name}}` personalization) instead of a bare email.
+- Family link previews and the staff link table already render `customer_alternate_name` — gap is in *populating* it, not displaying it.
+- Manual edit alone doesn't scale: staff would have to fill it for every two-parent family.
+
+**Where alternate names actually exist:**
+1. **Bidirectional co-parent bridge** — when two separate `customers` rows share the same `student_ids[]`, each row's `name` IS the other row's alternate name. The previous bridge wrote this but was removed; need to restore it with the self-loop guards already in place (compare normalized `email` and `name` before writing).
+2. **Manual staff edit** — already wired (`summer-actions.ts:138`, inline edit in Family column on link table). Keep as fallback.
+3. **Portal — not available.** Confirmed: portal's `alternate_emails` field has no name component.
+
+**Plan (no prod migration required — pure code):**
+1. Restore alt-name writes in the bidirectional bridge in `syncCustomers`:
+   - Secondary→primary: `SET alternate_name = COALESCE(alternate_name, ${c.name})` alongside the alt-email write, gated by the existing email-mismatch check.
+   - Primary→secondary: `SET alternate_name = COALESCE(alternate_name, ${primary[0].name})` alongside the alt-email write.
+2. Keep self-loop guards: do not write when normalized `email` or `name` matches the target row's own value.
+3. Re-add `alternate_name` to the upsert column list and `DO UPDATE SET` clause, using `COALESCE(customers.alternate_name, EXCLUDED.alternate_name)` so portal pushes never overwrite an existing alt name (portal will always pass `null` here, but COALESCE keeps the door open if the portal ever starts returning names).
+4. CSV export: add `Alternate Name` column between `Alternate Email` and `Students` so CC can use it as a personalization variable.
+5. Verify in the staff link table: `customer_alternate_name` should populate for two-parent families after the next sync run.
+
+**Validation before prod migration:**
+- Run sync against staging or a local DB snapshot — confirm bridge populates `alternate_name` for known two-parent families.
+- Confirm self-loop guards prevent the same bug `migration 015` cleaned up (no row with `alternate_name = name`).
+- Confirm CSV export shows alt name only for true two-parent families.
+
+**Holds back prod migration sequence:** No new migration needed. This is a code-only change. Migrations 008–017 remain queued for prod deploy after the polish pass.
+
+---
+
 ### Session blocking
 
-**Existing mechanism:** Staff flip `is_summer=FALSE` on a session row to remove it from the parent form immediately. No code change needed for basic blocking. **[TODO] Admin UI:** consider adding a toggle on `/dashboard/summer` so staff can mark sessions full without a direct DB edit. Not built yet — low priority for MVP.
+**Existing mechanism:** Staff flip `is_summer=FALSE` on a session row to remove it from the parent form immediately. No code change needed for basic blocking.
+
+**Mark-as-full mechanism (2026-05-05):**
+- Migration `017_add_is_full_to_sessions.sql` adds `sessions.is_full BOOLEAN NOT NULL DEFAULT FALSE`.
+- Parent form: full sessions render grayed-out with strikethrough + "Full" badge, checkbox disabled. Applies to BOTH summer and fall blocks in `student-card.tsx`.
+- Server action: `toggleSessionFull(sessionId, isFull)` in `summer-actions.ts`. Revalidates `schedule` and `summer-responses` tags.
+- **Summer staff UI — DONE:** `SessionFullToggle` button on each card in `summer-schedule-tab.tsx`. Card header turns red when full.
+- **[TODO] Fall staff UI:** No equivalent toggle for fall sessions. Options:
+  1. Add `is_full` column to existing `/dashboard/schedule` cards (touches non-summer code path — needs care).
+  2. Add a "Fall" subtab to `/dashboard/summer` showing fall sessions used by the parent form (weekdays 4/5/6 PM + weekend on-the-hour minus noon, matching the form filter) with the same `SessionFullToggle`.
+  3. Inline toggle in responses-tab session-cell tooltip — least intrusive but lowest visibility.
+  - **Recommended:** option 2. Keeps all summer-reg-related UI in one place; doesn't affect the regular schedule tab. Wire `fetchFallSessionsForSummerReg()` (mirrors form filter) → render cards → reuse `SessionFullToggle`.
 
 ### Summer schedule tab — ✅ DONE (refactor pending)
 
@@ -680,6 +787,192 @@ Billing integration is also deferred. `enrolment_ids` are stored on approved `pa
 
 ---
 
+## Responses Tab — Action Buttons (2026-05-05)
+
+**Removed** `Needs Followup` button from the responses table. Status `needs_manual_followup` is set automatically when a parent submits `summer_status='other'` — staff don't need a manual toggle.
+
+**Removed** the duplicate `Mark Reviewed` button from the `reviewed` row (left only on `pending` rows).
+
+**Remove button — testing-only.** Renamed to `Remove (test)` with explicit confirm copy ("Deletes enrolments. For testing only."). Reason: approval history must be preserved in production; remove is only intended for QA / internal testing of the round-trip.
+
+### [TODO] Preserve approval history on remove
+Today `removeFromSummer` resets `status='pending'` and clears `reviewed_at` / `reviewed_by`, erasing the approval audit trail. Before any non-test usage:
+- Decide UX: separate "removed" status, or keep `status='completed'` with a `removed_at` timestamp + cleared `enrolment_ids`.
+- Migration to add `removed_at TIMESTAMPTZ` (or new status enum value).
+- Update `removeFromSummer` to set the timestamp instead of resetting status.
+
+Until then: keep `Remove (test)` as the only path, and gate non-admin users from `/dashboard/summer` (see Admin-Only Access TODO above).
+
+---
+
+## Responses Tab — Details Modal [TODO]
+
+When a parent submits with `summer_status: 'other'` (custom request) the responses-tab table currently shows the row as `Other` with most fields blank — staff can see only Student / Family / Current. They need the full submission visible to manually update the portal.
+
+### Required
+- Add a `Details` button in the Actions column of `app/ui/summer/responses-tab.tsx`.
+- Modal renders the same per-student plan layout as `app/summer-reg/submitted/page.tsx` (Summer block + Fall block + pickup line + custom_notes verbatim).
+- Read from existing `SummerResponseRow` — no new query needed; fields are already extracted from `payload` JSONB in `fetchSummerResponseRows`.
+- Confirm that for `request_type='other'` the modal still shows `custom_notes` clearly (it's the entire payload).
+
+### Why
+Staff can't act on `Other` requests without seeing the free-text and any session selections. Today they have to query the DB by hand.
+
+---
+
+## Admin-Only Access for Summer Reg — ✅ DONE (2026-05-05)
+
+- `app/ui/dashboard/nav-links.tsx`: link has `adminOnly: true` (pre-existing).
+- `app/dashboard/summer/page.tsx`: redirects non-admin to `/dashboard` via `auth()` + `user_type !== 'admin'` check (matches `incident-reports` pattern).
+- `app/lib/summer-actions.ts`: every staff action calls `requireAdmin()` first — throws `Forbidden` if non-admin. Public exception: `submitSummerForm` (parent token auth, no session required).
+
+### Why
+Data exposed (parent emails, tokens that grant form access without auth, every family's schedule preferences) is sensitive enough that nav hiding is not sufficient — URL knowledge should not bypass authorization. Server actions are also independently callable, so each must enforce its own auth check.
+
+---
+
+## Staff-on-Behalf Submissions [TODO]
+
+Use case: A parent calls / emails / tells staff in person what they want for summer + fall. Staff opens the family's link (via Preview Link) and submits the form on the parent's behalf.
+
+### Real test case to validate this flow
+**Lewis Thang** — pausing **now** (immediate, mid-school year, not just summer) until **September 10th**, returning to **same timeslot**.
+
+How this maps to the current form:
+- Summer: `Pause for summer` (closest match — "now" pause is effectively a summer pause from staff's perspective since summer starts soon)
+- Fall: `Keep current slot — [current slot]`
+- Resume date (Sept 10) — **no field for this in the current form**
+
+### Open design questions
+1. Should the form have a **resume date** field on the "Pause for summer" option? Today there's no way to capture "pause now, return on X date" — staff has to track this externally.
+2. Should there be a separate **"Pause now"** option distinct from "Pause for summer", since the parent might be pausing mid-spring before summer even starts?
+3. When staff submits on behalf, do we want a flag in `parent_requests` like `submitted_by: 'staff' | 'parent'` for audit?
+
+### Plan
+- Try the Lewis Thang submission with the current form once migrations 008–017 are deployed.
+- Record what info couldn't be captured cleanly.
+- Decide whether to add a resume date field or rely on `custom_notes` for now.
+
+---
+
+## VEX Students — Flex Schedule [TODO, Post-MVP]
+
+VEX (Vex Stunts) students have a unique scheduling situation: they can attend on **any weekday** rather than a fixed recurring slot. The current form model (pick specific sessions from a list) doesn't fit this well.
+
+### Open design questions before implementing:
+- How do we identify VEX students? By course name containing "VEX"? A DB flag?
+- Should VEX students see the normal session checkboxes (pick specific days) or a special "Flex — I'll come on different days each week" option?
+- Does VEX have a fixed time (e.g., always 4pm) or does time also flex?
+- Should VEX responses be excluded from the normal approval/enrolment flow (since they don't map to a specific session row)?
+
+### Proposed approach (confirm before building):
+1. Detect VEX students by course name at `fetchParentFormData` time
+2. On the student card, replace session checkboxes with: `○ Yes, continuing with Vex Stunts` / `○ Pause for summer` / custom notes
+3. Submission stores `summer_status: 'vex_flex'` (new payload variant) → staff sees it in dashboard, handles scheduling manually
+4. No enrolment auto-creation on approval — VEX attendance is tracked differently
+
+**[TODO]** Confirm above with Amanda/Kyle before building. This needs a `definitions.ts` type change, a new form branch in `student-card.tsx`, and a new approval path (or explicit "approve manually" status).
+
+---
+
+## Meeting Decisions — 2026-05-07
+
+Working from Kyle's session-handoff transcript. Goal: stable enough to send first Constant Contact email wave ASAP without blocking on perfect alt-parent-name handling.
+
+### Form / parent-facing decisions
+
+- **Drop parent name from greeting.** Use generic ("Hi Zebra family,"). Reason: alt-parent name data is messy + inconsistent; not worth blocking launch.
+- **Show only primary email on form.** Try to surface alt email if present. No name display.
+- **Notes textarea visible for ALL `summer_status` options** (currently only on `other`). Custom-schedule hint near notes: "Custom schedule? Describe it here."
+- **Display exact start date per session option.** Each available session shows its own start date (e.g., "Monday, June 2 — 4 PM"). Multi-week Tuesday/Wednesday/Thursday rows show date next to / below each option. Reason: portal defaults online registrations to next matching weekday, but manual enrollments need exact date. Always confirm the date manually.
+- **Saturday fall options:** restrict to 9 AM, 10 AM, 11 AM, 1 PM only. Hide 12 PM + odd times — those are exception-only.
+
+### Portal enrollment strategy (operational, not code)
+
+- Use existing 4:00 / 5:00 portal sessions to represent 4:15 / 5:15 internally for summer. No separate slots.
+- Pause everyone for summer in portal; reactivate / re-enroll in fall as needed. Cleaner September.
+
+### CSV / Constant Contact decisions
+
+- **Single `student_names` field** with grammar:
+  - 1 student: `"James Smith"`
+  - 2 students: `"James Smith and Johnny Smith"`
+  - 3+: `"James Smith, Johnny Smith, and Sarah Smith"`
+- **Active students only** in CSV student list. Form already filters; export must too. Fix bug where inactive students appear in export but not form.
+- **Send to both parents.** Include alt email when available — CC often hits spam, two recipients is safer.
+- CSV fields: `email`, `alternate_email` (optional), `student_names`, `custom_link`, `last_exported_at` (internal tracking).
+- Drop course/time info from CSV — form itself shows current details.
+
+### UI terminology + filter flow
+
+- **Rename "Last Emailed" → "Last Exported"** (column + UI). Dashboard isn't connected to CC, can't know real send date. CC remains source of truth.
+- **Replace "Mark Sent"** + dual "Export All" / "Export Non-Responders" buttons with **filter + single Export CSV** flow.
+- Filters: `Not responded`, `Not exported`, `Exported`, `Responded`. (Future: `Summer email wave`, `Fall email wave` if needed.)
+- Export CSV button exports the currently filtered list. Updates `last_exported_at`.
+- Use case: family added after first export → appears as `Not exported` → staff filter + export only those.
+
+### Link / data behavior
+
+- Persistent custom link per family. Same URL across summer + fall waves. Backend logic decides what to display per phase.
+- Link Management students column: **only active students** (currently includes inactive — bug).
+- Investigate duplicate / stale student records (Abby Wolsky example): trial IDs vs student IDs, stale local copies after portal rename, dedupe strategy needed.
+
+### Implementation order (this session)
+
+Round 1 (quick wins, no migration) — **DONE 2026-05-08**:
+1. ✅ Form greeting → generic ("Hi Zebra family,") on `summer-reg/page.tsx` + `submitted/page.tsx`
+2. ✅ Notes textarea always visible (any `summer_status` selected) + custom-schedule hint above it (`student-card.tsx`)
+3. ✅ Saturday fall filter restricted to hours {9, 10, 11, 13} in `fetchParentFormData` (`summer-data.ts`). Sunday keeps prior weekend behavior. Weekday strict 4/5/6 PM unchanged.
+4. ✅ Link Management students column → active only. Added `EXISTS (SELECT 1 FROM enrolments e WHERE e.student_id = s.id)` to the `student_names` LATERAL in `fetchParentLinkRows`. Matches form behavior (form uses INNER LATERAL on enrolments).
+
+Round 2 (medium) — **DONE 2026-05-08**:
+5. ✅ CSV `student_names` single field + grammar (`formatStudentNamesGrammar` in `export-csv-button.tsx`). CSV columns reduced to `Email, Alternate Email, Students, Link` (dropped Full Name, Alternate Name, Current Courses per meeting decision).
+6. ✅ Filter UI + single Export CSV button in `link-management.tsx`. Filter dropdown: `All families / Not responded / Not exported / Exported / Responded`. Export CSV exports filtered list and calls new `markTokensExported(tokenIds)` action which bumps `email_sent_at` + `email_sent_count` for the exported rows. Dropped dual `ExportCsvButton` ("Export All" / "Export Non-Responders") and `MarkSentButton`. Deleted `app/ui/summer/mark-sent-button.tsx` and the now-unused `markAllEmailSent` / `markNonRespondersEmailSent` actions.
+7. ✅ UI rename "Last Emailed" → "Last Exported" (column header in link-management.tsx). Column still backed by `parent_tokens.email_sent_at` until Round 3 migration 018 renames concept to `last_exported_at`.
+
+Round 3 (migration window, batched into 018) — **CODE DONE 2026-05-08, MIGRATION 018 NOT YET DEPLOYED**:
+8. ✅ Migration 018 written: `parent_tokens.email_sent_at → last_exported_at`, `email_sent_count → export_count`, plus `parent_requests.added_to_portal_at TIMESTAMPTZ`. Idempotent. **Not yet run against any DB.** Code now references the new column names — local dev DB will break until 018 is applied.
+9. ✅ Code switched to `last_exported_at` / `export_count`: `definitions.ts` (`ParentToken`, `ParentLinkRow`, `SummerStats.exported`), `summer-data.ts` (`fetchParentLinkRows`, `fetchSummerStats`), `summer-actions.ts` (`markTokensExported`), `link-management.tsx` (filter logic + display + "Last Exported" column), `responses-tab.tsx` (Exported stat card). Audit script `scripts/audit-duplicate-customers.mjs` also updated.
+10. ✅ Dropped `MarkReviewedButton` + `markReviewed` action. Replaced with `AddedToPortalButton` + `markAddedToPortal` / `clearAddedToPortal` actions. Button toggles `parent_requests.added_to_portal_at`; UI shows date when set, click to undo. Status workflow simplified: `pending → completed` (approval still flips status). Reviewed status is no longer set anywhere; column kept for backward compatibility.
+11. ✅ Per-session start date picker built without a schema change. New file `app/lib/tdsb-calendar.ts` holds summer + fall date ranges and Zebra-closed dates; `getStartDateOptions(weekday, term)` returns ISO dates of every matching weekday in the term that isn't a closed day. `student-card.tsx` shows an inline `Start: <date select>` next to each checked session, defaulting to the first valid date. Form persists `session_start_dates` + `fall_session_start_dates` (Record<sessionId, ISODate>) into `SummerSchedulingPayload`. SQL session-label aggregation in `fetchSummerResponseRows` + `fetchSubmittedChoices` appends `(start Mon DD)` when the payload has a date for that session. **Calendar dates are best-effort 2025-26 / 2026-27 TDSB approximations** — anchor dates and the closed-dates list at the top of `tdsb-calendar.ts` should be confirmed against the published TDSB calendar before launch. PA days are not currently treated as closed (Zebra normally still runs on PA days); change if needed.
+
+Round 4 (investigation):
+12. Duplicate students audit — Abby Wolsky + trial ID confusion + stale records
+
+---
+
+## Polish Pass — Before Touching Prod (2026-05-06)
+
+**Stance:** Migrations 008–017 stay queued. No prod DB changes until the full code path is polished and end-to-end functional locally / on staging. Prod migration is the *last* step, not the next one.
+
+### Code-only items remaining (no migration needed)
+
+Ordered by impact on launch readiness:
+
+1. **Restore alternate-name capture in portal sync.** See "Alternate Names + Emails — Coverage Gap" above. Bridge writes alt name when two-parent rows match by shared students; CSV gains an `Alternate Name` column for CC personalization. *Blocks: alt-name field stays mostly null on link table.*
+2. **Responses Tab Details Modal.** See section above. Without it, `summer_status='other'` rows are unreadable in the dashboard — staff have to query the DB by hand. *Blocks: any "Other" submission triage.*
+3. **Refactor summer schedule tab UI** to match `/dashboard/schedule` styling. Current is a basic card list. Consistency matters once staff toggle between summer + year-round views daily.
+4. **Fall staff UI for `is_full` toggle** (option 2 — Fall subtab on `/dashboard/summer`). `SessionFullToggle` already works for summer; mirror it for fall sessions used by the parent form. *Blocks: staff can't close fall slots without DB edit.*
+5. **Preserve approval history on remove.** `removeFromSummer` currently wipes `reviewed_at` / `reviewed_by` and resets `status='pending'`. Add `removed_at TIMESTAMPTZ` column (new migration `018`) + change action to set the timestamp instead of resetting. *Blocks: any non-test usage of remove button. Note: this DOES require a new migration — bundle with 008–017 deploy.*
+6. **Staff-on-behalf submissions test.** Run the Lewis Thang case through the current form once 008–017 are deployed locally. Decide whether `custom_notes` covers the resume-date gap or a dedicated field is needed.
+7. **VEX flex schedule** — design confirmation with Amanda before building. Don't block the polish pass on this; ship without VEX support if needed.
+
+### What NOT to do until prod migration is ready
+
+- Do not run any of the queued migrations against prod.
+- Do not run the `alternate_name` historical backfill (audit query first — see "Historical customer cleanup" TODO above).
+- Do not enable email automation (Resend, Phase 4) — CSV → CC stays manual until everything else is solid.
+
+### Definition of "polished and ready for prod"
+
+- All seven items above either done or explicitly deferred with a written reason.
+- Full end-to-end test (token → form → submit → approve → enrolment → schedule view) passes against a local DB seeded with realistic data.
+- Lewis Thang staff-on-behalf test produces a row staff can act on.
+- CSV export reviewed against a CC test list import.
+- Migrations 008–018 (assuming `removed_at` lands) reviewed in order, no partial deploys.
+
+---
+
 ## Explicitly Deferred
 
 | Item | Why |
@@ -695,6 +988,7 @@ Billing integration is also deferred. `enrolment_ids` are stored on approved `pa
 | Summer schedule tab | Needs design decisions — see Product Adjustments above |
 | Portal sync on approval | No API contract yet — deferred post-MVP |
 | Session blocking admin UI | MVP: DB edit; future: toggle on dashboard |
+| VEX flex schedule | Needs design confirmation — see VEX section above |
 
 ---
 
@@ -728,6 +1022,8 @@ Billing integration is also deferred. `enrolment_ids` are stored on approved `pa
 | What is the response deadline date parents should target? | For email copy and any in-form messaging |
 | Are you comfortable with `/dashboard/summer` as the primary staff home for this feature? | vs. adding it to the billing customer page |
 | Resend vs CC for email sending: who manages zebrarobotics.com DNS? | Required to verify the sending domain |
+| Online students — Jasmine Hue, Stephen K | Currently appear on the parent form like in-person students. Likely handled out-of-band via email instead of the form. Decide: hide from form entirely, mark as "online" with a different option set, or keep as-is and handle in approval. |
+| Saturday fall slots — standardize or keep as-is? | Saturday has half-classes which makes it more unique than weekdays. Weekdays are now strict 4/5/6 PM on the hour. For weekends, current logic still shows enrolled non-hourly + all hourly except noon. Should weekends also standardize, or leave flexible? |
 
 ---
 
@@ -736,6 +1032,10 @@ Billing integration is also deferred. `enrolment_ids` are stored on approved `pa
 |----------|-------|
 | Are Customer id's unique to active parents?|  |
 |staff flip `is_summer=FALSE` to close a session later phase we could have auto calculation on Coach Capacity |  |
+| Is there a documented Zebra Portal endpoint to fetch alternate parent names? | We discovered `GET /node/api/family-view/family/{familyId}` returning `{results: {parents[]}}` with name + email + primary_ind. Used it for 2026-05-07 Phase A backfill (169 rows filled, 10 self-duplicates cleared). Want to confirm this is the expected source or if she knows a cleaner one before integrating into daily sync. |
+| Why does the Class Report `alternate_emails` field never include alternate parent **name**? | Portal scraping currently returns email-only for the second parent. Asking whether this is intentional, a missing field, or available via another report. |
+| Are there families where the Primary Parent in portal does NOT match the legal/billing contact for the customer? | Affects whether `customers.name` (set by portal sync from primary parent) is always correct, or if some need staff override. |
+| Where do "X & Y" combined parent names in `customers.name` come from — portal class report, family-view, or parent self-entry on portal? | Audit found 28 customers with combined names like "Maia Becker & Stephan MacDonald" in the PRIMARY name slot. Need to know source to choose fix path: clean in portal (preferred) vs override in sync code. |
 
 ---
 

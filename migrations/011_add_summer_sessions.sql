@@ -5,7 +5,7 @@
 -- non-summer sessions to coexist at the same weekday + time slot.
 -- Step 2: insert the 13 summer slots, skipping any already present.
 --
--- Saturday 1:00–2:00 PM is tentative — comment it out below if dropped.
+-- Includes Saturday 1:00–2:00 PM.
 
 ALTER TABLE sessions DROP CONSTRAINT session_coverage;
 ALTER TABLE sessions ADD CONSTRAINT session_coverage UNIQUE (start_time, end_time, weekday, is_summer);
@@ -25,7 +25,7 @@ FROM (VALUES
   ('Saturday',  '10:00', '11:00'),
   ('Saturday',  '11:00', '12:00'),
   ('Saturday',  '12:00', '13:00'),
-  ('Saturday',  '13:00', '14:00')   -- tentative: may be dropped before launch
+  ('Saturday',  '13:00', '14:00')
 ) AS t(weekday, start_time, end_time)
 WHERE NOT EXISTS (
   SELECT 1 FROM sessions s

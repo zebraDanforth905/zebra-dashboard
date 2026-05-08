@@ -2,6 +2,8 @@ import { fetchParentLinkRows, fetchSummerResponseRows, fetchSummerSchedule, fetc
 import LinkManagement from '@/app/ui/summer/link-management';
 import ResponsesTab from '@/app/ui/summer/responses-tab';
 import SummerScheduleTab from '@/app/ui/summer/summer-schedule-tab';
+import { auth } from '@/auth';
+import { redirect } from 'next/navigation';
 import { Metadata } from 'next';
 
 export const metadata: Metadata = { title: 'Summer Registration' };
@@ -11,6 +13,12 @@ export default async function SummerPage({
 }: {
   searchParams: Promise<{ tab?: string }>;
 }) {
+  const session = await auth();
+  const userType = (session?.user as any)?.user_type;
+  if (userType !== 'admin') {
+    redirect('/dashboard');
+  }
+
   const { tab = 'links' } = await searchParams;
 
   const [rows, stats, responseRows, scheduleRows] = await Promise.all([
@@ -36,7 +44,7 @@ export default async function SummerPage({
           Responses
         </TabLink>
         <TabLink href="/dashboard/summer?tab=schedule" active={tab === 'schedule'}>
-          Summer Schedule
+          Summer Schedule (To be merged with &quot;Schedule&quot;)
         </TabLink>
       </div>
 

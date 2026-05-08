@@ -13,25 +13,33 @@ export default function AlternateNameCell({
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(initialName ?? '');
   const [saved, setSaved] = useState(initialName ?? '');
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
 
   function startEdit() {
     setEditing(true);
+    setError(null);
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
   function cancel() {
     setValue(saved);
+    setError(null);
     setEditing(false);
   }
 
   function save() {
     const trimmed = value.trim();
+    setError(null);
     startTransition(async () => {
-      await updateAlternateName(customerId, trimmed || null);
-      setSaved(trimmed);
-      setEditing(false);
+      try {
+        await updateAlternateName(customerId, trimmed || null);
+        setSaved(trimmed);
+        setEditing(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to save');
+      }
     });
   }
 
@@ -42,26 +50,29 @@ export default function AlternateNameCell({
 
   if (editing) {
     return (
-      <div className="flex items-center gap-1">
-        <input
-          ref={inputRef}
-          type="text"
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Second parent name"
-          className="w-36 rounded border border-sky-300 px-1.5 py-0.5 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400"
-        />
-        <button
-          onClick={save}
-          disabled={isPending}
-          className="text-xs text-sky-600 font-medium disabled:opacity-50"
-        >
-          {isPending ? '…' : 'Save'}
-        </button>
-        <button onClick={cancel} className="text-xs text-slate-400">
-          Cancel
-        </button>
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <input
+            ref={inputRef}
+            type="text"
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Second parent name"
+            className="w-36 rounded border border-sky-300 px-1.5 py-0.5 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400"
+          />
+          <button
+            onClick={save}
+            disabled={isPending}
+            className="text-xs text-sky-600 font-medium disabled:opacity-50"
+          >
+            {isPending ? '…' : 'Save'}
+          </button>
+          <button onClick={cancel} className="text-xs text-slate-400">
+            Cancel
+          </button>
+        </div>
+        {error && <span className="text-[11px] text-red-600">{error}</span>}
       </div>
     );
   }

@@ -1,9 +1,11 @@
+'use client';
+
+import { useState } from 'react';
 import { ParentLinkRow } from '@/app/lib/definitions';
 import CopyLinkButton from './copy-link-button';
 import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
 import AlternateNameCell from './alternate-name-cell';
-import MarkSentButton from './mark-sent-button';
 import RefreshLinksButton from './refresh-links-button';
 import Link from 'next/link';
 
@@ -12,10 +14,32 @@ function formatDate(d: Date | null): string {
   return new Date(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+type FilterValue = 'all' | 'not_responded' | 'not_exported' | 'exported' | 'responded';
+
+const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
+  { value: 'all',           label: 'All families' },
+  { value: 'not_responded', label: 'Not responded' },
+  { value: 'not_exported',  label: 'Not exported' },
+  { value: 'exported',      label: 'Exported' },
+  { value: 'responded',     label: 'Responded' },
+];
+
+function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[] {
+  switch (filter) {
+    case 'not_responded': return rows.filter(r => !r.has_responded);
+    case 'responded':     return rows.filter(r => r.has_responded);
+    case 'not_exported':  return rows.filter(r => r.export_count === 0);
+    case 'exported':      return rows.filter(r => r.export_count > 0);
+    default:              return rows;
+  }
+}
+
 export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
+  const [filter, setFilter] = useState<FilterValue>('all');
+  const filtered = applyFilter(rows, filter);
+
   const total = rows.length;
   const responded = rows.filter(r => r.has_responded).length;
-  const notResponded = rows.filter(r => !r.has_responded);
   const missingEmail = rows.filter(r => !r.email).length;
 
   return (
@@ -24,10 +48,14 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       <div className="flex flex-wrap items-center gap-3">
         <GenerateTokensButton />
         <div className="h-5 border-l border-slate-200 hidden sm:block" />
-        <ExportCsvButton rows={rows} label="Export All" />
-        <ExportCsvButton rows={notResponded} label="Export Non-Responders" />
-        <div className="h-5 border-l border-slate-200 hidden sm:block" />
-        <MarkSentButton />
+        <select
+          value={filter}
+          onChange={e => setFilter(e.target.value as FilterValue)}
+          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
+        >
+          {FILTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <ExportCsvButton rows={filtered} label="Export CSV" />
         <div className="h-5 border-l border-slate-200 hidden sm:block" />
         <RefreshLinksButton />
       </div>
@@ -40,6 +68,9 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
         {missingEmail > 0 && (
           <span className="text-amber-700 font-medium">⚠ {missingEmail} missing email</span>
         )}
+        <span className="ml-auto text-xs text-slate-500">
+          {filtered.length} of {total} shown
+        </span>
       </div>
 
       {/* Table */}
@@ -56,12 +87,18 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Students</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Last Emailed</th>
+                <th className="px-4 py-3">Last Exported</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map(row => (
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">
+                    No families match this filter.
+                  </td>
+                </tr>
+              ) : filtered.map(row => (
                 <tr key={row.token_id} className="hover:bg-slate-50">
                   <td className="px-4 py-3">
                     <div className="font-medium text-slate-800">{row.customer_name}</div>
@@ -94,9 +131,9 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs">
-                    {formatDate(row.email_sent_at)}
-                    {row.email_sent_count > 0 && (
-                      <span className="ml-1 text-slate-400">×{row.email_sent_count}</span>
+                    {formatDate(row.last_exported_at)}
+                    {row.export_count > 0 && (
+                      <span className="ml-1 text-slate-400">×{row.export_count}</span>
                     )}
                   </td>
                   <td className="px-4 py-3">

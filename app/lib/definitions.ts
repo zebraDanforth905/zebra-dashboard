@@ -93,6 +93,7 @@ export type Session = {
   start_time: string;
   end_time: string;
   weekday: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+  is_full?: boolean;
   student_count?: number;
   makeup_count?: number;
   trial_count?: number;
@@ -392,8 +393,8 @@ export type ParentToken = {
   id: string;
   customer_id: string;
   token: string;
-  email_sent_at: Date | null;
-  email_sent_count: number;
+  last_exported_at: Date | null;
+  export_count: number;
   created_at: Date;
 };
 
@@ -402,8 +403,15 @@ export type ParentToken = {
 export type SummerSchedulingPayload = {
   summer_status: 'enrolling' | 'pausing' | 'no_change';
   session_ids: string[];
+  // ISO 'YYYY-MM-DD' per session id; populated for 'enrolling'.
+  session_start_dates?: Record<string, string>;
+  pickup_requested?: boolean;
+  pickup_school?: 'Jackman' | 'Frankland' | 'other';
+  pickup_school_other?: string;
   fall_status: 'same' | 'change' | 'pause';
   fall_session_ids: string[];
+  // ISO 'YYYY-MM-DD' per fall session id; populated for fall_status='change'.
+  fall_session_start_dates?: Record<string, string>;
   fall_notes?: string;
 };
 
@@ -495,6 +503,9 @@ export type SubmittedStudentSummary = {
   student_name: string;
   summer_status: string;
   session_labels: string[];
+  pickup_requested: boolean;
+  pickup_school: string | null;
+  pickup_school_other: string | null;
   fall_status: string | null;
   fall_session_labels: string[];
   custom_notes: string | null;
@@ -514,7 +525,7 @@ export type SummerStats = {
   no_change: number;
   pending: number;
   needs_followup: number;
-  emailed: number;
+  exported: number;
 };
 
 export type SummerResponseRow = {
@@ -525,6 +536,9 @@ export type SummerResponseRow = {
   parent_email: string;
   summer_status: SummerSchedulingPayload['summer_status'] | 'other';
   session_labels: string[];
+  pickup_requested: boolean;
+  pickup_school: string | null;
+  pickup_school_other: string | null;
   fall_status: SummerSchedulingPayload['fall_status'] | null;
   fall_session_labels: string[];
   current_weekday: string | null;
@@ -532,6 +546,7 @@ export type SummerResponseRow = {
   status: ParentRequestStatus;
   custom_notes: string | null;
   submitted_at: Date;
+  added_to_portal_at: Date | null;
 };
 
 export type SummerScheduleStudent = {
@@ -544,6 +559,7 @@ export type SummerScheduleRow = {
   weekday: string;
   start_time: string;
   end_time: string;
+  is_full: boolean;
   student_count: number;
   students: SummerScheduleStudent[];
 };
@@ -565,7 +581,7 @@ export type ParentLinkRow = {
   student_names: string[];
   student_courses: StudentCourseEntry[];
   token: string;
-  email_sent_at: Date | null;
-  email_sent_count: number;
+  last_exported_at: Date | null;
+  export_count: number;
   has_responded: boolean;
 };
