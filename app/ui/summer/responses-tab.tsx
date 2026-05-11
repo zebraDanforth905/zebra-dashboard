@@ -11,6 +11,7 @@ import {
   clearAddedToPortal,
 } from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
+import ResponseDetailsModal from './response-details-modal';
 
 function formatTime(t: string | null): string {
   if (!t) return '—';
@@ -162,7 +163,7 @@ function ApproveAllModal({ enrollingCount, onClose, onDone }: {
   );
 }
 
-function RemoveFromSummerButton({ requestId, onDone }: { requestId: string; onDone: () => void }) {
+function RemoveFromSummerButton({ requestId, onRemoved, onDone }: { requestId: string; onRemoved: (id: string) => void; onDone: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -185,7 +186,7 @@ function RemoveFromSummerButton({ requestId, onDone }: { requestId: string; onDo
       <span className="flex items-center gap-2">
         <button
           disabled={isPending}
-          onClick={() => startTransition(async () => { await removeFromSummer(requestId); onDone(); })}
+          onClick={() => startTransition(async () => { onRemoved(requestId); await removeFromSummer(requestId); onDone(); })}
           className="text-xs text-red-600 font-medium disabled:opacity-50"
         >
           {isPending ? '…' : 'Confirm remove'}
@@ -248,16 +249,21 @@ function NoChangeCompleteButton({ onDone }: { onDone: (msg: string) => void }) {
 export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[]; stats: SummerStats }) {
   const router = useRouter();
   const [summerFilter, setSummerFilter] = useState('all');
+  const [fallFilter, setFallFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [modalRow, setModalRow] = useState<SummerResponseRow | null>(null);
+  const [detailsRow, setDetailsRow] = useState<SummerResponseRow | null>(null);
   const [showApproveAllModal, setShowApproveAllModal] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
   function refresh() { router.refresh(); }
 
   const filtered = rows.filter(r => {
+    if (removedIds.has(r.request_id)) return false;
     if (summerFilter !== 'all' && r.summer_status !== summerFilter) return false;
+    if (fallFilter !== 'all' && r.fall_status !== fallFilter) return false;
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -312,11 +318,20 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           value={summerFilter}
           onChange={setSummerFilter}
           options={[
-            { value: 'all',       label: 'All intentions' },
+            { value: 'all',       label: 'All summer plans' },
             { value: 'enrolling', label: 'Enrolling' },
             { value: 'pausing',   label: 'Pausing' },
-            { value: 'no_change', label: 'No Change' },
             { value: 'other',     label: 'Other' },
+          ]}
+        />
+        <FilterSelect
+          value={fallFilter}
+          onChange={setFallFilter}
+          options={[
+            { value: 'all',    label: 'All fall plans' },
+            { value: 'same',   label: 'Keep current' },
+            { value: 'change', label: 'Requesting change' },
+            { value: 'pause',  label: 'Pausing fall' },
           ]}
         />
         <FilterSelect
@@ -325,14 +340,13 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           options={[
             { value: 'all',                   label: 'All statuses' },
             { value: 'pending',               label: 'Pending' },
-            { value: 'reviewed',              label: 'Reviewed' },
             { value: 'completed',             label: 'Approved' },
             { value: 'needs_manual_followup', label: 'Needs Followup' },
           ]}
         />
-        {(summerFilter !== 'all' || statusFilter !== 'all' || search) && (
+        {(summerFilter !== 'all' || fallFilter !== 'all' || statusFilter !== 'all' || search) && (
           <button
-            onClick={() => { setSummerFilter('all'); setStatusFilter('all'); setSearch(''); }}
+            onClick={() => { setSummerFilter('all'); setFallFilter('all'); setStatusFilter('all'); setSearch(''); }}
             className="text-xs text-slate-500 underline"
           >
             Clear
@@ -363,13 +377,14 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                 <th className="px-4 py-3">Notes</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Submitted</th>
+                <th className="px-4 py-3">Added to Portal</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={13} className="px-4 py-8 text-center text-slate-400 text-sm">
                     No matching responses.
                   </td>
                 </tr>
@@ -425,20 +440,35 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                   <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                     {formatDate(row.submitted_at)}
                   </td>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {row.added_to_portal_at
+                      ? <span className="text-emerald-700 font-medium">{formatDate(row.added_to_portal_at)}</span>
+                      : <span className="text-slate-400">—</span>}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex flex-col gap-1">
                       <button
                         onClick={() => setModalRow(row)}
                         className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
                       >
-                        {row.status === 'completed' ? 'Details' : 'Review'}
+                        {row.status === 'completed' ? 'Approve Again' : 'Review'}
+                      </button>
+                      <button
+                        onClick={() => setDetailsRow(row)}
+                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
+                      >
+                        Details
                       </button>
                       <AddedToPortalButton
                         requestId={row.request_id}
                         addedAt={row.added_to_portal_at}
                         onDone={refresh}
                       />
-                      <RemoveFromSummerButton requestId={row.request_id} onDone={refresh} />
+                      <RemoveFromSummerButton
+                        requestId={row.request_id}
+                        onRemoved={id => setRemovedIds(prev => new Set(prev).add(id))}
+                        onDone={refresh}
+                      />
                     </div>
                   </td>
                 </tr>
@@ -453,6 +483,13 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           row={modalRow}
           onClose={() => setModalRow(null)}
           onApproved={() => { setModalRow(null); refresh(); }}
+        />
+      )}
+
+      {detailsRow && (
+        <ResponseDetailsModal
+          row={detailsRow}
+          onClose={() => setDetailsRow(null)}
         />
       )}
 

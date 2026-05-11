@@ -8,7 +8,7 @@ import postgres from 'postgres';
 import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
-import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
+import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
 import { CampEnrolmentWithStudent, RecurringInvoice } from './definitions';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
@@ -191,12 +191,17 @@ export async function scrapeEnrolmentNow(opts?: {
   const customerRows = extractCustomerRows(raw);
   const customerRes = await syncCustomers(customerRows);
 
+  // Portal-authoritative email sync from /family-view/{id}: pulls real
+  // primary + alternate emails per family. Runs after syncCustomers so every
+  // customer with portal_parent_id is refreshed.
+  const emailRes = await syncEmailsFromFamilyView();
+
   // refresh any pages that read from these tables
   revalidatePath("/dashboard", 'layout');
   revalidatePath("/students", 'layout');
   revalidatePath("/billing", 'layout');
 
-  return { ok: true, rows: normalized.length, customers: customerRes, ...res };
+  return { ok: true, rows: normalized.length, customers: customerRes, emails: emailRes, ...res };
 }
 
 export async function scrapeCampEnrolments(opts?: {

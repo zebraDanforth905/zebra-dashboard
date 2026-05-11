@@ -795,28 +795,24 @@ Billing integration is also deferred. `enrolment_ids` are stored on approved `pa
 
 **Remove button — testing-only.** Renamed to `Remove (test)` with explicit confirm copy ("Deletes enrolments. For testing only."). Reason: approval history must be preserved in production; remove is only intended for QA / internal testing of the round-trip.
 
-### [TODO] Preserve approval history on remove
-Today `removeFromSummer` resets `status='pending'` and clears `reviewed_at` / `reviewed_by`, erasing the approval audit trail. Before any non-test usage:
-- Decide UX: separate "removed" status, or keep `status='completed'` with a `removed_at` timestamp + cleared `enrolment_ids`.
-- Migration to add `removed_at TIMESTAMPTZ` (or new status enum value).
-- Update `removeFromSummer` to set the timestamp instead of resetting status.
+### Preserve approval history on remove — ✅ CODE DONE (2026-05-08), MIGRATION 019 NOT YET DEPLOYED
+- Migration `019_add_removed_at_to_parent_requests.sql` written — adds `parent_requests.removed_at TIMESTAMPTZ` + partial index. Idempotent.
+- `removeFromSummer` no longer deletes the row. It deletes any linked enrolments, then sets `removed_at = NOW()`, `is_latest = FALSE`, clears `enrolment_ids`. Status stays as-is so the approval audit trail (`reviewed_at`, `reviewed_by`) is preserved.
+- All response queries already filter `is_latest = TRUE`, so removed rows drop out of staff views automatically.
+- A subsequent submission for the same (token, student) supersedes the removed row via the existing `is_latest` flip in `submitSummerForm`.
 
-Until then: keep `Remove (test)` as the only path, and gate non-admin users from `/dashboard/summer` (see Admin-Only Access TODO above).
+Bundle with 008–018 when the prod migration window opens.
 
 ---
 
-## Responses Tab — Details Modal [TODO]
+## Responses Tab — Details Modal — ✅ DONE (2026-05-08)
 
 When a parent submits with `summer_status: 'other'` (custom request) the responses-tab table currently shows the row as `Other` with most fields blank — staff can see only Student / Family / Current. They need the full submission visible to manually update the portal.
 
-### Required
-- Add a `Details` button in the Actions column of `app/ui/summer/responses-tab.tsx`.
-- Modal renders the same per-student plan layout as `app/summer-reg/submitted/page.tsx` (Summer block + Fall block + pickup line + custom_notes verbatim).
-- Read from existing `SummerResponseRow` — no new query needed; fields are already extracted from `payload` JSONB in `fetchSummerResponseRows`.
-- Confirm that for `request_type='other'` the modal still shows `custom_notes` clearly (it's the entire payload).
-
-### Why
-Staff can't act on `Other` requests without seeing the free-text and any session selections. Today they have to query the DB by hand.
+### Built
+- Added `app/ui/summer/response-details-modal.tsx` — mirrors `submitted/page.tsx` layout (Summer block, Fall block, pickup, custom_notes).
+- `responses-tab.tsx` Actions column now shows a `Details` button alongside `Review` / `Approve Again` and the existing Portal toggle. Renamed the `Details` reuse on completed rows to `Approve Again` so the modal-vs-approve distinction is clear.
+- Reads only from existing `SummerResponseRow` — no new query.
 
 ---
 
@@ -949,11 +945,11 @@ Round 4 (investigation):
 
 Ordered by impact on launch readiness:
 
-1. **Restore alternate-name capture in portal sync.** See "Alternate Names + Emails — Coverage Gap" above. Bridge writes alt name when two-parent rows match by shared students; CSV gains an `Alternate Name` column for CC personalization. *Blocks: alt-name field stays mostly null on link table.*
-2. **Responses Tab Details Modal.** See section above. Without it, `summer_status='other'` rows are unreadable in the dashboard — staff have to query the DB by hand. *Blocks: any "Other" submission triage.*
+1. ~~**Restore alternate-name capture in portal sync.**~~ ✅ DONE 2026-05-08 — `syncCustomers` upsert now lists `alternate_name` (passes NULL from portal, COALESCE-protected so existing values survive), and the bidirectional bridge writes `alternate_name` alongside `alternate_email` with self-loop guards on both email AND name. CSV export gained an `Alternate Name` column between `Alternate Email` and `Students`. No new migration needed. Future portal syncs populate alt name automatically when a co-parent row arrives whose students belong to an existing customer.
+2. ~~**Responses Tab Details Modal.**~~ ✅ DONE 2026-05-08 — `response-details-modal.tsx` + Details button wired into responses tab.
 3. **Refactor summer schedule tab UI** to match `/dashboard/schedule` styling. Current is a basic card list. Consistency matters once staff toggle between summer + year-round views daily.
-4. **Fall staff UI for `is_full` toggle** (option 2 — Fall subtab on `/dashboard/summer`). `SessionFullToggle` already works for summer; mirror it for fall sessions used by the parent form. *Blocks: staff can't close fall slots without DB edit.*
-5. **Preserve approval history on remove.** `removeFromSummer` currently wipes `reviewed_at` / `reviewed_by` and resets `status='pending'`. Add `removed_at TIMESTAMPTZ` column (new migration `018`) + change action to set the timestamp instead of resetting. *Blocks: any non-test usage of remove button. Note: this DOES require a new migration — bundle with 008–017 deploy.*
+4. ~~**Fall staff UI for `is_full` toggle**~~ ✅ DONE 2026-05-08 — added Fall Schedule subtab on `/dashboard/summer`. `fetchFallSchedule()` mirrors the summer query with `is_summer = FALSE`. `SummerScheduleTab` now takes a `term` prop ("summer" | "fall") for label copy. The existing `SessionFullToggle` works as-is.
+5. ~~**Preserve approval history on remove.**~~ ✅ CODE DONE 2026-05-08 — migration 019 + revised `removeFromSummer`. Bundle with 008–018 deploy.
 6. **Staff-on-behalf submissions test.** Run the Lewis Thang case through the current form once 008–017 are deployed locally. Decide whether `custom_notes` covers the resume-date gap or a dedicated field is needed.
 7. **VEX flex schedule** — design confirmation with Amanda before building. Don't block the polish pass on this; ship without VEX support if needed.
 

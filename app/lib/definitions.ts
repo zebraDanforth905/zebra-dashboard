@@ -578,6 +578,10 @@ export type ParentLinkRow = {
   alternate_name: string | null;
   email: string;
   alternate_email: string | null;
+  name_locked: boolean;
+  email_locked: boolean;
+  alternate_email_locked: boolean;
+  alternate_name_locked: boolean;
   student_names: string[];
   student_courses: StudentCourseEntry[];
   token: string;

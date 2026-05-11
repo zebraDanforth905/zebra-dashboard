@@ -1,4 +1,4 @@
-import { fetchParentLinkRows, fetchSummerResponseRows, fetchSummerSchedule, fetchSummerStats } from '@/app/lib/summer-data';
+import { fetchFallSchedule, fetchParentLinkRows, fetchSummerResponseRows, fetchSummerSchedule, fetchSummerStats } from '@/app/lib/summer-data';
 import LinkManagement from '@/app/ui/summer/link-management';
 import ResponsesTab from '@/app/ui/summer/responses-tab';
 import SummerScheduleTab from '@/app/ui/summer/summer-schedule-tab';
@@ -21,11 +21,12 @@ export default async function SummerPage({
 
   const { tab = 'links' } = await searchParams;
 
-  const [rows, stats, responseRows, scheduleRows] = await Promise.all([
+  const [rows, stats, responseRows, scheduleRows, fallScheduleRows] = await Promise.all([
     fetchParentLinkRows(),
     tab === 'responses' ? fetchSummerStats() : null,
     tab === 'responses' ? fetchSummerResponseRows() : null,
     tab === 'schedule' ? fetchSummerSchedule() : null,
+    tab === 'fall-schedule' ? fetchFallSchedule() : null,
   ]);
 
   return (
@@ -44,7 +45,10 @@ export default async function SummerPage({
           Responses
         </TabLink>
         <TabLink href="/dashboard/summer?tab=schedule" active={tab === 'schedule'}>
-          Summer Schedule (To be merged with &quot;Schedule&quot;)
+          Summer Schedule
+        </TabLink>
+        <TabLink href="/dashboard/summer?tab=fall-schedule" active={tab === 'fall-schedule'}>
+          Fall Schedule
         </TabLink>
       </div>
 
@@ -55,7 +59,11 @@ export default async function SummerPage({
       )}
 
       {tab === 'schedule' && scheduleRows && (
-        <SummerScheduleTab rows={scheduleRows} />
+        <SummerScheduleTab rows={scheduleRows} term="summer" />
+      )}
+
+      {tab === 'fall-schedule' && fallScheduleRows && (
+        <SummerScheduleTab rows={fallScheduleRows} term="fall" />
       )}
     </div>
   );

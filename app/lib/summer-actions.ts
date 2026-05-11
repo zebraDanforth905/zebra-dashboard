@@ -110,9 +110,68 @@ export async function updateAlternateEmail(customerId: string, email: string | n
     }
   }
   await sql`
-    UPDATE customers SET alternate_email = ${trimmed} WHERE id = ${customerId}::uuid
+    UPDATE customers
+    SET alternate_email = ${trimmed}, alternate_email_locked = TRUE
+    WHERE id = ${customerId}::uuid
   `;
   revalidateTag('summer-tokens', 'max');
+}
+
+export async function updatePrimaryEmail(customerId: string, email: string | null): Promise<void> {
+  await requireAdmin();
+  const trimmed = email?.trim() || null;
+  if (!trimmed) {
+    throw new Error("Primary email cannot be empty.");
+  }
+  if (/[,;]/.test(trimmed)) {
+    throw new Error("Primary email must be a single email address (no commas or semicolons).");
+  }
+  if ((trimmed.match(/@/g) ?? []).length !== 1) {
+    throw new Error("Primary email must contain exactly one '@'.");
+  }
+  await sql`
+    UPDATE customers
+    SET email = ${trimmed}, email_locked = TRUE
+    WHERE id = ${customerId}::uuid
+  `;
+  revalidateTag('summer-tokens', 'max');
+}
+
+export async function updatePrimaryName(customerId: string, name: string | null): Promise<void> {
+  await requireAdmin();
+  const trimmed = name?.trim() || null;
+  if (!trimmed) {
+    throw new Error("Primary name cannot be empty.");
+  }
+  await sql`
+    UPDATE customers
+    SET name = ${trimmed}, name_locked = TRUE
+    WHERE id = ${customerId}::uuid
+  `;
+  revalidateTag('summer-tokens', 'max');
+}
+
+export async function unlockCustomerField(
+  customerId: string,
+  field: 'name' | 'email' | 'alternate_email' | 'alternate_name',
+): Promise<void> {
+  await requireAdmin();
+  const column =
+    field === 'name' ? 'name_locked'
+    : field === 'email' ? 'email_locked'
+    : field === 'alternate_email' ? 'alternate_email_locked'
+    : 'alternate_name_locked';
+  // Field name is from a closed enum — safe to interpolate as identifier.
+  await sql.unsafe(`UPDATE customers SET ${column} = FALSE WHERE id = $1::uuid`, [customerId]);
+  revalidateTag('summer-tokens', 'max');
+}
+
+export async function refreshEmailsFromPortal(): Promise<{ scanned: number; updated: number; fetchFailed: number }> {
+  await requireAdmin();
+  const { syncEmailsFromFamilyView } = await import('./insert_from_portal');
+  const res = await syncEmailsFromFamilyView();
+  revalidateTag('summer-tokens', 'max');
+  return res;
 }
 
 // ── Session full toggle ──────────────────────────────────────────────────────
@@ -137,7 +196,9 @@ export async function updateAlternateName(customerId: string, name: string | nul
     }
   }
   await sql`
-    UPDATE customers SET alternate_name = ${trimmed} WHERE id = ${customerId}::uuid
+    UPDATE customers
+    SET alternate_name = ${trimmed}, alternate_name_locked = TRUE
+    WHERE id = ${customerId}::uuid
   `;
   revalidateTag('summer-tokens', 'max');
 }
@@ -283,22 +344,24 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
 
 export async function removeFromSummer(requestId: string): Promise<void> {
   await requireAdmin();
-  const reqs = await sql<{
-    enrolment_ids: string[];
-    token_id: string;
-    student_id: number;
-  }[]>`
-    SELECT enrolment_ids, token_id::text, student_id
+  const reqs = await sql<{ enrolment_ids: string[] }[]>`
+    SELECT enrolment_ids
     FROM parent_requests WHERE id = ${requestId}::uuid LIMIT 1
   `;
   if (reqs.length === 0) return;
-  const { enrolment_ids, token_id, student_id } = reqs[0];
+  const { enrolment_ids } = reqs[0];
   if (enrolment_ids?.length > 0) {
     await sql`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
   }
+  // Mark removed instead of deleting — preserves approval history.
+  // Drops is_latest so a fresh submission can take its place.
   await sql`
-    DELETE FROM parent_requests
-    WHERE token_id = ${token_id}::uuid AND student_id = ${student_id}
+    UPDATE parent_requests
+    SET removed_at = NOW(),
+        is_latest = FALSE,
+        enrolment_ids = '{}'::uuid[],
+        updated_at = NOW()
+    WHERE id = ${requestId}::uuid
   `;
   revalidateTag('summer-responses', 'max');
 }

@@ -31,12 +31,13 @@ export default function ExportCsvButton({
 
   function handleExport() {
     const origin = window.location.origin;
-    const header = 'Email,Alternate Email,Students,Link';
+    const header = 'Email,Alternate Email,Alternate Name,Students,Link';
     const body = rows.map(r => {
       const students = formatStudentNamesGrammar(r.student_names);
       return [
         csv(r.email),
         csv(r.alternate_email ?? ''),
+        csv(r.alternate_name ?? ''),
         csv(students),
         csv(`${origin}/summer-reg?token=${r.token}`),
       ].join(',');

@@ -8,11 +8,23 @@ function formatTime(t: string): string {
   return m === 0 ? `${hour} ${ampm}` : `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-export default function SummerScheduleTab({ rows }: { rows: SummerScheduleRow[] }) {
+export default function SummerScheduleTab({
+  rows,
+  term = 'summer',
+}: {
+  rows: SummerScheduleRow[];
+  term?: 'summer' | 'fall';
+}) {
+  const termLabel = term === 'fall' ? 'fall' : 'summer';
+
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 text-sm">
-        No summer sessions yet. Flip <code className="text-xs bg-slate-100 px-1 rounded">is_summer=TRUE</code> on sessions to populate this view.
+        No {termLabel} sessions yet. Flip{' '}
+        <code className="text-xs bg-slate-100 px-1 rounded">
+          is_summer={term === 'fall' ? 'FALSE' : 'TRUE'}
+        </code>{' '}
+        on sessions to populate this view.
       </div>
     );
   }
@@ -24,7 +36,7 @@ export default function SummerScheduleTab({ rows }: { rows: SummerScheduleRow[] 
     <div className="space-y-4">
       {/* Summary */}
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
-        <span><span className="font-semibold text-slate-800">{totalSessions}</span> summer sessions</span>
+        <span><span className="font-semibold text-slate-800">{totalSessions}</span> {termLabel} sessions</span>
         <span><span className="font-semibold text-emerald-700">{totalStudents}</span> total enrolments</span>
       </div>
 

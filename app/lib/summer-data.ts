@@ -150,6 +150,10 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       alternate_name: string | null;
       email: string;
       alternate_email: string | null;
+      name_locked: boolean;
+      email_locked: boolean;
+      alternate_email_locked: boolean;
+      alternate_name_locked: boolean;
       token: string;
       last_exported_at: Date | null;
       export_count: number;
@@ -164,6 +168,10 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         c.alternate_name,
         c.email,
         c.alternate_email,
+        c.name_locked,
+        c.email_locked,
+        c.alternate_email_locked,
+        c.alternate_name_locked,
         pt.token,
         pt.last_exported_at,
         pt.export_count,
@@ -203,6 +211,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           WHERE s.customer_id = c.id
         ) distinct_courses
       ) sc ON true
+      WHERE COALESCE(array_length(sn.student_names, 1), 0) > 0
       ORDER BY c.name
     `;
     return rows;
@@ -447,5 +456,53 @@ export async function fetchSummerSchedule(): Promise<SummerScheduleRow[]> {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch summer schedule.');
+  }
+}
+
+export async function fetchFallSchedule(): Promise<SummerScheduleRow[]> {
+  'use cache';
+  cacheTag('summer-responses');
+  cacheTag('schedule');
+  try {
+    const rows = await sql<{
+      session_id: string;
+      weekday: string;
+      start_time: string;
+      end_time: string;
+      is_full: boolean;
+      student_count: number;
+      students: SummerScheduleRow['students'];
+    }[]>`
+      SELECT
+        s.id::text AS session_id,
+        s.weekday,
+        s.start_time,
+        s.end_time,
+        s.is_full,
+        COUNT(e.id)::int AS student_count,
+        COALESCE(
+          json_agg(
+            json_build_object('name', st.name, 'course', c.name)
+            ORDER BY st.name
+          ) FILTER (WHERE st.id IS NOT NULL),
+          '[]'::json
+        ) AS students
+      FROM sessions s
+      LEFT JOIN enrolments e ON e.session_id = s.id
+      LEFT JOIN students st ON st.id = e.student_id
+      LEFT JOIN courses c ON c.id = e.course_id
+      WHERE s.is_summer = FALSE
+      GROUP BY s.id, s.weekday, s.start_time, s.end_time, s.is_full
+      ORDER BY
+        ARRAY_POSITION(
+          ARRAY['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],
+          s.weekday
+        ),
+        s.start_time
+    `;
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch fall schedule.');
   }
 }

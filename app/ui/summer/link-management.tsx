@@ -1,13 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { ParentLinkRow } from '@/app/lib/definitions';
 import CopyLinkButton from './copy-link-button';
 import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
-import AlternateNameCell from './alternate-name-cell';
+import LockedFieldCell from './locked-field-cell';
 import RefreshLinksButton from './refresh-links-button';
 import Link from 'next/link';
+import {
+  updatePrimaryName,
+  updateAlternateName,
+  updatePrimaryEmail,
+  updateAlternateEmail,
+  unlockCustomerField,
+  refreshEmailsFromPortal,
+} from '@/app/lib/summer-actions';
 
 function formatDate(d: Date | null): string {
   if (!d) return '—';
@@ -42,6 +50,24 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
   const responded = rows.filter(r => r.has_responded).length;
   const missingEmail = rows.filter(r => !r.email).length;
 
+  const [isRefreshing, startRefresh] = useTransition();
+  const [refreshResult, setRefreshResult] = useState<string | null>(null);
+
+  function handleRefreshEmails() {
+    setRefreshResult(null);
+    startRefresh(async () => {
+      try {
+        const res = await refreshEmailsFromPortal();
+        setRefreshResult(
+          `Refreshed ${res.updated}/${res.scanned} from portal` +
+            (res.fetchFailed > 0 ? ` · ${res.fetchFailed} fetch failed` : ''),
+        );
+      } catch (err) {
+        setRefreshResult(err instanceof Error ? err.message : 'Refresh failed');
+      }
+    });
+  }
+
   return (
     <div className="space-y-4">
       {/* Action bar */}
@@ -58,6 +84,17 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
         <ExportCsvButton rows={filtered} label="Export CSV" />
         <div className="h-5 border-l border-slate-200 hidden sm:block" />
         <RefreshLinksButton />
+        <button
+          onClick={handleRefreshEmails}
+          disabled={isRefreshing}
+          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 transition disabled:opacity-40"
+          title="Pull primary + alternate emails from portal family-view for every family (skips locked fields)"
+        >
+          {isRefreshing ? 'Refreshing emails…' : 'Refresh Emails from Portal'}
+        </button>
+        {refreshResult && (
+          <span className="text-xs text-slate-500">{refreshResult}</span>
+        )}
       </div>
 
       {/* Stats */}
@@ -85,6 +122,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
                 <th className="px-4 py-3">Family</th>
                 <th className="px-4 py-3">Email</th>
+                <th className="px-4 py-3">Alternate Email</th>
                 <th className="px-4 py-3">Students</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Last Exported</th>
@@ -94,27 +132,70 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">
                     No families match this filter.
                   </td>
                 </tr>
               ) : filtered.map(row => (
                 <tr key={row.token_id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-800">{row.customer_name}</div>
-                    <AlternateNameCell customerId={row.customer_id} initialName={row.alternate_name} />
+                  <td className="px-4 py-3 space-y-0.5">
+                    <LockedFieldCell
+                      customerId={row.customer_id}
+                      initialValue={row.customer_name}
+                      locked={row.name_locked}
+                      field="name"
+                      placeholder="Primary name"
+                      save={updatePrimaryName}
+                      unlock={unlockCustomerField}
+                      valueClassName="font-medium text-slate-800"
+                      width="w-52"
+                    />
+                    <LockedFieldCell
+                      customerId={row.customer_id}
+                      initialValue={row.alternate_name}
+                      locked={row.alternate_name_locked}
+                      field="alternate_name"
+                      placeholder="Second parent name"
+                      displayPrefix="&"
+                      allowEmpty
+                      save={updateAlternateName}
+                      unlock={unlockCustomerField}
+                      valueClassName="text-xs text-slate-500"
+                      width="w-44"
+                    />
                   </td>
                   <td className="px-4 py-3">
                     {row.email ? (
-                      <span className="text-slate-600">{row.email}</span>
+                      <LockedFieldCell
+                        customerId={row.customer_id}
+                        initialValue={row.email}
+                        locked={row.email_locked}
+                        field="email"
+                        inputType="email"
+                        placeholder="primary@email.com"
+                        save={updatePrimaryEmail}
+                        unlock={unlockCustomerField}
+                        valueClassName="text-slate-600"
+                        width="w-56"
+                      />
                     ) : (
                       <span className="text-amber-600 font-medium">⚠ Missing</span>
                     )}
-                    {row.alternate_email && (
-                      <div className="mt-0.5 text-xs text-slate-400">
-                        <span className="text-slate-300">2nd:</span> {row.alternate_email}
-                      </div>
-                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <LockedFieldCell
+                      customerId={row.customer_id}
+                      initialValue={row.alternate_email}
+                      locked={row.alternate_email_locked}
+                      field="alternate_email"
+                      inputType="email"
+                      placeholder="alternate@email.com"
+                      allowEmpty
+                      save={updateAlternateEmail}
+                      unlock={unlockCustomerField}
+                      valueClassName="text-slate-500 text-xs"
+                      width="w-56"
+                    />
                   </td>
                   <td className="px-4 py-3 text-slate-600">
                     {row.student_names.length > 0 ? row.student_names.join(', ') : '—'}
