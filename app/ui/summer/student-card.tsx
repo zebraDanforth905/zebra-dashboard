@@ -63,6 +63,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
     student.current_weekday && student.current_start_time
       ? `${student.current_weekday} ${formatTime(student.current_start_time)}`
       : null;
+  const hasCurrentEnrolment = student.has_current_enrolment;
 
   function setSummerStatus(status: StudentCardState['summer_status']) {
     onChange({
@@ -149,8 +150,13 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
       <div>
         <h2 className="text-lg font-semibold text-slate-800">{student.student_name}</h2>
         <p className="text-sm text-slate-500 mt-0.5">
-          {currentSlot ? `Currently enrolled: ${currentSlot}` : 'No current class on file'}
+          {currentSlot ? `Currently enrolled: ${currentSlot}` : 'Not currently enrolled'}
         </p>
+        {!hasCurrentEnrolment && (
+          <p className="text-xs text-sky-700 mt-1">
+            You can request a new summer schedule, a September schedule, or both.
+          </p>
+        )}
       </div>
 
       {/* ── Summer section ──────────────────────────────────────────────── */}
@@ -240,7 +246,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               onChange={() => setSummerStatus('pausing')}
               className="mt-0.5 accent-sky-600"
             />
-            <span className="text-slate-700">Pause for summer</span>
+            <span className="text-slate-700">Not attending in summer</span>
           </label>
 
           <label className="flex items-start gap-3 cursor-pointer">
@@ -295,7 +301,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               className="mt-0.5 accent-emerald-600"
             />
             <span className="text-slate-700">
-              {currentSlot ? `Keep current slot — ${currentSlot}` : 'No change in September'}
+              {currentSlot ? `Keep current slot — ${currentSlot}` : 'Not attending in September'}
             </span>
           </label>
 
@@ -307,7 +313,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               onChange={() => setFallStatus('change')}
               className="mt-0.5 accent-emerald-600"
             />
-            <span className="text-slate-700">Request a different time for September</span>
+            <span className="text-slate-700">Request a September class time</span>
           </label>
 
           {state.fall_status === 'change' && (

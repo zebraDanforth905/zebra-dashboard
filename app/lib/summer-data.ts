@@ -57,7 +57,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
         pr.payload AS latest_request,
         pr.status AS latest_request_status
       FROM students s
-      JOIN LATERAL (
+      LEFT JOIN LATERAL (
         SELECT se.weekday, se.start_time
         FROM enrolments e
         JOIN sessions se ON se.id = e.session_id
@@ -106,6 +106,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
     const students: ParentFormStudentData[] = studentRows.map(r => ({
       student_id: r.student_id,
       student_name: r.student_name,
+      has_current_enrolment: Boolean(r.current_weekday && r.current_start_time),
       current_weekday: r.current_weekday,
       current_start_time: r.current_start_time,
       latest_request: r.latest_request as ParentFormStudentData['latest_request'],

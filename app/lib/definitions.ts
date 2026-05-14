@@ -482,6 +482,7 @@ export type ParentRequest =
 export type ParentFormStudentData = {
   student_id: string;
   student_name: string;
+  has_current_enrolment: boolean;
   current_weekday: string | null;
   current_start_time: string | null;
   latest_request: SummerSchedulingPayload | null;
