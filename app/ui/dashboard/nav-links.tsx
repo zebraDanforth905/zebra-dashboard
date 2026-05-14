@@ -14,6 +14,7 @@ const links = [
   { name: 'Slips', href: '/dashboard/printable' },
   { name: 'Accounts', href: '/dashboard/scratch-accounts' },
   { name: 'Incidents', href: '/dashboard/admin/incident-reports', adminOnly: true },
+  { name: 'Summer Reg', href: '/dashboard/summer', adminOnly: true },
   { name: 'Settings', href: '/dashboard/settings' }
 ];
 

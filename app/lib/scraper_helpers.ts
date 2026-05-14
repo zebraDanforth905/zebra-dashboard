@@ -127,6 +127,55 @@ export async function fetchAttendanceReport(opts: {
 
 }
 
+// family-view endpoint — returns parents[], students[], user[] for a family.
+// `familyId` matches customers.portal_parent_id (same ID space as class report parent_id).
+export type FamilyViewParent = {
+  user_id: number;
+  name: string;
+  email: string;
+  alternate_email: string;
+  primary_ind: 0 | 1;
+  active_id: number;
+  address?: string;
+  mobile?: string;
+  homephone?: string;
+};
+
+export type FamilyViewStudent = {
+  user_id: number;
+  name: string;
+  active_id: number;
+  dob?: string;
+  gender?: string;
+};
+
+export type FamilyViewResponse = {
+  results?: {
+    parents?: FamilyViewParent[];
+    students?: FamilyViewStudent[];
+    user?: FamilyViewParent[];
+  };
+};
+
+export async function fetchFamilyView(familyId: number): Promise<FamilyViewResponse | null> {
+  const token = await loginGetToken();
+
+  const url = `${ZEBRA_API_BASE}/family-view/family/${familyId}`;
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "x-auth-token": token,
+      referer: "https://portal.zebrarobotics.com/",
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) return null;
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) return null;
+  return (await res.json().catch(() => null)) as FamilyViewResponse | null;
+}
+
 export async function fetchCampEnrolments(opts: {
   startDate: string;     // "YYYY-MM-DD"
   endDate: string;       // "YYYY-MM-DD"

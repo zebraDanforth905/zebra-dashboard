@@ -1,6 +1,6 @@
 # Zebra Dashboard Bug List
 
-Last updated: 2026-03-06
+Last updated: 2026-04-24
 
 ## Immediate Focus
 
@@ -9,6 +9,9 @@ Last updated: 2026-03-06
 | ID   | Area            | Task                                                                 | Notes                                                                                               | Status |
 | ---- | --------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------ |
 | B013 | Makeup classes  | Make manual "remove makeup class" changes persist after portal sync. | Add a local tombstone/ignore key table or manual-lock flag so sync does not re-add removed items. | Open   |
+| B014 | Summer Reg      | `getSessionId` in `insert_from_portal.ts` uses old 3-column `ON CONFLICT`; breaks after migration 011 changed constraint to include `is_summer`. Next portal sync will fail. | Change `ON CONFLICT (weekday, start_time, end_time)` → `(start_time, end_time, weekday, is_summer)` and add `is_summer = FALSE` to the INSERT. **Critical — fix before next portal sync.** | Fixed |
+| B015 | Summer Reg      | Fall session picker in parent form includes summer slots. `fetchParentFormData` fetches all sessions for the fall picker with no `is_summer` filter, so parents see summer-only time slots as fall options. | Add `WHERE is_summer = FALSE` (or `is_summer IS FALSE`) to the fall sessions subquery in `summer-data.ts`. | Fixed |
+| B016 | Summer Reg      | Single-parent data model: students have one `customer_id`, so families with two separate parent accounts (e.g. Laura Labriola + Abe Khalil for James & Jonathan) only generate one token — the parent whose customer record the children are assigned to. The other parent never appears in the link management table and gets no link. | **Short-term**: enter the second parent's email as `alternate_email` on the primary customer record; the CSV export already includes `alternate_email`, so both get the same Constant Contact link. **Long-term**: schema change to support a household/family grouping (deferred). | Open |
 
 ### Taite (Now) - Payments (Non-Security)
 

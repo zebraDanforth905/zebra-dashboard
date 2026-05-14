@@ -65,7 +65,6 @@ export default function SessionNav({
                 </span>
                 }
 
-
                 <span className="whitespace-nowrap">
                   {formatTime12Hour(s.start_time)}–{formatTime12Hour(s.end_time)}
                 </span>

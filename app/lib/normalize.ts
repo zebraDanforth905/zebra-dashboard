@@ -91,6 +91,70 @@ export function normalizeAbsencesFromAttendance(results: RawAttendance[]): Norma
     }));
 }
 
+// ── Customer extraction ──────────────────────────────────────────────────────
+
+export type PortalCustomerRow = {
+  portal_parent_id: number;
+  name: string;
+  email: string;
+  alternate_email: string | null;
+  student_ids: number[];
+};
+
+// Portal sends alternate_emails as a plain email string (or comma-separated emails).
+// No name is ever included — extract the first valid email that differs from primary.
+function extractAltEmail(raw: string, primaryEmail: string): string | null {
+  const s = (raw || '').trim();
+  if (!s) return null;
+  const primary = primaryEmail.trim().toLowerCase();
+  // Handle "Name <email>" just in case, then fall back to plain/comma-separated
+  const angleMatch = s.match(/<([^>@\s]+@[^>]+)>/);
+  const candidate = angleMatch
+    ? angleMatch[1].trim().toLowerCase()
+    : s.split(/[,;]/).map(x => x.trim()).find(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))?.toLowerCase() ?? null;
+  if (!candidate || candidate === primary) return null;
+  return candidate;
+}
+
+// Extracts unique parent/customer records from raw portal rows.
+// Works for both class-report rows and camp-report rows.
+// Returns an empty array if the rows have no parent fields.
+export function extractCustomerRows(rawRows: any[]): PortalCustomerRow[] {
+  const map = new Map<number, PortalCustomerRow>();
+
+  for (const r of rawRows) {
+    const parentId: number | null = r.parent_id ?? r.customer_id ?? null;
+    const parentName: string = (r.parent_name ?? r.customer_name ?? r.guardian_name ?? '').toString().trim();
+    const email: string = (r.email ?? r.parent_email ?? '').toString().trim().toLowerCase();
+    const studentId: number | null = r.student_id != null ? Number(r.student_id) : null;
+
+    if (!parentId || !email) continue;
+
+    const altEmail = extractAltEmail(
+      (r.alternate_emails ?? r.alternate_email ?? '').toString(),
+      email,
+    );
+
+    if (map.has(parentId)) {
+      const existing = map.get(parentId)!;
+      if (studentId != null && !existing.student_ids.includes(studentId)) {
+        existing.student_ids.push(studentId);
+      }
+      if (!existing.alternate_email && altEmail) existing.alternate_email = altEmail;
+    } else {
+      map.set(parentId, {
+        portal_parent_id: parentId,
+        name: parentName,
+        email,
+        alternate_email: altEmail,
+        student_ids: studentId != null ? [studentId] : [],
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 // normalize_camp.ts
 type RawCampEnrolment = {
   delivery_type: string;

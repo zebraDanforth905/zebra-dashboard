@@ -1,0 +1,505 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { SummerResponseRow, SummerStats } from '@/app/lib/definitions';
+import {
+  approveAllEnrolling,
+  removeFromSummer,
+  markAllNoChangeComplete,
+  markAddedToPortal,
+  clearAddedToPortal,
+} from '@/app/lib/summer-actions';
+import ApproveRequestModal from './approve-request-modal';
+import ResponseDetailsModal from './response-details-modal';
+
+function formatTime(t: string | null): string {
+  if (!t) return '—';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function formatDate(d: Date): string {
+  return new Date(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+}
+
+const SUMMER_STATUS_STYLE: Record<string, string> = {
+  enrolling: 'bg-emerald-100 text-emerald-700',
+  pausing:   'bg-orange-100 text-orange-700',
+  no_change: 'bg-sky-100 text-sky-700',
+  other:     'bg-purple-100 text-purple-700',
+};
+const SUMMER_STATUS_LABEL: Record<string, string> = {
+  enrolling: 'Enrolling',
+  pausing:   'Pausing',
+  no_change: 'No Change',
+  other:     'Other',
+};
+
+const FALL_STATUS_LABEL: Record<string, string> = {
+  same:   'Keep current',
+  change: 'Requesting change',
+  pause:  'Pausing fall',
+};
+
+const REQUEST_STATUS_STYLE: Record<string, string> = {
+  pending:               'bg-yellow-100 text-yellow-700',
+  reviewed:              'bg-sky-100 text-sky-700',
+  completed:             'bg-emerald-100 text-emerald-700',
+  needs_manual_followup: 'bg-red-100 text-red-700',
+};
+const REQUEST_STATUS_LABEL: Record<string, string> = {
+  pending:               'Pending',
+  reviewed:              'Reviewed',
+  completed:             'Approved',
+  needs_manual_followup: 'Needs Followup',
+};
+
+function SummerBadge({ status }: { status: string }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SUMMER_STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-500'}`}>
+      {SUMMER_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${REQUEST_STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-500'}`}>
+      {REQUEST_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
+
+function StatCard({ label, value, color }: { label: string; value: number; color?: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className={`text-2xl font-bold ${color ?? 'text-slate-800'}`}>{value}</div>
+      <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+function FilterSelect({ value, onChange, options }: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="h-8 rounded-lg border border-slate-200 px-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-300"
+    >
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+function ApproveAllModal({ enrollingCount, onClose, onDone }: {
+  enrollingCount: number;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [startDate, setStartDate] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleConfirm() {
+    if (!startDate) { setError('Start date is required.'); return; }
+    setError(null);
+    startTransition(async () => {
+      const { created, skipped } = await approveAllEnrolling(startDate);
+      onDone(
+        skipped > 0
+          ? `Approved ${created}, skipped ${skipped} (no course to inherit).`
+          : `Approved ${created} enrolment${created !== 1 ? 's' : ''}.`,
+      );
+      onClose();
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6 space-y-4">
+        <h2 className="text-base font-semibold text-slate-900">Approve All Enrolling</h2>
+        <p className="text-sm text-slate-600">
+          This will create enrolments for <span className="font-semibold text-emerald-700">{enrollingCount}</span> pending enrolling student{enrollingCount !== 1 ? 's' : ''}.
+        </p>
+        <div>
+          <label className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-1">
+            Start Date <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={e => setStartDate(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
+          />
+        </div>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="flex justify-end gap-3 pt-1">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={isPending}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
+          >
+            {isPending ? 'Approving…' : 'Confirm & Approve'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RemoveFromSummerButton({ requestId, onRemoved, onDone }: { requestId: string; onRemoved: (id: string) => void; onDone: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  if (!confirm) {
+    return (
+      <button
+        onClick={() => setConfirm(true)}
+        title="Test-only: deletes enrolments and resets request"
+        className="text-xs text-slate-400 hover:text-red-600 underline"
+      >
+        Remove (test)
+      </button>
+    );
+  }
+  return (
+    <span className="flex flex-col gap-1">
+      <span className="text-[10px] text-red-700 leading-tight">
+        Deletes enrolments. For testing only.
+      </span>
+      <span className="flex items-center gap-2">
+        <button
+          disabled={isPending}
+          onClick={() => startTransition(async () => { onRemoved(requestId); await removeFromSummer(requestId); onDone(); })}
+          className="text-xs text-red-600 font-medium disabled:opacity-50"
+        >
+          {isPending ? '…' : 'Confirm remove'}
+        </button>
+        <button onClick={() => setConfirm(false)} className="text-xs text-slate-400">Cancel</button>
+      </span>
+    </span>
+  );
+}
+
+function AddedToPortalButton({
+  requestId,
+  addedAt,
+  onDone,
+}: {
+  requestId: string;
+  addedAt: Date | null;
+  onDone: () => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  if (addedAt) {
+    return (
+      <button
+        disabled={isPending}
+        onClick={() => startTransition(async () => { await clearAddedToPortal(requestId); onDone(); })}
+        title={`Added to portal ${formatDate(addedAt)} — click to undo`}
+        className="text-xs px-2 py-1 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition disabled:opacity-50"
+      >
+        {isPending ? '…' : `✓ In Portal (${formatDate(addedAt)})`}
+      </button>
+    );
+  }
+  return (
+    <button
+      disabled={isPending}
+      onClick={() => startTransition(async () => { await markAddedToPortal(requestId); onDone(); })}
+      className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
+    >
+      {isPending ? '…' : 'Added to Portal'}
+    </button>
+  );
+}
+
+function NoChangeCompleteButton({ onDone }: { onDone: (msg: string) => void }) {
+  const [isPending, startTransition] = useTransition();
+  return (
+    <button
+      onClick={() => startTransition(async () => {
+        const { updated } = await markAllNoChangeComplete();
+        onDone(updated === 0 ? 'No pending no-change requests.' : `Marked ${updated} no-change as complete.`);
+      })}
+      disabled={isPending}
+      className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 transition disabled:opacity-50"
+    >
+      {isPending ? 'Updating…' : 'Complete All No Change'}
+    </button>
+  );
+}
+
+export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[]; stats: SummerStats }) {
+  const router = useRouter();
+  const [summerFilter, setSummerFilter] = useState('all');
+  const [fallFilter, setFallFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [modalRow, setModalRow] = useState<SummerResponseRow | null>(null);
+  const [detailsRow, setDetailsRow] = useState<SummerResponseRow | null>(null);
+  const [showApproveAllModal, setShowApproveAllModal] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+
+  function refresh() { router.refresh(); }
+
+  const filtered = rows.filter(r => {
+    if (removedIds.has(r.request_id)) return false;
+    if (summerFilter !== 'all' && r.summer_status !== summerFilter) return false;
+    if (fallFilter !== 'all' && r.fall_status !== fallFilter) return false;
+    if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!r.student_name.toLowerCase().includes(q) && !r.parent_name.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const notResponded = stats.total_families - stats.responded;
+  const pendingEnrollingCount = rows.filter(
+    r => r.summer_status === 'enrolling' && r.status === 'pending',
+  ).length;
+
+  return (
+    <div className="space-y-4">
+      {/* Stats row 1 */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Total Families"  value={stats.total_families} />
+        <StatCard label="Responded"       value={stats.responded}   color="text-emerald-700" />
+        <StatCard label="Not Responded"   value={notResponded}      color={notResponded > 0 ? 'text-amber-600' : 'text-slate-800'} />
+        <StatCard label="Exported"        value={stats.exported} />
+      </div>
+
+      {/* Stats row 2 */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Enrolling"       value={stats.enrolling}      color="text-emerald-700" />
+        <StatCard label="Pausing"         value={stats.pausing}        color="text-orange-600" />
+        <StatCard label="No Change"       value={stats.no_change}      color="text-sky-700" />
+        <StatCard label="Needs Followup"  value={stats.needs_followup} color={stats.needs_followup > 0 ? 'text-red-600' : 'text-slate-800'} />
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <button
+          onClick={() => { setBulkMessage(null); setShowApproveAllModal(true); }}
+          disabled={pendingEnrollingCount === 0}
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-40"
+        >
+          Approve All Enrolling ({pendingEnrollingCount})
+        </button>
+        <NoChangeCompleteButton onDone={msg => { setBulkMessage(msg); refresh(); }} />
+        {bulkMessage && <span className="text-xs text-slate-500">{bulkMessage}</span>}
+        <div className="h-5 border-l border-slate-200 hidden sm:block" />
+        <input
+          type="search"
+          placeholder="Search by name…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="h-8 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        />
+        <FilterSelect
+          value={summerFilter}
+          onChange={setSummerFilter}
+          options={[
+            { value: 'all',       label: 'All summer plans' },
+            { value: 'enrolling', label: 'Enrolling' },
+            { value: 'pausing',   label: 'Pausing' },
+            { value: 'other',     label: 'Other' },
+          ]}
+        />
+        <FilterSelect
+          value={fallFilter}
+          onChange={setFallFilter}
+          options={[
+            { value: 'all',    label: 'All fall plans' },
+            { value: 'same',   label: 'Keep current' },
+            { value: 'change', label: 'Requesting change' },
+            { value: 'pause',  label: 'Pausing fall' },
+          ]}
+        />
+        <FilterSelect
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: 'all',                   label: 'All statuses' },
+            { value: 'pending',               label: 'Pending' },
+            { value: 'completed',             label: 'Approved' },
+            { value: 'needs_manual_followup', label: 'Needs Followup' },
+          ]}
+        />
+        {(summerFilter !== 'all' || fallFilter !== 'all' || statusFilter !== 'all' || search) && (
+          <button
+            onClick={() => { setSummerFilter('all'); setFallFilter('all'); setStatusFilter('all'); setSearch(''); }}
+            className="text-xs text-slate-500 underline"
+          >
+            Clear
+          </button>
+        )}
+        <span className="ml-auto text-xs text-slate-500">
+          {filtered.length} of {rows.length} responses
+        </span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 text-sm">
+          No responses yet. Families will appear here once they submit their form.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                <th className="px-4 py-3">Student</th>
+                <th className="px-4 py-3">Family</th>
+                <th className="px-4 py-3">Current</th>
+                <th className="px-4 py-3">Summer</th>
+                <th className="px-4 py-3">Summer Sessions</th>
+                <th className="px-4 py-3">Pickup</th>
+                <th className="px-4 py-3">Fall Plan</th>
+                <th className="px-4 py-3">Fall Sessions</th>
+                <th className="px-4 py-3">Notes</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Submitted</th>
+                <th className="px-4 py-3">Added to Portal</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={13} className="px-4 py-8 text-center text-slate-400 text-sm">
+                    No matching responses.
+                  </td>
+                </tr>
+              ) : filtered.map(row => (
+                <tr key={row.request_id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">
+                    {row.student_name}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="text-slate-700">{row.parent_name}</div>
+                    <div className="text-xs text-slate-400">{row.parent_email}</div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
+                    {row.current_weekday
+                      ? `${row.current_weekday} ${formatTime(row.current_start_time)}`
+                      : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <SummerBadge status={row.summer_status} />
+                  </td>
+                  <td className="px-4 py-3 text-slate-600 text-xs">
+                    {row.session_labels.length > 0
+                      ? row.session_labels.map((l, i) => <div key={i}>{l}</div>)
+                      : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {row.pickup_requested ? (
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 font-medium bg-amber-100 text-amber-700">
+                        {row.pickup_school === 'other'
+                          ? (row.pickup_school_other ?? 'Other')
+                          : (row.pickup_school ?? 'Yes')}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">
+                    {row.fall_status ? (FALL_STATUS_LABEL[row.fall_status] ?? row.fall_status) : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-slate-600 text-xs">
+                    {row.fall_session_labels.length > 0
+                      ? row.fall_session_labels.map((l, i) => <div key={i}>{l}</div>)
+                      : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[140px]">
+                    {row.custom_notes
+                      ? <span className="italic">{row.custom_notes}</span>
+                      : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={row.status} />
+                  </td>
+                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                    {formatDate(row.submitted_at)}
+                  </td>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {row.added_to_portal_at
+                      ? <span className="text-emerald-700 font-medium">{formatDate(row.added_to_portal_at)}</span>
+                      : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={() => setModalRow(row)}
+                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
+                      >
+                        {row.status === 'completed' ? 'Approve Again' : 'Review'}
+                      </button>
+                      <button
+                        onClick={() => setDetailsRow(row)}
+                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
+                      >
+                        Details
+                      </button>
+                      <AddedToPortalButton
+                        requestId={row.request_id}
+                        addedAt={row.added_to_portal_at}
+                        onDone={refresh}
+                      />
+                      <RemoveFromSummerButton
+                        requestId={row.request_id}
+                        onRemoved={id => setRemovedIds(prev => new Set(prev).add(id))}
+                        onDone={refresh}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modalRow && (
+        <ApproveRequestModal
+          row={modalRow}
+          onClose={() => setModalRow(null)}
+          onApproved={() => { setModalRow(null); refresh(); }}
+        />
+      )}
+
+      {detailsRow && (
+        <ResponseDetailsModal
+          row={detailsRow}
+          onClose={() => setDetailsRow(null)}
+        />
+      )}
+
+      {showApproveAllModal && (
+        <ApproveAllModal
+          enrollingCount={pendingEnrollingCount}
+          onClose={() => setShowApproveAllModal(false)}
+          onDone={msg => { setBulkMessage(msg); refresh(); }}
+        />
+      )}
+    </div>
+  );
+}

@@ -1,7 +1,8 @@
 // app/lib/insert.ts
 import postgres from "postgres";
 import { ymd, assertAligned } from "./utils";
-import { normalizeAbsencesFromAttendance } from "./normalize";
+import { normalizeAbsencesFromAttendance, PortalCustomerRow } from "./normalize";
+import { fetchFamilyView } from "./scraper_helpers";
 
 // expects tables: students(student_id int PK?, first_name, last_name, lms_password?),
 // sessions(id serial/bigint, weekday text/enum, start_time time, end_time time) unique(weekday,start_time,end_time),
@@ -20,9 +21,9 @@ function splitName(full: string): { first: string; last: string } {
 
 async function getSessionId(tx: any, weekday: string, start: string, end: string): Promise<string> {
   const [{ id }] = await tx<{ id: string }[]>`
-    INSERT INTO sessions (weekday, start_time, end_time)
-    VALUES (${weekday}, ${start}, ${end})
-    ON CONFLICT (weekday, start_time, end_time)
+    INSERT INTO sessions (weekday, start_time, end_time, is_summer)
+    VALUES (${weekday}, ${start}, ${end}, FALSE)
+    ON CONFLICT (start_time, end_time, weekday, is_summer)
       DO UPDATE SET weekday = EXCLUDED.weekday
     RETURNING id;
   `;
@@ -217,10 +218,11 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
             `;
     }
 
-    // Delete sessions with no students (no enrolments, trials, or makeups)
+    // Delete non-summer sessions with no students (no enrolments, trials, or makeups)
     await tx`
       DELETE FROM sessions s
-      WHERE NOT EXISTS (
+      WHERE s.is_summer = FALSE
+      AND NOT EXISTS (
         SELECT 1 FROM enrolments e WHERE e.session_id = s.id
       )
       AND NOT EXISTS (
@@ -609,6 +611,242 @@ export async function insertCampEnrolments(
   return { inserted: insertedCount, updated: updatedCount, seen: rows.length };
 }
 
+// ── Customer sync ─────────────────────────────────────────────────────────────
 
+// Upserts customer records from portal parent data and links unassigned students.
+// Uses portal_parent_id as the stable conflict key.
+// Only links students that currently have no customer_id (never overrides manual assignments).
+export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ upserted: number; linked: number }> {
+  if (!customers.length) return { upserted: 0, linked: 0 };
 
+  let upserted = 0;
+  let linked = 0;
 
+  await sql.begin(async tx => {
+    for (const c of customers) {
+      const rows = await tx<{ id: string }[]>`
+        INSERT INTO customers (name, email, alternate_email, alternate_name, portal_parent_id)
+        VALUES (
+          ${c.name},
+          ${c.email},
+          ${c.alternate_email},
+          NULL,
+          ${c.portal_parent_id}
+        )
+        ON CONFLICT (portal_parent_id) WHERE portal_parent_id IS NOT NULL
+        DO UPDATE SET
+          name            = CASE WHEN customers.name_locked            THEN customers.name            ELSE EXCLUDED.name END,
+          email           = CASE WHEN customers.email_locked           THEN customers.email           ELSE EXCLUDED.email END,
+          alternate_email = CASE WHEN customers.alternate_email_locked THEN customers.alternate_email ELSE COALESCE(EXCLUDED.alternate_email, customers.alternate_email) END,
+          alternate_name  = CASE WHEN customers.alternate_name_locked  THEN customers.alternate_name  ELSE COALESCE(customers.alternate_name, EXCLUDED.alternate_name) END
+        RETURNING id
+      `;
+      if (!rows.length) continue;
+      upserted++;
+
+      const customerId = rows[0].id;
+
+      if (c.student_ids.length > 0) {
+        const result = await tx<{ id: string }[]>`
+          UPDATE students
+          SET customer_id = ${customerId}::uuid
+          WHERE id = ANY(${c.student_ids}::numeric[])
+            AND customer_id IS NULL
+          RETURNING id
+        `;
+        linked += result.length;
+
+        // If none of this parent's students were unlinked, they may already belong to
+        // a co-parent's customer row. Detect that case and bridge this parent's contact
+        // info onto the primary record as alternate contact data.
+        if (result.length === 0) {
+          const others = await tx<{ customer_id: string }[]>`
+            SELECT DISTINCT customer_id
+            FROM students
+            WHERE id = ANY(${c.student_ids}::numeric[])
+              AND customer_id IS NOT NULL
+              AND customer_id != ${customerId}::uuid
+          `;
+          if (others.length === 1) {
+            const primaryId = others[0].customer_id;
+            const primary = await tx<{ name: string; email: string }[]>`
+              SELECT name, email FROM customers WHERE id = ${primaryId}::uuid
+            `;
+            if (primary.length > 0) {
+              const primaryEmail = primary[0].email.trim().toLowerCase();
+              const primaryName = primary[0].name.trim().toLowerCase();
+              const secondaryEmail = c.email.trim().toLowerCase();
+              const secondaryName = c.name.trim().toLowerCase();
+              const emailsDiffer = primaryEmail !== secondaryEmail;
+              const namesDiffer = primaryName !== secondaryName;
+
+              if (emailsDiffer) {
+                // Bridge secondary contact → primary (alt email + alt name).
+                // Lock-aware: skip when target field is locked by staff edit.
+                await tx`
+                  UPDATE customers
+                  SET alternate_email = CASE
+                        WHEN alternate_email_locked THEN alternate_email
+                        ELSE COALESCE(alternate_email, ${c.email})
+                      END,
+                      alternate_name  = CASE
+                        WHEN alternate_name_locked  THEN alternate_name
+                        WHEN ${namesDiffer}::boolean THEN COALESCE(alternate_name, ${c.name})
+                        ELSE alternate_name
+                      END
+                  WHERE id = ${primaryId}::uuid
+                `;
+                // Bridge primary contact → secondary
+                await tx`
+                  UPDATE customers
+                  SET alternate_email = CASE
+                        WHEN alternate_email_locked THEN alternate_email
+                        ELSE COALESCE(alternate_email, ${primary[0].email})
+                      END,
+                      alternate_name  = CASE
+                        WHEN alternate_name_locked  THEN alternate_name
+                        WHEN ${namesDiffer}::boolean THEN COALESCE(alternate_name, ${primary[0].name})
+                        ELSE alternate_name
+                      END
+                  WHERE id = ${customerId}::uuid
+                `;
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  return { upserted, linked };
+}
+
+// ── Email sync from portal family-view ────────────────────────────────────────
+//
+// Refreshes customers.email + customers.alternate_email from the portal
+// /family-view/family/{portal_parent_id} endpoint, which exposes a real
+// parents[] array with primary_ind and alternate_email per parent.
+//
+// Portal is authoritative — overwrites both fields. Self-loop (same person
+// returned as their own co-parent) or no co-parent clears alternate_email.
+//
+// Runs after syncCustomers in the daily scrape.
+function normLower(s: string | null | undefined): string {
+  return (s ?? "").trim().toLowerCase();
+}
+
+export async function syncEmailsFromFamilyView(): Promise<{
+  scanned: number;
+  updated: number;
+  fetchFailed: number;
+}> {
+  const customers = await sql<{
+    id: string;
+    email: string;
+    alternate_email: string | null;
+    portal_parent_id: number;
+    email_locked: boolean;
+    alternate_email_locked: boolean;
+  }[]>`
+    SELECT id::text, email, alternate_email, portal_parent_id,
+           email_locked, alternate_email_locked
+    FROM customers
+    WHERE portal_parent_id IS NOT NULL
+      AND (email_locked = FALSE OR alternate_email_locked = FALSE)
+    ORDER BY portal_parent_id
+  `;
+
+  if (customers.length === 0) return { scanned: 0, updated: 0, fetchFailed: 0 };
+
+  const BATCH = 10;
+  let updated = 0;
+  let fetchFailed = 0;
+
+  for (let i = 0; i < customers.length; i += BATCH) {
+    const batch = customers.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map(async c => {
+        const familyId = Number(c.portal_parent_id);
+        const fv = await fetchFamilyView(familyId);
+        // Portal returns parents in either `parents[]` or `user[]` depending on
+        // record shape. Merge + dedupe by user_id so we never miss a co-parent.
+        const combined = [
+          ...(fv?.results?.parents ?? []),
+          ...(fv?.results?.user ?? []),
+        ];
+        const byId = new Map<number, typeof combined[number]>();
+        for (const p of combined) {
+          if (p && p.user_id != null && !byId.has(Number(p.user_id))) {
+            byId.set(Number(p.user_id), p);
+          }
+        }
+        const parents = Array.from(byId.values());
+        if (parents.length === 0) {
+          return { kind: "fetch_failed" as const, customerId: c.id };
+        }
+
+        // Primary parent: prefer primary_ind === 1, fall back to user_id === familyId,
+        // else first parent.
+        const primary =
+          parents.find(p => p.primary_ind === 1) ??
+          parents.find(p => Number(p.user_id) === familyId) ??
+          parents[0];
+
+        // Co-parent: any parent with a different user_id (and not self-loop on email/name).
+        const coParent =
+          parents.find(p => Number(p.user_id) !== Number(primary.user_id)) ?? null;
+
+        const primaryEmailLower = normLower(primary.email);
+        const coEmailLower = normLower(coParent?.email);
+        const selfLoop =
+          !coParent ||
+          (!coEmailLower && !normLower(coParent?.name)) ||
+          (coEmailLower && coEmailLower === primaryEmailLower);
+
+        // Desired values from portal. Prefer primary.alternate_email if set; otherwise
+        // fall back to co-parent's primary email when present and not a self-loop.
+        // Drop primary.alternate_email when it equals primary.email (portal self-loop).
+        const portalEmail = primary.email?.trim().toLowerCase() || c.email;
+        const primaryAltRaw = primary.alternate_email?.trim().toLowerCase() || null;
+        const fromPrimaryAlt = primaryAltRaw && primaryAltRaw !== primaryEmailLower ? primaryAltRaw : null;
+        const fromCoParent = !selfLoop ? coParent?.email?.trim().toLowerCase() || null : null;
+        const portalAltEmail = fromPrimaryAlt ?? fromCoParent;
+
+        // Lock-aware: keep existing value when its lock is set.
+        const desiredEmail = c.email_locked ? c.email : portalEmail;
+        const desiredAltEmail = c.alternate_email_locked ? c.alternate_email : portalAltEmail;
+
+        const currentEmail = normLower(c.email);
+        const currentAlt = c.alternate_email ? normLower(c.alternate_email) : null;
+        const targetEmail = normLower(desiredEmail);
+        const targetAlt = desiredAltEmail ? normLower(desiredAltEmail) : null;
+
+        if (currentEmail === targetEmail && currentAlt === targetAlt) {
+          return { kind: "noop" as const, customerId: c.id };
+        }
+
+        return {
+          kind: "update" as const,
+          customerId: c.id,
+          email: desiredEmail,
+          alternateEmail: desiredAltEmail,
+        };
+      }),
+    );
+
+    for (const r of results) {
+      if (r.kind === "fetch_failed") {
+        fetchFailed++;
+      } else if (r.kind === "update") {
+        await sql`
+          UPDATE customers
+          SET email = ${r.email}, alternate_email = ${r.alternateEmail}
+          WHERE id = ${r.customerId}::uuid
+        `;
+        updated++;
+      }
+    }
+  }
+
+  return { scanned: customers.length, updated, fetchFailed };
+}

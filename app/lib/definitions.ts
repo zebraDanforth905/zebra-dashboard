@@ -93,6 +93,7 @@ export type Session = {
   start_time: string;
   end_time: string;
   weekday: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+  is_full?: boolean;
   student_count?: number;
   makeup_count?: number;
   trial_count?: number;
@@ -384,4 +385,208 @@ export type IncidentReport = {
   date: Date;
   user_name?: string;
   created_at?: Date;
+};
+
+// Parent self-serve system
+
+export type ParentToken = {
+  id: string;
+  customer_id: string;
+  token: string;
+  last_exported_at: Date | null;
+  export_count: number;
+  created_at: Date;
+};
+
+// portal_parent_id is set automatically by the portal scrape
+
+export type SummerSchedulingPayload = {
+  summer_status: 'enrolling' | 'pausing' | 'no_change';
+  session_ids: string[];
+  // ISO 'YYYY-MM-DD' per session id; populated for 'enrolling'.
+  session_start_dates?: Record<string, string>;
+  pickup_requested?: boolean;
+  pickup_school?: 'Jackman' | 'Frankland' | 'other';
+  pickup_school_other?: string;
+  fall_status: 'same' | 'change' | 'pause';
+  fall_session_ids: string[];
+  // ISO 'YYYY-MM-DD' per fall session id; populated for fall_status='change'.
+  fall_session_start_dates?: Record<string, string>;
+  fall_notes?: string;
+};
+
+export type RestartPayload = {
+  session_id: string;
+};
+
+export type OtherPayload = {
+  fall_status?: 'same' | 'change' | 'pause';
+  fall_session_ids?: string[];
+};
+
+export type ParentRequestType = 'summer_scheduling' | 'restart' | 'other';
+export type ParentRequestStatus = 'pending' | 'reviewed' | 'completed' | 'superseded' | 'needs_manual_followup';
+
+export type ParentRequest =
+  | {
+      id: string;
+      token_id: string;
+      student_id: string;
+      request_type: 'summer_scheduling';
+      status: ParentRequestStatus;
+      is_latest: boolean;
+      payload: SummerSchedulingPayload;
+      custom_notes: string | null;
+      enrolment_ids: string[];
+      submitted_at: Date;
+      reviewed_at: Date | null;
+      reviewed_by: string | null;
+      created_at: Date;
+      updated_at: Date;
+    }
+  | {
+      id: string;
+      token_id: string;
+      student_id: string;
+      request_type: 'restart';
+      status: ParentRequestStatus;
+      is_latest: boolean;
+      payload: RestartPayload;
+      custom_notes: string | null;
+      enrolment_ids: string[];
+      submitted_at: Date;
+      reviewed_at: Date | null;
+      reviewed_by: string | null;
+      created_at: Date;
+      updated_at: Date;
+    }
+  | {
+      id: string;
+      token_id: string;
+      student_id: string;
+      request_type: 'other';
+      status: ParentRequestStatus;
+      is_latest: boolean;
+      payload: OtherPayload;
+      custom_notes: string | null;
+      enrolment_ids: string[];
+      submitted_at: Date;
+      reviewed_at: Date | null;
+      reviewed_by: string | null;
+      created_at: Date;
+      updated_at: Date;
+    };
+
+// Data shapes for summer dashboard queries
+
+export type ParentFormStudentData = {
+  student_id: string;
+  student_name: string;
+  has_current_enrolment: boolean;
+  current_weekday: string | null;
+  current_start_time: string | null;
+  latest_request: SummerSchedulingPayload | null;
+  latest_request_id: string | null;
+  latest_request_status: ParentRequestStatus | null;
+};
+
+export type ParentFormData = {
+  token_id: string;
+  customer_id: string;
+  customer_name: string;
+  customer_alternate_name: string | null;
+  students: ParentFormStudentData[];
+  summer_sessions: (Session & { is_summer: boolean })[];
+  fall_sessions: (Session & { student_count: number; coach_capacity: number })[];
+};
+
+export type SubmittedStudentSummary = {
+  student_name: string;
+  summer_status: string;
+  session_labels: string[];
+  pickup_requested: boolean;
+  pickup_school: string | null;
+  pickup_school_other: string | null;
+  fall_status: string | null;
+  fall_session_labels: string[];
+  custom_notes: string | null;
+};
+
+export type SubmittedChoices = {
+  customer_name: string;
+  customer_alternate_name: string | null;
+  students: SubmittedStudentSummary[];
+};
+
+export type SummerStats = {
+  total_families: number;
+  responded: number;
+  enrolling: number;
+  pausing: number;
+  no_change: number;
+  pending: number;
+  needs_followup: number;
+  exported: number;
+};
+
+export type SummerResponseRow = {
+  request_id: string;
+  student_id: string;
+  student_name: string;
+  parent_name: string;
+  parent_email: string;
+  summer_status: SummerSchedulingPayload['summer_status'] | 'other';
+  session_labels: string[];
+  pickup_requested: boolean;
+  pickup_school: string | null;
+  pickup_school_other: string | null;
+  fall_status: SummerSchedulingPayload['fall_status'] | null;
+  fall_session_labels: string[];
+  current_weekday: string | null;
+  current_start_time: string | null;
+  status: ParentRequestStatus;
+  custom_notes: string | null;
+  submitted_at: Date;
+  added_to_portal_at: Date | null;
+};
+
+export type SummerScheduleStudent = {
+  name: string;
+  course: string | null;
+};
+
+export type SummerScheduleRow = {
+  session_id: string;
+  weekday: string;
+  start_time: string;
+  end_time: string;
+  is_full: boolean;
+  student_count: number;
+  students: SummerScheduleStudent[];
+};
+
+export type StudentCourseEntry = {
+  student_name: string;
+  course_name: string;
+  weekday: string;
+  start_time: string;
+};
+
+export type ParentLinkRow = {
+  token_id: string;
+  customer_id: string;
+  customer_name: string;
+  alternate_name: string | null;
+  email: string;
+  alternate_email: string | null;
+  name_locked: boolean;
+  email_locked: boolean;
+  alternate_email_locked: boolean;
+  alternate_name_locked: boolean;
+  student_names: string[];
+  student_courses: StudentCourseEntry[];
+  token: string;
+  last_exported_at: Date | null;
+  export_count: number;
+  has_responded: boolean;
 };
