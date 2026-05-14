@@ -2107,6 +2107,14 @@ const CreateUntemplatedShiftSchema = z.object({
   endTime: z.string().min(1),
 });
 
+const UpdateUntemplatedShiftSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  userId: z.string().min(1),
+  date: z.string().min(1),
+  startTime: z.string().min(1),
+  endTime: z.string().min(1),
+});
+
 const SaveAvailabilitySchema = z.object({
   slotsJson: z.string().min(2),
 });
@@ -2432,6 +2440,42 @@ export async function createUntemplatedShift(formData: FormData) {
       ON CONFLICT (untemplated_shift_id, shift_type) DO NOTHING
     `;
   });
+  revalidatePath('/dashboard/staff-schedule');
+}
+
+export async function updateUntemplatedShift(formData: FormData) {
+  const parsed = UpdateUntemplatedShiftSchema.safeParse({
+    id: formData.get('id'),
+    userId: formData.get('userId'),
+    date: formData.get('date'),
+    startTime: formData.get('startTime'),
+    endTime: formData.get('endTime'),
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message || 'Invalid untemplated shift data');
+  }
+
+  const { id, userId, date, startTime, endTime } = parsed.data;
+  const shiftTypes = parseShiftTypes(formData);
+
+  await sql.begin(async (trx) => {
+    await trx`
+      UPDATE untemplated_shift
+      SET user_id = ${userId},
+          date = ${date}::date,
+          start_time = ${startTime}::time,
+          end_time = ${endTime}::time
+      WHERE id = ${id}
+    `;
+    await trx`DELETE FROM untemplated_shift_type WHERE untemplated_shift_id = ${id}`;
+    await trx`
+      INSERT INTO untemplated_shift_type (untemplated_shift_id, shift_type)
+      SELECT ${id}, shift_type
+      FROM UNNEST(${shiftTypes}::text[]) AS t(shift_type)
+      ON CONFLICT (untemplated_shift_id, shift_type) DO NOTHING
+    `;
+  });
+
   revalidatePath('/dashboard/staff-schedule');
 }
 

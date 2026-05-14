@@ -101,6 +101,7 @@ export type StaffAvailabilityBlock = {
 };
 
 export type StaffScheduleDailyShift = {
+	id: number | null;
 	date: string;
 	weekday: StaffScheduleWeekday;
 	user_id: string;

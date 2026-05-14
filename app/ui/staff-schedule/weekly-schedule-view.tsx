@@ -1,6 +1,8 @@
 import {
   assignStaffToTemplateShift,
   createUntemplatedShift,
+  deleteUntemplatedShift,
+  updateUntemplatedShift,
 } from '@/app/lib/actions';
 import {
   StaffScheduleAbsence,
@@ -150,25 +152,88 @@ export function WeeklyScheduleView({
                             </div>
                           ))}
 
-                          {shifts.map((shift, idx) => (
-                            <div key={`${shift.user_id}-${shift.date}-${shift.start_time}-${idx}`} className="rounded bg-yellow-100 px-2 py-2 shadow-sm ring-1 ring-yellow-200">
-                              <div className="font-semibold text-gray-900">{formatTimeRange(shift.start_time, shift.end_time)}</div>
-                              <div className="mt-1 text-[11px] font-medium text-gray-700">
-                                {formatHoursFromMinutes(durationMinutes(shift.start_time, shift.end_time))}
+                          {shifts.map((shift, idx) => {
+                            const cardBody = (
+                              <>
+                                <div className="font-semibold text-gray-900">{formatTimeRange(shift.start_time, shift.end_time)}</div>
+                                <div className="mt-1 text-[11px] font-medium text-gray-700">
+                                  {formatHoursFromMinutes(durationMinutes(shift.start_time, shift.end_time))}
+                                </div>
+                                <div className="mt-1 text-[11px] text-gray-600">
+                                  {shift.source}
+                                  {shift.template_name ? ` • ${shift.template_name}` : ''}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {shift.shift_types.map((type) => (
+                                    <span key={`${shift.user_id}-${shift.date}-${type}`} className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200">
+                                      {shiftTypeLabel(type)}
+                                    </span>
+                                  ))}
+                                </div>
+                              </>
+                            );
+
+                            if (shift.source === 'untemplated' && shift.id) {
+                              return (
+                                <details
+                                  key={`${shift.user_id}-${shift.date}-${shift.start_time}-${idx}`}
+                                  className="rounded bg-yellow-100 px-2 py-2 shadow-sm ring-1 ring-yellow-200"
+                                >
+                                  <summary className="cursor-pointer list-none">
+                                    {cardBody}
+                                  </summary>
+                                  <form action={updateUntemplatedShift} className="mt-2 space-y-2 border-t border-yellow-200 pt-2">
+                                    <input type="hidden" name="id" value={String(shift.id)} />
+                                    <input type="hidden" name="userId" value={user.id} />
+                                    <input type="hidden" name="date" value={day.date} />
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input
+                                        name="startTime"
+                                        type="time"
+                                        step={900}
+                                        defaultValue={shift.start_time.slice(0, 5)}
+                                        className="rounded border border-gray-300 px-2 py-1 text-xs"
+                                        required
+                                      />
+                                      <input
+                                        name="endTime"
+                                        type="time"
+                                        step={900}
+                                        defaultValue={shift.end_time.slice(0, 5)}
+                                        className="rounded border border-gray-300 px-2 py-1 text-xs"
+                                        required
+                                      />
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-1 text-xs text-gray-700">
+                                      {SHIFT_TYPE_OPTIONS.map((opt) => (
+                                        <label key={`edit-${shift.id}-${opt.value}`} className="flex items-center gap-2 rounded border border-gray-200 bg-white px-2 py-1">
+                                          <input
+                                            type="checkbox"
+                                            name="shiftTypes"
+                                            value={opt.value}
+                                            defaultChecked={shift.shift_types.includes(opt.value)}
+                                            className="h-3.5 w-3.5 rounded border-gray-300"
+                                          />
+                                          <span>{opt.label}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <button className="w-full rounded bg-blue-600 px-2 py-1.5 text-xs font-medium text-white">Update Shift</button>
+                                  </form>
+                                  <form action={deleteUntemplatedShift} className="mt-2">
+                                    <input type="hidden" name="id" value={String(shift.id)} />
+                                    <button className="text-xs font-medium text-red-600">Delete Shift</button>
+                                  </form>
+                                </details>
+                              );
+                            }
+
+                            return (
+                              <div key={`${shift.user_id}-${shift.date}-${shift.start_time}-${idx}`} className="rounded bg-yellow-100 px-2 py-2 shadow-sm ring-1 ring-yellow-200">
+                                {cardBody}
                               </div>
-                              <div className="mt-1 text-[11px] text-gray-600">
-                                {shift.source}
-                                {shift.template_name ? ` • ${shift.template_name}` : ''}
-                              </div>
-                              <div className="mt-1 flex flex-wrap gap-1">
-                                {shift.shift_types.map((type) => (
-                                  <span key={`${shift.user_id}-${shift.date}-${type}`} className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 ring-1 ring-gray-200">
-                                    {shiftTypeLabel(type)}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
 
                           <details>
                             <summary className="inline-flex cursor-pointer items-center rounded border border-dashed border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:border-gray-400 hover:text-gray-900">
