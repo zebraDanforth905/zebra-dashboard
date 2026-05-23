@@ -1135,10 +1135,11 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
         
         if (paymentData.email && paymentData.email.trim()) {
           try {
-            // Look for customer with matching email
+            // Look for customer with matching email (primary or alternate)
             const customerMatch = await sql`
               SELECT id FROM customers
               WHERE LOWER(email) = LOWER(${paymentData.email.trim()})
+                 OR LOWER(alternate_email) = LOWER(${paymentData.email.trim()})
               LIMIT 1;
             `;
             
