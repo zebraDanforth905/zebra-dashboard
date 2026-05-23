@@ -49,6 +49,8 @@ export default async function Page(props: {
             customerId={customer.id}
             initialName={customer.name}
             initialEmail={customer.email}
+            initialAlternateName={customer.alternate_name || ''}
+            initialAlternateEmail={customer.alternate_email || ''}
           />
         ) : (
           <h1 className="text-2xl font-semibold text-slate-800 mb-4">

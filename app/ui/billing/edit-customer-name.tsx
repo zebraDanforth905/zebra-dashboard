@@ -8,12 +8,22 @@ type Props = {
   customerId: string;
   initialName: string;
   initialEmail: string;
+  initialAlternateName: string;
+  initialAlternateEmail: string;
 };
 
-export default function EditCustomerName({ customerId, initialName, initialEmail }: Props) {
+export default function EditCustomerName({
+  customerId,
+  initialName,
+  initialEmail,
+  initialAlternateName,
+  initialAlternateEmail,
+}: Props) {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(initialName);
   const [email, setEmail] = useState(initialEmail);
+  const [alternateName, setAlternateName] = useState(initialAlternateName);
+  const [alternateEmail, setAlternateEmail] = useState(initialAlternateEmail);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +37,7 @@ export default function EditCustomerName({ customerId, initialName, initialEmail
     setError(null);
 
     try {
-      await updateCustomer(customerId, name, email);
+      await updateCustomer(customerId, name, email, alternateName, alternateEmail);
       setIsEditing(false);
     } catch (err) {
       setError('Failed to update customer');
@@ -40,6 +50,8 @@ export default function EditCustomerName({ customerId, initialName, initialEmail
   function handleCancel() {
     setName(initialName);
     setEmail(initialEmail);
+    setAlternateName(initialAlternateName);
+    setAlternateEmail(initialAlternateEmail);
     setError(null);
     setIsEditing(false);
   }
@@ -49,6 +61,11 @@ export default function EditCustomerName({ customerId, initialName, initialEmail
       <div className="flex items-center gap-3 mb-4">
         <h1 className="text-2xl font-semibold text-slate-800">
           {name}
+          {(alternateName || alternateEmail) && (
+            <span className="block text-sm font-normal text-slate-500 mt-1">
+              Alt: {[alternateName, alternateEmail].filter(Boolean).join(' • ')}
+            </span>
+          )}
         </h1>
         <button
           onClick={() => setIsEditing(true)}
@@ -90,6 +107,36 @@ export default function EditCustomerName({ customerId, initialName, initialEmail
             onChange={(e) => setEmail(e.target.value)}
             className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
             placeholder="customer@example.com"
+            disabled={saving}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="customerAlternateName" className="block text-sm font-medium text-slate-700 mb-1">
+            Alternate Name
+          </label>
+          <input
+            id="customerAlternateName"
+            type="text"
+            value={alternateName}
+            onChange={(e) => setAlternateName(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+            placeholder="Alternate parent name"
+            disabled={saving}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="customerAlternateEmail" className="block text-sm font-medium text-slate-700 mb-1">
+            Alternate Email
+          </label>
+          <input
+            id="customerAlternateEmail"
+            type="email"
+            value={alternateEmail}
+            onChange={(e) => setAlternateEmail(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+            placeholder="alternate@example.com"
             disabled={saving}
           />
         </div>

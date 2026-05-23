@@ -1339,7 +1339,13 @@ export async function assignStudentToCustomer(studentId: string, customerId: str
   }
 }
 
-export async function updateCustomer(customerId: string, name: string, email: string) {
+export async function updateCustomer(
+  customerId: string,
+  name: string,
+  email: string,
+  alternateName?: string,
+  alternateEmail?: string,
+) {
   try {
     if (!name || !name.trim()) {
       throw new Error('Customer name is required');
@@ -1347,7 +1353,11 @@ export async function updateCustomer(customerId: string, name: string, email: st
 
     await sql`
       UPDATE customers
-      SET name = ${name.trim()}, email = ${email?.trim() || ''}
+      SET
+        name = ${name.trim()},
+        email = ${email?.trim() || ''},
+        alternate_name = ${alternateName?.trim() || null},
+        alternate_email = ${alternateEmail?.trim().toLowerCase() || null}
       WHERE id = ${customerId};
     `;
 

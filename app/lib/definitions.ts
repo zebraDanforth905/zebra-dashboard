@@ -14,6 +14,8 @@ export type Customer = {
   id: string;
   name: string;
   email: string;
+  alternate_name?: string | null;
+  alternate_email?: string | null;
   setup_up_qbo?: boolean;
 }
 
@@ -216,6 +218,8 @@ export type CustomerTableData = {
   id: string;
   name: string;
   email: string;
+  alternate_name?: string | null;
+  alternate_email?: string | null;
   set_up_qbo?: boolean;
   total_due: number;
   next_invoice_date: Date | null;

@@ -45,6 +45,11 @@ export default async function ({query, id}: {
                         >
                         <div className="font-medium truncate">{c.name}</div>
                         <div className="text-xs text-slate-500 truncate">{c.email}</div>
+                                                {(c.alternate_name || c.alternate_email) && (
+                                                    <div className="text-[11px] text-slate-400 truncate">
+                                                        Alt: {[c.alternate_name, c.alternate_email].filter(Boolean).join(' • ')}
+                                                    </div>
+                                                )}
                         </Link>
                     </li>
                     );
