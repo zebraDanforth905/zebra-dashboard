@@ -1820,6 +1820,27 @@ export async function updateCampSeatAssignment(
   }
 }
 
+export async function updateCampEnrolmentNote(
+  enrolmentId: string,
+  note: string
+) {
+  try {
+    const trimmedNote = note.trim();
+
+    await sql`
+      UPDATE camp_enrolments
+      SET note = ${trimmedNote || null}
+      WHERE id = ${enrolmentId};
+    `;
+
+    revalidateTag('camps', 'max');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating camp enrolment note:', error);
+    return { ok: false, error: 'Failed to update camp enrolment note' };
+  }
+}
+
 export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent[]) {
   try {
     const session = await auth();

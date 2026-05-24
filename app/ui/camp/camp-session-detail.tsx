@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { CampSessionWithEnrolments } from '@/app/lib/definitions';
-import { createSlipsForCampers, updateCampSeatAssignment } from '@/app/lib/actions';
+import { createSlipsForCampers, updateCampEnrolmentNote, updateCampSeatAssignment } from '@/app/lib/actions';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragOverlay, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
@@ -27,12 +27,53 @@ type CamperCardProps = {
   isDragging?: boolean;
   onUnassign?: () => void;
   showUnassign?: boolean;
+  noteOverride?: string | null;
+  onNoteSaved?: (enrolmentId: string, note: string | null) => void;
 };
 
-function CamperCard({ enrolment, isSelected, onToggleSelect, isDragging = false, onUnassign, showUnassign = false }: CamperCardProps) {
+function CamperCard({
+  enrolment,
+  isSelected,
+  onToggleSelect,
+  isDragging = false,
+  onUnassign,
+  showUnassign = false,
+  noteOverride,
+  onNoteSaved,
+}: CamperCardProps) {
   const formatDOB = (dob: Date | null) => {
     if (!dob) return 'N/A';
     return new Date(dob).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const currentNote = noteOverride !== undefined ? noteOverride : enrolment.note;
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(currentNote || '');
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
+  const openNoteEditor = () => {
+    setNoteDraft(currentNote || '');
+    setIsEditingNote(true);
+  };
+
+  const cancelNoteEditor = () => {
+    setNoteDraft(currentNote || '');
+    setIsEditingNote(false);
+  };
+
+  const saveNote = async () => {
+    setIsSavingNote(true);
+    const result = await updateCampEnrolmentNote(enrolment.id, noteDraft);
+
+    if (!result.ok) {
+      alert(result.error || 'Failed to save note');
+      setIsSavingNote(false);
+      return;
+    }
+
+    onNoteSaved?.(enrolment.id, noteDraft.trim() || null);
+    setIsEditingNote(false);
+    setIsSavingNote(false);
   };
 
   const getCampTypeBadge = (type: 'FD' | 'PM' | 'AM') => {
@@ -106,12 +147,71 @@ function CamperCard({ enrolment, isSelected, onToggleSelect, isDragging = false,
             <strong>Note:</strong> {enrolment.special_needs}
           </div>
         )}
+
+        <div className="mt-1 border border-slate-200 rounded p-1 bg-slate-50">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-[10px] font-semibold text-slate-700">Enrolment Note</span>
+            {!isEditingNote ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openNoteEditor();
+                }}
+                className="text-[10px] text-sky-700 hover:text-sky-800 font-medium"
+              >
+                {currentNote ? 'Edit' : 'Add'}
+              </button>
+            ) : null}
+          </div>
+
+          {isEditingNote ? (
+            <div className="space-y-1">
+              <textarea
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                rows={3}
+                placeholder="Add note for this enrolment"
+                className="w-full rounded border border-slate-300 px-1.5 py-1 text-[10px] text-slate-700"
+              />
+              <div className="flex justify-end gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    cancelNoteEditor();
+                  }}
+                  disabled={isSavingNote}
+                  className="px-1.5 py-0.5 text-[10px] border border-slate-300 rounded text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void saveNote();
+                  }}
+                  disabled={isSavingNote}
+                  className="px-1.5 py-0.5 text-[10px] rounded bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50"
+                >
+                  {isSavingNote ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
+          ) : currentNote ? (
+            <p className="text-[10px] text-slate-700 whitespace-pre-wrap break-words">{currentNote}</p>
+          ) : (
+            <p className="text-[10px] text-slate-400 italic">No note</p>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function DraggableCamperCard({ enrolment, isSelected, onToggleSelect }: CamperCardProps) {
+function DraggableCamperCard({ enrolment, isSelected, onToggleSelect, noteOverride, onNoteSaved }: CamperCardProps) {
   const {
     attributes,
     listeners,
@@ -129,7 +229,13 @@ function DraggableCamperCard({ enrolment, isSelected, onToggleSelect }: CamperCa
 
   return (
     <div ref={setNodeRef} style={style} className="cursor-move" {...attributes} {...listeners}>
-      <CamperCard enrolment={enrolment} isSelected={isSelected} onToggleSelect={onToggleSelect} />
+      <CamperCard
+        enrolment={enrolment}
+        isSelected={isSelected}
+        onToggleSelect={onToggleSelect}
+        noteOverride={noteOverride}
+        onNoteSaved={onNoteSaved}
+      />
     </div>
   );
 }
@@ -141,7 +247,9 @@ function SeatSpot({
   fdEnrolment,
   selectedIds,
   onToggleSelect,
-  onUnassign
+  onUnassign,
+  getNote,
+  onNoteSaved,
 }: { 
   seat: Seat; 
   amEnrolment: CampSessionWithEnrolments['enrolments'][0] | null;
@@ -150,6 +258,8 @@ function SeatSpot({
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onUnassign: (id: string) => void;
+  getNote: (id: string) => string | null;
+  onNoteSaved: (enrolmentId: string, note: string | null) => void;
 }) {
   const { setNodeRef: setDroppableRef, isOver } = useDroppable({
     id: seat.id,
@@ -222,6 +332,8 @@ function SeatSpot({
             isDragging={isFdDragging}
             showUnassign={true}
             onUnassign={() => onUnassign(fdEnrolment.id)}
+            noteOverride={getNote(fdEnrolment.id)}
+            onNoteSaved={onNoteSaved}
           />
         </div>
       ) : (
@@ -236,6 +348,8 @@ function SeatSpot({
                 isDragging={isAmDragging}
                 showUnassign={true}
                 onUnassign={() => onUnassign(amEnrolment.id)}
+                noteOverride={getNote(amEnrolment.id)}
+                onNoteSaved={onNoteSaved}
               />
             </div>
           ) : (
@@ -254,6 +368,8 @@ function SeatSpot({
                 isDragging={isPmDragging}
                 showUnassign={true}
                 onUnassign={() => onUnassign(pmEnrolment.id)}
+                noteOverride={getNote(pmEnrolment.id)}
+                onNoteSaved={onNoteSaved}
               />
             </div>
           ) : (
@@ -357,6 +473,7 @@ export default function CampSessionDetail({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isCreatingSlips, setIsCreatingSlips] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [noteOverrides, setNoteOverrides] = useState<Record<string, string | null>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -367,6 +484,17 @@ export default function CampSessionDetail({
   );
 
   const enrolmentMap = new Map(session.enrolments.map(e => [e.id, e]));
+
+  const getNote = (enrolmentId: string) => {
+    if (Object.prototype.hasOwnProperty.call(noteOverrides, enrolmentId)) {
+      return noteOverrides[enrolmentId];
+    }
+    return enrolmentMap.get(enrolmentId)?.note ?? null;
+  };
+
+  const handleNoteSaved = (enrolmentId: string, note: string | null) => {
+    setNoteOverrides((prev) => ({ ...prev, [enrolmentId]: note }));
+  };
   
   // Unassigned students are those not in ANY room
   const allSeats = [...room1Seats, ...room2Seats];
@@ -697,6 +825,8 @@ export default function CampSessionDetail({
                         selectedIds={selectedIds}
                         onToggleSelect={toggleSelect}
                         onUnassign={handleUnassign}
+                        getNote={getNote}
+                        onNoteSaved={handleNoteSaved}
                       />
                     );
                   })}
@@ -720,6 +850,8 @@ export default function CampSessionDetail({
                         enrolment={enrolment}
                         isSelected={selectedIds.has(enrolment.id)}
                         onToggleSelect={() => toggleSelect(enrolment.id)}
+                        noteOverride={getNote(enrolment.id)}
+                        onNoteSaved={handleNoteSaved}
                       />
                     ))
                   )}
@@ -736,6 +868,8 @@ export default function CampSessionDetail({
               isSelected={selectedIds.has(activeEnrolment.id)}
               onToggleSelect={() => {}}
               isDragging
+              noteOverride={getNote(activeEnrolment.id)}
+              onNoteSaved={handleNoteSaved}
             />
           ) : null}
         </DragOverlay>

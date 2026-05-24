@@ -1736,6 +1736,7 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
         course_id: string;
         camp_type: 'FD' | 'PM' | 'AM';
         assigned_seat_number: number | null;
+        note: string | null;
         special_needs: string | null;
         extended_care: boolean;
       }>;
@@ -1752,6 +1753,7 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
             'course_id', ce.course_id,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
+            'note', ce.note,
             'special_needs', s.special_needs,
             'extended_care', cs.extended_care
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
@@ -1795,6 +1797,7 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
         course_id: string;
         camp_type: 'FD' | 'PM' | 'AM';
         assigned_seat_number: number | null;
+        note: string | null;
         special_needs: string | null;
         extended_care: boolean;
       }>;
@@ -1811,6 +1814,7 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
             'course_id', ce.course_id,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
+            'note', ce.note,
             'special_needs', s.special_needs,
             'extended_care', cs.extended_care
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC

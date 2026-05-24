@@ -353,6 +353,7 @@ export type CampEnrolmentWithStudent = {
   course_id: string;
   camp_type: 'FD' | 'PM' | 'AM';
   assigned_seat_number: number | null;
+  note: string | null;
   special_needs: string | null;
   extended_care: boolean;
 };
