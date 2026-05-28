@@ -8,16 +8,16 @@ export const metadata: Metadata = {
 };
 
 const SUMMER_LABEL: Record<string, string> = {
-  enrolling: 'Enrolling in summer sessions',
-  pausing:   'Pausing for summer',
+  enrolling: 'Continuing weekly classes in July and August',
+  pausing:   'Not attending this summer (July and August)',
   no_change: 'No change — keeping current schedule',
-  other:     'Custom request',
+  other:     'Custom summer plan',
 };
 
 const FALL_LABEL: Record<string, string> = {
-  same:   'Keep current slot',
-  change: 'Requesting a different time',
-  pause:  'Pausing fall / not sure yet',
+  same:   'Keep current session',
+  change: 'Requesting a different class time starting in September',
+  pause:  'Not sure yet',
 };
 
 export default async function SubmittedPage({
@@ -70,14 +70,6 @@ export default async function SubmittedPage({
                         {s.session_labels.join(', ')}
                       </p>
                     )}
-                    {s.pickup_requested && (
-                      <p className="text-xs text-slate-600">
-                        <span className="text-slate-400">School pickup: </span>
-                        {s.pickup_school === 'other'
-                          ? (s.pickup_school_other ?? 'Other school')
-                          : (s.pickup_school ?? 'Requested')}
-                      </p>
-                    )}
                     {s.custom_notes && (
                       <p className="text-xs text-slate-600">
                         <span className="text-slate-400">Note: </span>
@@ -98,6 +90,20 @@ export default async function SubmittedPage({
                         {s.fall_session_labels.join(', ')}
                       </p>
                     )}
+                    {s.fall_notes && (
+                      <p className="text-xs text-slate-600">
+                        <span className="text-slate-400">Note: </span>
+                        <span className="italic">{s.fall_notes}</span>
+                      </p>
+                    )}
+                    {s.pickup_requested && (
+                      <p className="text-xs text-slate-600">
+                        <span className="text-slate-400">School pickup: </span>
+                        {s.pickup_school === 'other'
+                          ? (s.pickup_school_other ?? 'Other school')
+                          : (s.pickup_school ?? 'Requested')}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -107,10 +113,10 @@ export default async function SubmittedPage({
           {/* Footer notes */}
           <div className="text-center space-y-2 pt-2 border-t border-slate-100">
             <p className="text-sm text-slate-500">
-              Our staff will review your preferences and be in touch if we have any questions.
+              Our team will review your preferences and be in touch if we have any questions.
             </p>
             <p className="text-sm text-slate-500">
-              We&apos;ll reach out in August to re-confirm your fall schedule before September begins.
+              We&apos;ll reach out in August to confirm your fall schedule before classes begin in September.
             </p>
             {token && (
               <p className="text-xs text-slate-400 mt-1">

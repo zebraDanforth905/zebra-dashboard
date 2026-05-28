@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { ParentLinkRow } from '@/app/lib/definitions';
 import CopyLinkButton from './copy-link-button';
 import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
+import ClearExportButton from './clear-export-button';
 import LockedFieldCell from './locked-field-cell';
 import RefreshLinksButton from './refresh-links-button';
 import Link from 'next/link';
@@ -43,6 +45,7 @@ function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[
 }
 
 export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
+  const router = useRouter();
   const [filter, setFilter] = useState<FilterValue>('all');
   const filtered = applyFilter(rows, filter);
 
@@ -59,9 +62,10 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       try {
         const res = await refreshEmailsFromPortal();
         setRefreshResult(
-          `Refreshed ${res.updated}/${res.scanned} from portal` +
+          `Synced ${res.updated}/${res.scanned} from portal` +
             (res.fetchFailed > 0 ? ` · ${res.fetchFailed} fetch failed` : ''),
         );
+        router.refresh();
       } catch (err) {
         setRefreshResult(err instanceof Error ? err.message : 'Refresh failed');
       }
@@ -82,6 +86,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
           {FILTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
         <ExportCsvButton rows={filtered} label="Export CSV" />
+        <ClearExportButton rows={filtered} />
         <div className="h-5 border-l border-slate-200 hidden sm:block" />
         <RefreshLinksButton />
         <button
@@ -90,7 +95,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
           className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 transition disabled:opacity-40"
           title="Pull primary + alternate emails from portal family-view for every family (skips locked fields)"
         >
-          {isRefreshing ? 'Refreshing emails…' : 'Refresh Emails from Portal'}
+          {isRefreshing ? 'Syncing emails…' : 'Sync Emails from Portal'}
         </button>
         {refreshResult && (
           <span className="text-xs text-slate-500">{refreshResult}</span>
@@ -113,7 +118,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       {/* Table */}
       {rows.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 text-sm">
-          No tokens generated yet. Click "Generate All Tokens" to create links for all active families.
+          No tokens generated yet. Use Generate All Tokens to create links for all active families.
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">

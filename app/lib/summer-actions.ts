@@ -8,9 +8,13 @@ import { auth } from '@/auth';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
+type SessionUserWithType = {
+  user_type?: string;
+};
+
 async function requireAdmin(): Promise<void> {
   const session = await auth();
-  const userType = (session?.user as any)?.user_type;
+  const userType = (session?.user as SessionUserWithType | undefined)?.user_type;
   if (userType !== 'admin') {
     throw new Error('Forbidden: admin access required');
   }
@@ -89,6 +93,19 @@ export async function markTokensExported(tokenIds: string[]): Promise<{ updated:
   const rows = await sql<{ id: string }[]>`
     UPDATE parent_tokens
     SET last_exported_at = NOW(), export_count = export_count + 1
+    WHERE id::text = ANY(${tokenIds}::text[])
+    RETURNING id
+  `;
+  revalidateTag('summer-tokens', 'max');
+  return { updated: rows.length };
+}
+
+export async function clearExportedForTokens(tokenIds: string[]): Promise<{ updated: number }> {
+  await requireAdmin();
+  if (tokenIds.length === 0) return { updated: 0 };
+  const rows = await sql<{ id: string }[]>`
+    UPDATE parent_tokens
+    SET last_exported_at = NULL, export_count = 0
     WHERE id::text = ANY(${tokenIds}::text[])
     RETURNING id
   `;
@@ -217,7 +234,9 @@ export async function approveSummerRequest(
   }[]>`
     SELECT id, student_id, payload
     FROM parent_requests
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
     LIMIT 1
   `;
   if (reqs.length === 0) return { error: 'Request not found.' };
@@ -268,6 +287,8 @@ export async function approveSummerRequest(
           reviewed_by = 'staff',
           updated_at = NOW()
         WHERE id = ${requestId}::uuid
+          AND is_latest = TRUE
+          AND removed_at IS NULL
       `;
     });
   } else {
@@ -275,7 +296,9 @@ export async function approveSummerRequest(
     await sql`
       UPDATE parent_requests
       SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
-      WHERE id = ${requestId}::uuid AND is_latest = TRUE
+      WHERE id = ${requestId}::uuid
+        AND is_latest = TRUE
+        AND removed_at IS NULL
     `;
   }
 
@@ -294,6 +317,7 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
     FROM parent_requests
     WHERE is_latest = TRUE
       AND status = 'pending'
+      AND removed_at IS NULL
       AND request_type = 'summer_scheduling'
       AND payload->>'summer_status' = 'enrolling'
   `;
@@ -333,6 +357,8 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
           reviewed_by = 'staff',
           updated_at = NOW()
         WHERE id = ${req.id}::uuid
+          AND is_latest = TRUE
+          AND removed_at IS NULL
       `;
     });
     created++;
@@ -342,28 +368,34 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
   return { created, skipped };
 }
 
-export async function removeFromSummer(requestId: string): Promise<void> {
+export async function deleteSummerResponse(requestId: string): Promise<{ deleted: boolean }> {
   await requireAdmin();
   const reqs = await sql<{ enrolment_ids: string[] }[]>`
     SELECT enrolment_ids
-    FROM parent_requests WHERE id = ${requestId}::uuid LIMIT 1
-  `;
-  if (reqs.length === 0) return;
-  const { enrolment_ids } = reqs[0];
-  if (enrolment_ids?.length > 0) {
-    await sql`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
-  }
-  // Mark removed instead of deleting — preserves approval history.
-  // Drops is_latest so a fresh submission can take its place.
-  await sql`
-    UPDATE parent_requests
-    SET removed_at = NOW(),
-        is_latest = FALSE,
-        enrolment_ids = '{}'::uuid[],
-        updated_at = NOW()
+    FROM parent_requests
     WHERE id = ${requestId}::uuid
+      AND removed_at IS NULL
+    LIMIT 1
   `;
+  if (reqs.length === 0) return { deleted: false };
+  const { enrolment_ids } = reqs[0];
+  await sql.begin(async tx => {
+    if (enrolment_ids?.length > 0) {
+      await tx`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
+    }
+    // Soft-delete: hide from active response views while preserving audit history.
+    await tx`
+      UPDATE parent_requests
+      SET removed_at = NOW(),
+          is_latest = FALSE,
+          enrolment_ids = '{}'::uuid[],
+          updated_at = NOW()
+      WHERE id = ${requestId}::uuid
+    `;
+  });
   revalidateTag('summer-responses', 'max');
+  revalidateTag('summer-tokens', 'max');
+  return { deleted: true };
 }
 
 export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
@@ -373,6 +405,7 @@ export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
     SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
     WHERE is_latest = TRUE
       AND status = 'pending'
+      AND removed_at IS NULL
       AND request_type = 'summer_scheduling'
       AND payload->>'summer_status' = 'no_change'
     RETURNING id
@@ -386,7 +419,9 @@ export async function markAddedToPortal(requestId: string): Promise<void> {
   await sql`
     UPDATE parent_requests
     SET added_to_portal_at = NOW(), updated_at = NOW()
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
   `;
   revalidateTag('summer-responses', 'max');
 }
@@ -396,7 +431,9 @@ export async function clearAddedToPortal(requestId: string): Promise<void> {
   await sql`
     UPDATE parent_requests
     SET added_to_portal_at = NULL, updated_at = NOW()
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
   `;
   revalidateTag('summer-responses', 'max');
 }
@@ -406,7 +443,22 @@ export async function markNeedsFollowup(requestId: string): Promise<void> {
   await sql`
     UPDATE parent_requests
     SET status = 'needs_manual_followup', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+  `;
+  revalidateTag('summer-responses', 'max');
+}
+
+export async function clearFollowup(requestId: string): Promise<void> {
+  await requireAdmin();
+  await sql`
+    UPDATE parent_requests
+    SET status = 'pending', reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+      AND status = 'needs_manual_followup'
   `;
   revalidateTag('summer-responses', 'max');
 }
@@ -505,6 +557,7 @@ export async function submitSummerForm(
         WHERE token_id = ${token_id}::uuid
           AND student_id = ${Number(entry.student_id)}
           AND is_latest = TRUE
+          AND removed_at IS NULL
       `;
 
       const isOther = entry.summer_status === 'other';

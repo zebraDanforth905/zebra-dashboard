@@ -1,7 +1,5 @@
 // Tables
 
-import { StringValidation } from "zod/v3";
-
 export type User = {
   id: string;
   name: string;
@@ -307,13 +305,6 @@ export type RecurringInvoiceListData = {
   description: string;
 }
 
-export type StudentSpecificData = {
-
-}
-export type CustomerSpecificData = {
-
-}
-
 export type PickupListDisplay = {
   id: string;
   student_id: string;
@@ -422,6 +413,11 @@ export type RestartPayload = {
 export type OtherPayload = {
   fall_status?: 'same' | 'change' | 'pause';
   fall_session_ids?: string[];
+  fall_session_start_dates?: Record<string, string>;
+  pickup_requested?: boolean;
+  pickup_school?: 'Jackman' | 'Frankland' | 'other';
+  pickup_school_other?: string;
+  fall_notes?: string;
 };
 
 export type ParentRequestType = 'summer_scheduling' | 'restart' | 'other';
@@ -508,6 +504,7 @@ export type SubmittedStudentSummary = {
   pickup_school_other: string | null;
   fall_status: string | null;
   fall_session_labels: string[];
+  fall_notes: string | null;
   custom_notes: string | null;
 };
 
@@ -515,6 +512,13 @@ export type SubmittedChoices = {
   customer_name: string;
   customer_alternate_name: string | null;
   students: SubmittedStudentSummary[];
+};
+
+export type SessionChoiceSummary = {
+  session_id: string;
+  weekday: string;
+  start_time: string;
+  start_date: string | null;
 };
 
 export type SummerStats = {
@@ -536,11 +540,14 @@ export type SummerResponseRow = {
   parent_email: string;
   summer_status: SummerSchedulingPayload['summer_status'] | 'other';
   session_labels: string[];
+  session_choices: SessionChoiceSummary[];
   pickup_requested: boolean;
   pickup_school: string | null;
   pickup_school_other: string | null;
   fall_status: SummerSchedulingPayload['fall_status'] | null;
   fall_session_labels: string[];
+  fall_session_choices: SessionChoiceSummary[];
+  fall_notes: string | null;
   current_weekday: string | null;
   current_start_time: string | null;
   status: ParentRequestStatus;

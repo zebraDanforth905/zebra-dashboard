@@ -2,16 +2,17 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { SummerResponseRow, SummerStats } from '@/app/lib/definitions';
+import { SessionChoiceSummary, SummerResponseRow, SummerStats } from '@/app/lib/definitions';
 import {
   approveAllEnrolling,
-  removeFromSummer,
+  deleteSummerResponse,
   markAllNoChangeComplete,
   markAddedToPortal,
   clearAddedToPortal,
+  markNeedsFollowup,
+  clearFollowup,
 } from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
-import ResponseDetailsModal from './response-details-modal';
 
 function formatTime(t: string | null): string {
   if (!t) return '—';
@@ -23,6 +24,11 @@ function formatTime(t: string | null): string {
 
 function formatDate(d: Date): string {
   return new Date(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+}
+
+function formatStartDate(date: string | null): string | null {
+  if (!date) return null;
+  return new Date(`${date}T00:00:00`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
 }
 
 const SUMMER_STATUS_STYLE: Record<string, string> = {
@@ -163,7 +169,7 @@ function ApproveAllModal({ enrollingCount, onClose, onDone }: {
   );
 }
 
-function RemoveFromSummerButton({ requestId, onRemoved, onDone }: { requestId: string; onRemoved: (id: string) => void; onDone: () => void }) {
+function DeleteResponseButton({ requestId, onDeleted, onDone }: { requestId: string; onDeleted: (id: string) => void; onDone: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -171,29 +177,93 @@ function RemoveFromSummerButton({ requestId, onRemoved, onDone }: { requestId: s
     return (
       <button
         onClick={() => setConfirm(true)}
-        title="Test-only: deletes enrolments and resets request"
-        className="text-xs text-slate-400 hover:text-red-600 underline"
+        title="Delete this response from active response views"
+        className="text-xs px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition"
       >
-        Remove (test)
+        Delete Response
       </button>
     );
   }
   return (
     <span className="flex flex-col gap-1">
       <span className="text-[10px] text-red-700 leading-tight">
-        Deletes enrolments. For testing only.
+        Hide this response? Created enrolments from approval will be removed.
       </span>
       <span className="flex items-center gap-2">
         <button
           disabled={isPending}
-          onClick={() => startTransition(async () => { onRemoved(requestId); await removeFromSummer(requestId); onDone(); })}
+          onClick={() => startTransition(async () => {
+            const result = await deleteSummerResponse(requestId);
+            if (result.deleted) onDeleted(requestId);
+            onDone();
+          })}
           className="text-xs text-red-600 font-medium disabled:opacity-50"
         >
-          {isPending ? '…' : 'Confirm remove'}
+          {isPending ? '…' : 'Confirm Delete'}
         </button>
         <button onClick={() => setConfirm(false)} className="text-xs text-slate-400">Cancel</button>
       </span>
     </span>
+  );
+}
+
+function NotesCell({ summerNotes, fallNotes }: { summerNotes: string | null; fallNotes: string | null }) {
+  if (!summerNotes && !fallNotes) return <span className="text-slate-400">—</span>;
+  return (
+    <div className="space-y-1">
+      {summerNotes && (
+        <div>
+          <span className="font-medium text-slate-500">Summer: </span>
+          <span className="italic">{summerNotes}</span>
+        </div>
+      )}
+      {fallNotes && (
+        <div>
+          <span className="font-medium text-slate-500">Fall: </span>
+          <span className="italic">{fallNotes}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionChoicesCell({
+  choices,
+  fallbackLabels,
+}: {
+  choices: SessionChoiceSummary[];
+  fallbackLabels: string[];
+}) {
+  if (choices.length === 0) {
+    if (fallbackLabels.length === 0) return <span className="text-slate-400">—</span>;
+    return (
+      <div className="space-y-1">
+        {fallbackLabels.map((label, index) => <div key={index}>{label}</div>)}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {choices.map(choice => {
+        const startDate = formatStartDate(choice.start_date);
+        return (
+          <div key={choice.session_id} className="leading-tight">
+            <div className="font-medium text-slate-700">
+              {choice.weekday} {formatTime(choice.start_time)}
+            </div>
+            {startDate ? (
+              <div className="mt-0.5 text-[11px] text-slate-500">
+                Start: <span className="font-medium text-slate-700">{startDate}</span>
+              </div>
+            ) : (
+              <div className="mt-0.5 text-[11px] font-medium text-amber-700">
+                Start date missing
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -230,6 +300,37 @@ function AddedToPortalButton({
   );
 }
 
+function FollowupToggleButton({
+  requestId,
+  status,
+  onDone,
+}: {
+  requestId: string;
+  status: string;
+  onDone: () => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const isFollowup = status === 'needs_manual_followup';
+  return (
+    <button
+      disabled={isPending}
+      onClick={() => startTransition(async () => {
+        if (isFollowup) await clearFollowup(requestId);
+        else await markNeedsFollowup(requestId);
+        onDone();
+      })}
+      title={isFollowup ? 'Clear followup flag (reset to pending)' : 'Flag this response as needing manual followup'}
+      className={
+        isFollowup
+          ? 'text-xs px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition disabled:opacity-50'
+          : 'text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition disabled:opacity-50'
+      }
+    >
+      {isPending ? '…' : (isFollowup ? 'Clear Followup' : 'Mark Followup')}
+    </button>
+  );
+}
+
 function NoChangeCompleteButton({ onDone }: { onDone: (msg: string) => void }) {
   const [isPending, startTransition] = useTransition();
   return (
@@ -248,12 +349,12 @@ function NoChangeCompleteButton({ onDone }: { onDone: (msg: string) => void }) {
 
 export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[]; stats: SummerStats }) {
   const router = useRouter();
+  const [workflowFilter, setWorkflowFilter] = useState('needs_action');
   const [summerFilter, setSummerFilter] = useState('all');
   const [fallFilter, setFallFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [modalRow, setModalRow] = useState<SummerResponseRow | null>(null);
-  const [detailsRow, setDetailsRow] = useState<SummerResponseRow | null>(null);
   const [showApproveAllModal, setShowApproveAllModal] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
@@ -262,12 +363,24 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
 
   const filtered = rows.filter(r => {
     if (removedIds.has(r.request_id)) return false;
+    if (workflowFilter === 'needs_action' && r.added_to_portal_at) return false;
+    if (workflowFilter === 'added_to_portal' && !r.added_to_portal_at) return false;
     if (summerFilter !== 'all' && r.summer_status !== summerFilter) return false;
     if (fallFilter !== 'all' && r.fall_status !== fallFilter) return false;
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (search) {
       const q = search.toLowerCase();
-      if (!r.student_name.toLowerCase().includes(q) && !r.parent_name.toLowerCase().includes(q)) return false;
+      const searchableText = [
+        r.student_name,
+        r.parent_name,
+        r.parent_email,
+        r.custom_notes,
+        r.fall_notes,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!searchableText.includes(q)) return false;
     }
     return true;
   });
@@ -315,6 +428,15 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           className="h-8 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300"
         />
         <FilterSelect
+          value={workflowFilter}
+          onChange={setWorkflowFilter}
+          options={[
+            { value: 'needs_action',    label: 'Needs action' },
+            { value: 'all',             label: 'All responses' },
+            { value: 'added_to_portal', label: 'Added to portal' },
+          ]}
+        />
+        <FilterSelect
           value={summerFilter}
           onChange={setSummerFilter}
           options={[
@@ -344,9 +466,9 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
             { value: 'needs_manual_followup', label: 'Needs Followup' },
           ]}
         />
-        {(summerFilter !== 'all' || fallFilter !== 'all' || statusFilter !== 'all' || search) && (
+        {(workflowFilter !== 'needs_action' || summerFilter !== 'all' || fallFilter !== 'all' || statusFilter !== 'all' || search) && (
           <button
-            onClick={() => { setSummerFilter('all'); setFallFilter('all'); setStatusFilter('all'); setSearch(''); }}
+            onClick={() => { setWorkflowFilter('needs_action'); setSummerFilter('all'); setFallFilter('all'); setStatusFilter('all'); setSearch(''); }}
             className="text-xs text-slate-500 underline"
           >
             Clear
@@ -406,9 +528,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                     <SummerBadge status={row.summer_status} />
                   </td>
                   <td className="px-4 py-3 text-slate-600 text-xs">
-                    {row.session_labels.length > 0
-                      ? row.session_labels.map((l, i) => <div key={i}>{l}</div>)
-                      : <span className="text-slate-400">—</span>}
+                    <SessionChoicesCell choices={row.session_choices} fallbackLabels={row.session_labels} />
                   </td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
                     {row.pickup_requested ? (
@@ -425,14 +545,10 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                     {row.fall_status ? (FALL_STATUS_LABEL[row.fall_status] ?? row.fall_status) : <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-slate-600 text-xs">
-                    {row.fall_session_labels.length > 0
-                      ? row.fall_session_labels.map((l, i) => <div key={i}>{l}</div>)
-                      : <span className="text-slate-400">—</span>}
+                    <SessionChoicesCell choices={row.fall_session_choices} fallbackLabels={row.fall_session_labels} />
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[140px]">
-                    {row.custom_notes
-                      ? <span className="italic">{row.custom_notes}</span>
-                      : <span className="text-slate-400">—</span>}
+                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[180px]">
+                    <NotesCell summerNotes={row.custom_notes} fallNotes={row.fall_notes} />
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={row.status} />
@@ -453,20 +569,19 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                       >
                         {row.status === 'completed' ? 'Approve Again' : 'Review'}
                       </button>
-                      <button
-                        onClick={() => setDetailsRow(row)}
-                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
-                      >
-                        Details
-                      </button>
                       <AddedToPortalButton
                         requestId={row.request_id}
                         addedAt={row.added_to_portal_at}
                         onDone={refresh}
                       />
-                      <RemoveFromSummerButton
+                      <FollowupToggleButton
                         requestId={row.request_id}
-                        onRemoved={id => setRemovedIds(prev => new Set(prev).add(id))}
+                        status={row.status}
+                        onDone={refresh}
+                      />
+                      <DeleteResponseButton
+                        requestId={row.request_id}
+                        onDeleted={id => setRemovedIds(prev => new Set(prev).add(id))}
                         onDone={refresh}
                       />
                     </div>
@@ -483,13 +598,6 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           row={modalRow}
           onClose={() => setModalRow(null)}
           onApproved={() => { setModalRow(null); refresh(); }}
-        />
-      )}
-
-      {detailsRow && (
-        <ResponseDetailsModal
-          row={detailsRow}
-          onClose={() => setDetailsRow(null)}
         />
       )}
 

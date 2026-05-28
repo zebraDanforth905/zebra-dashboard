@@ -26,7 +26,7 @@ export default async function SummerRegPage({
         <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm p-8 text-center">
           <p className="text-slate-700 font-medium">Summer times coming soon — check back shortly.</p>
           <p className="text-slate-500 text-sm mt-2">
-            We're finalizing the summer schedule. This link will be ready once sessions are posted.
+            We&apos;re finalizing the summer schedule. This link will be ready once sessions are posted.
           </p>
         </div>
       </PageShell>
@@ -39,10 +39,10 @@ export default async function SummerRegPage({
         <p className="text-slate-500 text-sm">Hi Zebra family,</p>
         <h1 className="text-2xl font-semibold text-slate-800">Summer & Fall Schedule</h1>
         <div className="rounded-xl bg-sky-50 ring-1 ring-sky-100 px-4 py-3 text-sm text-sky-800 space-y-1">
-          <p>Choose your child's summer evening class schedule below.</p>
-          <p>This is for your ongoing summer schedule — not for one-time date changes.</p>
-          <p>You can select multiple time slots if your child will attend more than one session per week.</p>
-          <p>For each child, please also indicate your September plan. We'll reach out in August to re-confirm before the fall session begins.</p>
+          <p>Please use this form to share your child&apos;s preferred schedule for July and August, plus your plan for classes starting in September.</p>
+          <p>For summer, choose whether your child will continue weekly classes, take a break, or request a custom plan.</p>
+          <p>You can select multiple sessions if your child will attend more than once per week.</p>
+          <p>Our team will follow up in August if anything needs confirming before classes begin in September.</p>
         </div>
       </div>
       <SummerRegForm data={data} token={token} />

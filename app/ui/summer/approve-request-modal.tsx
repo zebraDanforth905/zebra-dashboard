@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { approveSummerRequest } from '@/app/lib/summer-actions';
-import { SummerResponseRow } from '@/app/lib/definitions';
+import { SessionChoiceSummary, SummerResponseRow } from '@/app/lib/definitions';
 
 const FALL_STATUS_LABEL: Record<string, string> = {
   same:   'Same as current',
@@ -17,6 +17,42 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dt className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">{label}</dt>
       <dd className="text-sm text-slate-800">{children}</dd>
     </div>
+  );
+}
+
+function formatStartDate(date: string | null): string | null {
+  if (!date) return null;
+  return new Date(`${date}T00:00:00`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+}
+
+function SessionChoicesList({
+  choices,
+  fallbackLabels,
+}: {
+  choices: SessionChoiceSummary[];
+  fallbackLabels: string[];
+}) {
+  if (choices.length === 0) {
+    return (
+      <ul className="space-y-0.5">
+        {fallbackLabels.map((label, index) => <li key={index}>{label}</li>)}
+      </ul>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {choices.map(choice => {
+        const startDate = formatStartDate(choice.start_date);
+        return (
+          <li key={choice.session_id}>
+            <div className="font-medium">{choice.weekday} {formatTime(choice.start_time)}</div>
+            <div className={startDate ? 'text-xs text-slate-500' : 'text-xs font-medium text-amber-700'}>
+              {startDate ? `Start: ${startDate}` : 'Start date missing'}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -99,9 +135,7 @@ export default function ApproveRequestModal({
 
             {row.session_labels.length > 0 && (
               <Field label="Sessions Requested">
-                <ul className="space-y-0.5">
-                  {row.session_labels.map((l, i) => <li key={i}>{l}</li>)}
-                </ul>
+                <SessionChoicesList choices={row.session_choices} fallbackLabels={row.session_labels} />
               </Field>
             )}
 
@@ -113,15 +147,26 @@ export default function ApproveRequestModal({
 
             {row.fall_session_labels.length > 0 && (
               <Field label="Fall Sessions">
-                <ul className="space-y-0.5">
-                  {row.fall_session_labels.map((l, i) => <li key={i}>{l}</li>)}
-                </ul>
+                <SessionChoicesList choices={row.fall_session_choices} fallbackLabels={row.fall_session_labels} />
               </Field>
             )}
 
-            {row.custom_notes && (
+            {(row.custom_notes || row.fall_notes) && (
               <Field label="Notes">
-                <span className="italic text-slate-600">{row.custom_notes}</span>
+                <div className="space-y-1 text-slate-600">
+                  {row.custom_notes && (
+                    <div>
+                      <span className="font-medium text-slate-500">Summer: </span>
+                      <span className="italic">{row.custom_notes}</span>
+                    </div>
+                  )}
+                  {row.fall_notes && (
+                    <div>
+                      <span className="font-medium text-slate-500">Fall: </span>
+                      <span className="italic">{row.fall_notes}</span>
+                    </div>
+                  )}
+                </div>
               </Field>
             )}
 

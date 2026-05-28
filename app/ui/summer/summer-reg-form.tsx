@@ -20,6 +20,28 @@ type StudentFormEntry = {
   fall_notes?: string;
 };
 
+const PICKUP_WEEKDAYS = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday']);
+
+function isPickupSession(weekday: string | null, startTime: string | null): boolean {
+  if (!weekday || !startTime || !PICKUP_WEEKDAYS.has(weekday)) return false;
+  const [hour, minute] = startTime.split(':').map(Number);
+  return hour === 16 && minute === 0;
+}
+
+function isPickupVisible(
+  student: ParentFormData['students'][number],
+  sel: StudentCardState,
+  fallSessions: ParentFormData['fall_sessions'],
+): boolean {
+  if (sel.fall_status === 'same') {
+    return isPickupSession(student.current_weekday, student.current_start_time);
+  }
+  if (sel.fall_status !== 'change') return false;
+  return fallSessions.some(
+    session => sel.fall_session_ids.includes(session.id) && isPickupSession(session.weekday, session.start_time),
+  );
+}
+
 function initState(student: ParentFormData['students'][number]): StudentCardState {
   const req = student.latest_request;
   if (req) {
@@ -62,10 +84,11 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
 
   const isValid = data.students.every(s => {
     const sel = selections[s.student_id];
+    const pickupVisible = isPickupVisible(s, sel, data.fall_sessions);
     if (!sel.summer_status) return false;
     if (sel.summer_status === 'enrolling' && sel.session_ids.length === 0) return false;
     if (sel.summer_status === 'other' && !sel.custom_notes.trim()) return false;
-    if (sel.pickup_requested) {
+    if (pickupVisible && sel.pickup_requested) {
       if (!sel.pickup_school) return false;
       if (sel.pickup_school === 'other' && !sel.pickup_school_other.trim()) return false;
     }
@@ -76,19 +99,21 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
 
   const entries: StudentFormEntry[] = data.students.map(s => {
     const sel = selections[s.student_id];
+    const pickupVisible = isPickupVisible(s, sel, data.fall_sessions);
+    const pickupRequested = pickupVisible && sel.pickup_requested;
     return {
       student_id: s.student_id,
       summer_status: (sel.summer_status ?? 'other') as StudentFormEntry['summer_status'],
       session_ids: sel.session_ids,
       session_start_dates: sel.session_start_dates,
-      custom_notes: sel.custom_notes || undefined,
-      pickup_requested: sel.pickup_requested || undefined,
-      pickup_school: sel.pickup_requested ? (sel.pickup_school ?? undefined) : undefined,
-      pickup_school_other: sel.pickup_requested && sel.pickup_school === 'other' ? sel.pickup_school_other || undefined : undefined,
+      custom_notes: sel.summer_status === 'other' ? sel.custom_notes || undefined : undefined,
+      pickup_requested: pickupRequested || undefined,
+      pickup_school: pickupRequested ? (sel.pickup_school ?? undefined) : undefined,
+      pickup_school_other: pickupRequested && sel.pickup_school === 'other' ? sel.pickup_school_other || undefined : undefined,
       fall_status: sel.fall_status as 'same' | 'change' | 'pause',
       fall_session_ids: sel.fall_session_ids,
       fall_session_start_dates: sel.fall_session_start_dates,
-      fall_notes: sel.fall_notes || undefined,
+      fall_notes: sel.fall_status === 'pause' ? sel.fall_notes || undefined : undefined,
     };
   });
 

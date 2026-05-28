@@ -8,13 +8,17 @@ import { Metadata } from 'next';
 
 export const metadata: Metadata = { title: 'Summer Registration' };
 
+type SessionUserWithType = {
+  user_type?: string;
+};
+
 export default async function SummerPage({
   searchParams,
 }: {
   searchParams: Promise<{ tab?: string }>;
 }) {
   const session = await auth();
-  const userType = (session?.user as any)?.user_type;
+  const userType = (session?.user as SessionUserWithType | undefined)?.user_type;
   if (userType !== 'admin') {
     redirect('/dashboard');
   }
