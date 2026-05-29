@@ -20,12 +20,40 @@ type StudentFormEntry = {
   fall_notes?: string;
 };
 
-const PICKUP_WEEKDAYS = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday']);
+const PICKUP_WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday']);
 
 function isPickupSession(weekday: string | null, startTime: string | null): boolean {
-  if (!weekday || !startTime || !PICKUP_WEEKDAYS.has(weekday)) return false;
+  if (!weekday || !startTime || !PICKUP_WEEKDAYS.has(weekday.trim().toLowerCase())) return false;
   const [hour, minute] = startTime.split(':').map(Number);
   return hour === 16 && minute === 0;
+}
+
+function formatTitleCase(value: string): string {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function normalizePickupSchool(school: string | null): Pick<StudentCardState, 'pickup_school' | 'pickup_school_other'> {
+  if (!school) return { pickup_school: null, pickup_school_other: '' };
+  const normalized = school.trim().toLowerCase();
+  if (normalized === 'jackman') return { pickup_school: 'Jackman', pickup_school_other: '' };
+  if (normalized === 'frankland') return { pickup_school: 'Frankland', pickup_school_other: '' };
+  return { pickup_school: 'other', pickup_school_other: formatTitleCase(school) };
+}
+
+function currentPickupDefaults(student: ParentFormData['students'][number]): Pick<StudentCardState, 'pickup_requested' | 'pickup_school' | 'pickup_school_other'> {
+  if (!isPickupSession(student.current_weekday, student.current_start_time)) {
+    return { pickup_requested: false, pickup_school: null, pickup_school_other: '' };
+  }
+  const pickup = normalizePickupSchool(student.current_pickup_school);
+  return {
+    pickup_requested: pickup.pickup_school !== null,
+    pickup_school: pickup.pickup_school,
+    pickup_school_other: pickup.pickup_school_other,
+  };
 }
 
 function isPickupVisible(
@@ -44,17 +72,28 @@ function isPickupVisible(
 
 function initState(student: ParentFormData['students'][number]): StudentCardState {
   const req = student.latest_request;
+  const fallStatus = req?.fall_status ?? 'same';
+  const summerStatus =
+    student.latest_request_type === 'other'
+      ? 'other'
+      : req?.summer_status === 'no_change'
+        ? null
+        : (req?.summer_status ?? null);
+  const defaultPickup =
+    fallStatus === 'same'
+      ? currentPickupDefaults(student)
+      : { pickup_requested: false, pickup_school: null, pickup_school_other: '' };
+
   if (req) {
     return {
-      // 'no_change' removed from form; prior submissions with it start blank
-      summer_status: (req.summer_status === 'no_change' ? null : req.summer_status) ?? null,
+      summer_status: summerStatus,
       session_ids: req.session_ids ?? [],
       session_start_dates: req.session_start_dates ?? {},
-      custom_notes: '',
-      pickup_requested: req.pickup_requested ?? false,
-      pickup_school: req.pickup_school ?? null,
-      pickup_school_other: req.pickup_school_other ?? '',
-      fall_status: req.fall_status ?? 'same',
+      custom_notes: student.latest_request_type === 'other' ? (student.latest_custom_notes ?? '') : '',
+      pickup_requested: req.pickup_requested ?? defaultPickup.pickup_requested,
+      pickup_school: req.pickup_school ?? defaultPickup.pickup_school,
+      pickup_school_other: req.pickup_school_other ?? defaultPickup.pickup_school_other,
+      fall_status: fallStatus,
       fall_session_ids: req.fall_session_ids ?? [],
       fall_session_start_dates: req.fall_session_start_dates ?? {},
       fall_notes: req.fall_notes ?? '',
@@ -65,9 +104,7 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
     session_ids: [],
     session_start_dates: {},
     custom_notes: '',
-    pickup_requested: false,
-    pickup_school: null,
-    pickup_school_other: '',
+    ...defaultPickup,
     fall_status: 'same',
     fall_session_ids: [],
     fall_session_start_dates: {},
@@ -101,18 +138,20 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
     const sel = selections[s.student_id];
     const pickupVisible = isPickupVisible(s, sel, data.fall_sessions);
     const pickupRequested = pickupVisible && sel.pickup_requested;
+    const enrolling = sel.summer_status === 'enrolling';
+    const changingFall = sel.fall_status === 'change';
     return {
       student_id: s.student_id,
       summer_status: (sel.summer_status ?? 'other') as StudentFormEntry['summer_status'],
-      session_ids: sel.session_ids,
-      session_start_dates: sel.session_start_dates,
+      session_ids: enrolling ? sel.session_ids : [],
+      session_start_dates: enrolling ? sel.session_start_dates : {},
       custom_notes: sel.summer_status === 'other' ? sel.custom_notes || undefined : undefined,
-      pickup_requested: pickupRequested || undefined,
+      pickup_requested: pickupVisible ? sel.pickup_requested : undefined,
       pickup_school: pickupRequested ? (sel.pickup_school ?? undefined) : undefined,
       pickup_school_other: pickupRequested && sel.pickup_school === 'other' ? sel.pickup_school_other || undefined : undefined,
       fall_status: sel.fall_status as 'same' | 'change' | 'pause',
-      fall_session_ids: sel.fall_session_ids,
-      fall_session_start_dates: sel.fall_session_start_dates,
+      fall_session_ids: changingFall ? sel.fall_session_ids : [],
+      fall_session_start_dates: changingFall ? sel.fall_session_start_dates : {},
       fall_notes: sel.fall_status === 'pause' ? sel.fall_notes || undefined : undefined,
     };
   });
@@ -144,7 +183,7 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
         disabled={isPending || !isValid}
         className="w-full rounded-lg bg-sky-600 px-4 py-3 text-white font-medium shadow-lg shadow-sky-900/20 hover:bg-sky-500 active:scale-[0.99] transition disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {isPending ? 'Submitting…' : 'Submit Summer & Fall Schedule'}
+        {isPending ? 'Submitting…' : 'Submit Summer & Fall Plans'}
       </button>
     </form>
   );

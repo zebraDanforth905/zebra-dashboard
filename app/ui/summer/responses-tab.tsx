@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { useMemo, useState, useTransition } from 'react';
 import { SessionChoiceSummary, SummerResponseRow, SummerStats } from '@/app/lib/definitions';
 import {
   approveAllEnrolling,
@@ -14,6 +13,8 @@ import {
 } from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
 
+type ResponsePatch = Partial<Pick<SummerResponseRow, 'status' | 'added_to_portal_at'>>;
+
 function formatTime(t: string | null): string {
   if (!t) return '—';
   const [h, m] = t.split(':').map(Number);
@@ -22,13 +23,15 @@ function formatTime(t: string | null): string {
   return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' });
+
 function formatDate(d: Date): string {
-  return new Date(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  return SHORT_DATE_FORMATTER.format(new Date(d));
 }
 
 function formatStartDate(date: string | null): string | null {
   if (!date) return null;
-  return new Date(`${date}T00:00:00`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  return SHORT_DATE_FORMATTER.format(new Date(`${date}T00:00:00`));
 }
 
 const SUMMER_STATUS_STYLE: Record<string, string> = {
@@ -88,6 +91,19 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
+function deriveStats(baseStats: SummerStats, rows: SummerResponseRow[]): SummerStats {
+  const respondedFamilies = new Set(rows.map(row => `${row.parent_email}:${row.parent_name}`));
+  return {
+    ...baseStats,
+    responded: respondedFamilies.size,
+    enrolling: rows.filter(row => row.summer_status === 'enrolling').length,
+    pausing: rows.filter(row => row.summer_status === 'pausing').length,
+    no_change: rows.filter(row => row.summer_status === 'no_change').length,
+    pending: rows.filter(row => row.status === 'pending').length,
+    needs_followup: rows.filter(row => row.status === 'needs_manual_followup').length,
+  };
+}
+
 function FilterSelect({ value, onChange, options }: {
   value: string;
   onChange: (v: string) => void;
@@ -107,7 +123,7 @@ function FilterSelect({ value, onChange, options }: {
 function ApproveAllModal({ enrollingCount, onClose, onDone }: {
   enrollingCount: number;
   onClose: () => void;
-  onDone: (msg: string) => void;
+  onDone: (msg: string, completedIds: string[]) => void;
 }) {
   const [startDate, setStartDate] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -117,11 +133,12 @@ function ApproveAllModal({ enrollingCount, onClose, onDone }: {
     if (!startDate) { setError('Start date is required.'); return; }
     setError(null);
     startTransition(async () => {
-      const { created, skipped } = await approveAllEnrolling(startDate);
+      const { created, skipped, completedIds } = await approveAllEnrolling(startDate);
       onDone(
         skipped > 0
           ? `Approved ${created}, skipped ${skipped} (no course to inherit).`
           : `Approved ${created} enrolment${created !== 1 ? 's' : ''}.`,
+        completedIds,
       );
       onClose();
     });
@@ -169,7 +186,7 @@ function ApproveAllModal({ enrollingCount, onClose, onDone }: {
   );
 }
 
-function DeleteResponseButton({ requestId, onDeleted, onDone }: { requestId: string; onDeleted: (id: string) => void; onDone: () => void }) {
+function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onDeleted: (id: string) => void }) {
   const [confirm, setConfirm] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -195,7 +212,6 @@ function DeleteResponseButton({ requestId, onDeleted, onDone }: { requestId: str
           onClick={() => startTransition(async () => {
             const result = await deleteSummerResponse(requestId);
             if (result.deleted) onDeleted(requestId);
-            onDone();
           })}
           className="text-xs text-red-600 font-medium disabled:opacity-50"
         >
@@ -270,18 +286,21 @@ function SessionChoicesCell({
 function AddedToPortalButton({
   requestId,
   addedAt,
-  onDone,
+  onChanged,
 }: {
   requestId: string;
   addedAt: Date | null;
-  onDone: () => void;
+  onChanged: (requestId: string, addedAt: Date | null) => void;
 }) {
   const [isPending, startTransition] = useTransition();
   if (addedAt) {
     return (
       <button
         disabled={isPending}
-        onClick={() => startTransition(async () => { await clearAddedToPortal(requestId); onDone(); })}
+        onClick={() => startTransition(async () => {
+          await clearAddedToPortal(requestId);
+          onChanged(requestId, null);
+        })}
         title={`Added to portal ${formatDate(addedAt)} — click to undo`}
         className="text-xs px-2 py-1 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition disabled:opacity-50"
       >
@@ -292,7 +311,10 @@ function AddedToPortalButton({
   return (
     <button
       disabled={isPending}
-      onClick={() => startTransition(async () => { await markAddedToPortal(requestId); onDone(); })}
+      onClick={() => startTransition(async () => {
+        await markAddedToPortal(requestId);
+        onChanged(requestId, new Date());
+      })}
       className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
     >
       {isPending ? '…' : 'Added to Portal'}
@@ -303,11 +325,11 @@ function AddedToPortalButton({
 function FollowupToggleButton({
   requestId,
   status,
-  onDone,
+  onChanged,
 }: {
   requestId: string;
   status: string;
-  onDone: () => void;
+  onChanged: (requestId: string, status: SummerResponseRow['status']) => void;
 }) {
   const [isPending, startTransition] = useTransition();
   const isFollowup = status === 'needs_manual_followup';
@@ -315,9 +337,13 @@ function FollowupToggleButton({
     <button
       disabled={isPending}
       onClick={() => startTransition(async () => {
-        if (isFollowup) await clearFollowup(requestId);
-        else await markNeedsFollowup(requestId);
-        onDone();
+        if (isFollowup) {
+          await clearFollowup(requestId);
+          onChanged(requestId, 'pending');
+        } else {
+          await markNeedsFollowup(requestId);
+          onChanged(requestId, 'needs_manual_followup');
+        }
       })}
       title={isFollowup ? 'Clear followup flag (reset to pending)' : 'Flag this response as needing manual followup'}
       className={
@@ -331,13 +357,16 @@ function FollowupToggleButton({
   );
 }
 
-function NoChangeCompleteButton({ onDone }: { onDone: (msg: string) => void }) {
+function NoChangeCompleteButton({ onDone }: { onDone: (msg: string, updatedIds: string[]) => void }) {
   const [isPending, startTransition] = useTransition();
   return (
     <button
       onClick={() => startTransition(async () => {
-        const { updated } = await markAllNoChangeComplete();
-        onDone(updated === 0 ? 'No pending no-change requests.' : `Marked ${updated} no-change as complete.`);
+        const { updated, updatedIds } = await markAllNoChangeComplete();
+        onDone(
+          updated === 0 ? 'No pending no-change requests.' : `Marked ${updated} no-change as complete.`,
+          updatedIds,
+        );
       })}
       disabled={isPending}
       className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 transition disabled:opacity-50"
@@ -348,7 +377,8 @@ function NoChangeCompleteButton({ onDone }: { onDone: (msg: string) => void }) {
 }
 
 export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[]; stats: SummerStats }) {
-  const router = useRouter();
+  const [rowPatches, setRowPatches] = useState<Record<string, ResponsePatch>>({});
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [workflowFilter, setWorkflowFilter] = useState('needs_action');
   const [summerFilter, setSummerFilter] = useState('all');
   const [fallFilter, setFallFilter] = useState('all');
@@ -357,19 +387,62 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
   const [modalRow, setModalRow] = useState<SummerResponseRow | null>(null);
   const [showApproveAllModal, setShowApproveAllModal] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
-  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
-  function refresh() { router.refresh(); }
+  const currentRows = useMemo(
+    () => rows
+      .filter(row => !removedIds.has(row.request_id))
+      .map(row => ({ ...row, ...(rowPatches[row.request_id] ?? {}) })),
+    [removedIds, rowPatches, rows],
+  );
+  const hasLocalChanges = removedIds.size > 0 || Object.keys(rowPatches).length > 0;
+  const currentStats = useMemo(
+    () => (hasLocalChanges ? deriveStats(stats, currentRows) : stats),
+    [currentRows, hasLocalChanges, stats],
+  );
 
-  const filtered = rows.filter(r => {
-    if (removedIds.has(r.request_id)) return false;
+  function patchResponse(requestId: string, patch: ResponsePatch) {
+    setRowPatches(prev => ({
+      ...prev,
+      [requestId]: { ...(prev[requestId] ?? {}), ...patch },
+    }));
+    setModalRow(prevRow => (
+      prevRow?.request_id === requestId ? { ...prevRow, ...patch } : prevRow
+    ));
+  }
+
+  function patchResponses(requestIds: string[], patch: ResponsePatch) {
+    const ids = new Set(requestIds);
+    if (ids.size === 0) return;
+    setRowPatches(prev => {
+      const next = { ...prev };
+      for (const id of ids) {
+        next[id] = { ...(next[id] ?? {}), ...patch };
+      }
+      return next;
+    });
+    setModalRow(prevRow => (
+      prevRow && ids.has(prevRow.request_id) ? { ...prevRow, ...patch } : prevRow
+    ));
+  }
+
+  function removeResponse(requestId: string) {
+    setRemovedIds(prev => new Set(prev).add(requestId));
+    setRowPatches(prev => {
+      const next = { ...prev };
+      delete next[requestId];
+      return next;
+    });
+    setModalRow(prevRow => (prevRow?.request_id === requestId ? null : prevRow));
+  }
+
+  const normalizedSearch = search.trim().toLowerCase();
+  const filtered = useMemo(() => currentRows.filter(r => {
     if (workflowFilter === 'needs_action' && r.added_to_portal_at) return false;
     if (workflowFilter === 'added_to_portal' && !r.added_to_portal_at) return false;
     if (summerFilter !== 'all' && r.summer_status !== summerFilter) return false;
     if (fallFilter !== 'all' && r.fall_status !== fallFilter) return false;
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
+    if (normalizedSearch) {
       const searchableText = [
         r.student_name,
         r.parent_name,
@@ -380,32 +453,32 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
-      if (!searchableText.includes(q)) return false;
+      if (!searchableText.includes(normalizedSearch)) return false;
     }
     return true;
-  });
+  }), [currentRows, fallFilter, normalizedSearch, statusFilter, summerFilter, workflowFilter]);
 
-  const notResponded = stats.total_families - stats.responded;
-  const pendingEnrollingCount = rows.filter(
+  const notResponded = currentStats.total_families - currentStats.responded;
+  const pendingEnrollingCount = useMemo(() => currentRows.filter(
     r => r.summer_status === 'enrolling' && r.status === 'pending',
-  ).length;
+  ).length, [currentRows]);
 
   return (
     <div className="space-y-4">
       {/* Stats row 1 */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard label="Total Families"  value={stats.total_families} />
-        <StatCard label="Responded"       value={stats.responded}   color="text-emerald-700" />
+        <StatCard label="Total Families"  value={currentStats.total_families} />
+        <StatCard label="Responded"       value={currentStats.responded}   color="text-emerald-700" />
         <StatCard label="Not Responded"   value={notResponded}      color={notResponded > 0 ? 'text-amber-600' : 'text-slate-800'} />
-        <StatCard label="Exported"        value={stats.exported} />
+        <StatCard label="Exported"        value={currentStats.exported} />
       </div>
 
       {/* Stats row 2 */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard label="Enrolling"       value={stats.enrolling}      color="text-emerald-700" />
-        <StatCard label="Pausing"         value={stats.pausing}        color="text-orange-600" />
-        <StatCard label="No Change"       value={stats.no_change}      color="text-sky-700" />
-        <StatCard label="Needs Followup"  value={stats.needs_followup} color={stats.needs_followup > 0 ? 'text-red-600' : 'text-slate-800'} />
+        <StatCard label="Enrolling"       value={currentStats.enrolling}      color="text-emerald-700" />
+        <StatCard label="Pausing"         value={currentStats.pausing}        color="text-orange-600" />
+        <StatCard label="No Change"       value={currentStats.no_change}      color="text-sky-700" />
+        <StatCard label="Needs Followup"  value={currentStats.needs_followup} color={currentStats.needs_followup > 0 ? 'text-red-600' : 'text-slate-800'} />
       </div>
 
       {/* Toolbar */}
@@ -417,7 +490,12 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         >
           Approve All Enrolling ({pendingEnrollingCount})
         </button>
-        <NoChangeCompleteButton onDone={msg => { setBulkMessage(msg); refresh(); }} />
+        <NoChangeCompleteButton
+          onDone={(msg, updatedIds) => {
+            setBulkMessage(msg);
+            patchResponses(updatedIds, { status: 'completed' });
+          }}
+        />
         {bulkMessage && <span className="text-xs text-slate-500">{bulkMessage}</span>}
         <div className="h-5 border-l border-slate-200 hidden sm:block" />
         <input
@@ -475,11 +553,11 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           </button>
         )}
         <span className="ml-auto text-xs text-slate-500">
-          {filtered.length} of {rows.length} responses
+          {filtered.length} of {currentRows.length} responses
         </span>
       </div>
 
-      {rows.length === 0 ? (
+      {currentRows.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 text-sm">
           No responses yet. Families will appear here once they submit their form.
         </div>
@@ -572,17 +650,16 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                       <AddedToPortalButton
                         requestId={row.request_id}
                         addedAt={row.added_to_portal_at}
-                        onDone={refresh}
+                        onChanged={(id, addedAt) => patchResponse(id, { added_to_portal_at: addedAt })}
                       />
                       <FollowupToggleButton
                         requestId={row.request_id}
                         status={row.status}
-                        onDone={refresh}
+                        onChanged={(id, status) => patchResponse(id, { status })}
                       />
                       <DeleteResponseButton
                         requestId={row.request_id}
-                        onDeleted={id => setRemovedIds(prev => new Set(prev).add(id))}
-                        onDone={refresh}
+                        onDeleted={removeResponse}
                       />
                     </div>
                   </td>
@@ -597,7 +674,10 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         <ApproveRequestModal
           row={modalRow}
           onClose={() => setModalRow(null)}
-          onApproved={() => { setModalRow(null); refresh(); }}
+          onApproved={requestId => {
+            patchResponse(requestId, { status: 'completed' });
+            setModalRow(null);
+          }}
         />
       )}
 
@@ -605,7 +685,10 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         <ApproveAllModal
           enrollingCount={pendingEnrollingCount}
           onClose={() => setShowApproveAllModal(false)}
-          onDone={msg => { setBulkMessage(msg); refresh(); }}
+          onDone={(msg, completedIds) => {
+            setBulkMessage(msg);
+            patchResponses(completedIds, { status: 'completed' });
+          }}
         />
       )}
     </div>

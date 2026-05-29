@@ -5,6 +5,7 @@ import { revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { randomBytes } from 'crypto';
 import { auth } from '@/auth';
+import { normalizeSessionSelection } from '@/app/lib/session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -230,7 +231,7 @@ export async function approveSummerRequest(
   const reqs = await sql<{
     id: string;
     student_id: string;
-    payload: { summer_status: string; session_ids?: string[] };
+    payload: { summer_status: string; session_ids?: string[]; session_start_dates?: Record<string, string> };
   }[]>`
     SELECT id, student_id, payload
     FROM parent_requests
@@ -246,7 +247,20 @@ export async function approveSummerRequest(
   if (summerStatus === 'enrolling') {
     const sessionIds = req.payload?.session_ids ?? [];
     if (sessionIds.length === 0) return { error: 'No sessions on this request to enrol into.' };
-    if (!startDate) return { error: 'Start date is required for enrolling requests.' };
+    const fallbackStartDate = typeof startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(startDate)
+      ? startDate
+      : null;
+    const startDateBySessionId = new Map<string, string>();
+    for (const sessionId of sessionIds) {
+      const requestedStartDate = req.payload?.session_start_dates?.[sessionId];
+      const enrolmentStartDate = typeof requestedStartDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(requestedStartDate)
+        ? requestedStartDate
+        : fallbackStartDate;
+      if (!enrolmentStartDate) {
+        return { error: 'Start date is missing for one or more selected sessions.' };
+      }
+      startDateBySessionId.set(sessionId, enrolmentStartDate);
+    }
 
     // Auto-inherit course_id from student's most recent enrolment
     const courseRows = await sql<{ course_id: string }[]>`
@@ -264,13 +278,15 @@ export async function approveSummerRequest(
     const newEnrolmentIds: string[] = [];
     await sql.begin(async tx => {
       for (const sessionId of sessionIds) {
+        const enrolmentStartDate = startDateBySessionId.get(sessionId);
+        if (!enrolmentStartDate) continue;
         const inserted = await tx<{ id: string }[]>`
           INSERT INTO enrolments (student_id, course_id, session_id, start_date)
           VALUES (
             ${req.student_id},
-            ${courseId}::uuid,
+            ${courseId},
             ${sessionId}::uuid,
-            ${startDate}::date
+            ${enrolmentStartDate}::date
           )
           ON CONFLICT (student_id, session_id)
           DO UPDATE SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date
@@ -306,7 +322,7 @@ export async function approveSummerRequest(
   return {};
 }
 
-export async function approveAllEnrolling(startDate: string): Promise<{ created: number; skipped: number }> {
+export async function approveAllEnrolling(startDate: string): Promise<{ created: number; skipped: number; completedIds: string[] }> {
   await requireAdmin();
   const pending = await sql<{
     id: string;
@@ -324,6 +340,7 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
 
   let created = 0;
   let skipped = 0;
+  const completedIds: string[] = [];
 
   for (const req of pending) {
     const sessionIds = req.payload?.session_ids ?? [];
@@ -341,7 +358,7 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
       for (const sessionId of sessionIds) {
         const inserted = await tx<{ id: string }[]>`
           INSERT INTO enrolments (student_id, course_id, session_id, start_date)
-          VALUES (${req.student_id}, ${courseId}::uuid, ${sessionId}::uuid, ${startDate}::date)
+          VALUES (${req.student_id}, ${courseId}, ${sessionId}::uuid, ${startDate}::date)
           ON CONFLICT (student_id, session_id)
           DO UPDATE SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date
           RETURNING id::text
@@ -362,10 +379,11 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
       `;
     });
     created++;
+    completedIds.push(req.id);
   }
 
   revalidateTag('summer-responses', 'max');
-  return { created, skipped };
+  return { created, skipped, completedIds };
 }
 
 export async function deleteSummerResponse(requestId: string): Promise<{ deleted: boolean }> {
@@ -398,7 +416,7 @@ export async function deleteSummerResponse(requestId: string): Promise<{ deleted
   return { deleted: true };
 }
 
-export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
+export async function markAllNoChangeComplete(): Promise<{ updated: number; updatedIds: string[] }> {
   await requireAdmin();
   const rows = await sql<{ id: string }[]>`
     UPDATE parent_requests
@@ -408,10 +426,10 @@ export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
       AND removed_at IS NULL
       AND request_type = 'summer_scheduling'
       AND payload->>'summer_status' = 'no_change'
-    RETURNING id
+    RETURNING id::text AS id
   `;
   revalidateTag('summer-responses', 'max');
-  return { updated: rows.length };
+  return { updated: rows.length, updatedIds: rows.map(row => row.id) };
 }
 
 export async function markAddedToPortal(requestId: string): Promise<void> {
@@ -494,6 +512,64 @@ type StudentFormEntry = {
   fall_notes?: string;
 };
 
+async function canonicalizeFallSessionEntries(entries: StudentFormEntry[]): Promise<StudentFormEntry[]> {
+  const fallSessionIds = Array.from(new Set(
+    entries
+      .filter(entry => entry.fall_status === 'change')
+      .flatMap(entry => entry.fall_session_ids),
+  ));
+
+  if (fallSessionIds.length === 0) {
+    return entries.map(entry => ({
+      ...entry,
+      fall_session_ids: [],
+      fall_session_start_dates: undefined,
+    }));
+  }
+
+  const rows = await sql<{ id: string; canonical_id: string }[]>`
+    WITH selected AS (
+      SELECT id::text AS id, weekday, start_time
+      FROM sessions
+      WHERE id = ANY(${fallSessionIds}::uuid[])
+        AND is_summer = FALSE
+    )
+    SELECT
+      selected.id,
+      MIN(canonical.id::text) AS canonical_id
+    FROM selected
+    JOIN sessions canonical
+      ON canonical.is_summer = FALSE
+      AND canonical.weekday = selected.weekday
+      AND canonical.start_time = selected.start_time
+    GROUP BY selected.id
+  `;
+
+  const canonicalById = new Map(rows.map(row => [row.id, row.canonical_id]));
+
+  return entries.map(entry => {
+    if (entry.fall_status !== 'change') {
+      return {
+        ...entry,
+        fall_session_ids: [],
+        fall_session_start_dates: undefined,
+      };
+    }
+
+    const normalized = normalizeSessionSelection(
+      entry.fall_session_ids,
+      entry.fall_session_start_dates,
+      canonicalById,
+    );
+
+    return {
+      ...entry,
+      fall_session_ids: normalized.ids,
+      fall_session_start_dates: normalized.startDates,
+    };
+  });
+}
+
 export async function submitSummerForm(
   prevState: { error: string } | undefined,
   formData: FormData,
@@ -533,13 +609,13 @@ export async function submitSummerForm(
     }
   }
 
-  // Validate fall_session_ids are real sessions (only when fall_status === 'change')
+  // Validate fall_session_ids are real fall sessions (only when fall_status === 'change')
   const fallSessionIds = entries
     .filter(e => e.fall_status === 'change')
     .flatMap(e => e.fall_session_ids);
   if (fallSessionIds.length > 0) {
     const validFall = await sql<{ id: string }[]>`
-      SELECT id::text FROM sessions WHERE id = ANY(${fallSessionIds}::uuid[])
+      SELECT id::text FROM sessions WHERE is_summer = FALSE AND id = ANY(${fallSessionIds}::uuid[])
     `;
     const validSet = new Set(validFall.map(r => r.id));
     if (fallSessionIds.some(id => !validSet.has(id))) {
@@ -547,9 +623,11 @@ export async function submitSummerForm(
     }
   }
 
+  const normalizedEntries = await canonicalizeFallSessionEntries(entries);
+
   // Upsert each student's request inside a transaction
   await sql.begin(async tx => {
-    for (const entry of entries) {
+    for (const entry of normalizedEntries) {
       // Supersede any existing latest request for this student (any type)
       await tx`
         UPDATE parent_requests
@@ -569,7 +647,9 @@ export async function submitSummerForm(
             pickup_school: entry.pickup_school,
             ...(entry.pickup_school === 'other' ? { pickup_school_other: entry.pickup_school_other } : {}),
           }
-        : {};
+        : entry.pickup_requested === false
+          ? { pickup_requested: false }
+          : {};
       const fallStartDates = pickStartDates(entry.fall_session_start_dates, entry.fall_session_ids);
       const fallFields = {
         fall_status: entry.fall_status,

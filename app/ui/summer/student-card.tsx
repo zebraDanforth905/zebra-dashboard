@@ -4,7 +4,7 @@ import { ParentFormStudentData, Session } from '@/app/lib/definitions';
 import { getStartDateOptions, formatStartDate, WeekdayName } from '@/app/lib/tdsb-calendar';
 
 const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const PICKUP_WEEKDAYS = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday']);
+const PICKUP_WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday']);
 
 function formatTime(t: string): string {
   const [h, m] = t.split(':').map(Number);
@@ -13,10 +13,36 @@ function formatTime(t: string): string {
   return m === 0 ? `${hour} ${ampm}` : `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+function formatCurrentTime(t: string): string {
+  return formatTime(t).replace(' ', '').toLowerCase();
+}
+
+function formatTitleCase(value: string): string {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function formatCurrentSlot(weekday: string | null, startTime: string | null, pickupSchool: string | null): string | null {
+  if (!weekday || !startTime) return null;
+  const slot = `${formatTitleCase(weekday)} at ${formatCurrentTime(startTime)}`;
+  return pickupSchool ? `${slot} with ${formatTitleCase(pickupSchool)} pickup` : slot;
+}
+
 function isPickupSession(weekday: string | null, startTime: string | null): boolean {
-  if (!weekday || !startTime || !PICKUP_WEEKDAYS.has(weekday)) return false;
+  if (!weekday || !startTime || !PICKUP_WEEKDAYS.has(weekday.trim().toLowerCase())) return false;
   const [hour, minute] = startTime.split(':').map(Number);
   return hour === 16 && minute === 0;
+}
+
+function normalizePickupSchool(school: string | null): Pick<StudentCardState, 'pickup_school' | 'pickup_school_other'> {
+  if (!school) return { pickup_school: null, pickup_school_other: '' };
+  const normalized = school.trim().toLowerCase();
+  if (normalized === 'jackman') return { pickup_school: 'Jackman', pickup_school_other: '' };
+  if (normalized === 'frankland') return { pickup_school: 'Frankland', pickup_school_other: '' };
+  return { pickup_school: 'other', pickup_school_other: formatTitleCase(school) };
 }
 
 function groupByWeekday<T extends { weekday: string }>(sessions: T[]) {
@@ -56,9 +82,22 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
   const currentPickupEligible = isPickupSession(student.current_weekday, student.current_start_time);
 
   const currentSlot =
-    student.current_weekday && student.current_start_time
-      ? `${student.current_weekday} ${formatTime(student.current_start_time)}`
-      : null;
+    formatCurrentSlot(
+      student.current_weekday,
+      student.current_start_time,
+      currentPickupEligible ? student.current_pickup_school : null,
+    );
+  const currentPickupDefaults = currentPickupEligible
+    ? normalizePickupSchool(student.current_pickup_school)
+    : { pickup_school: null, pickup_school_other: '' };
+
+  function defaultCurrentPickupState(): Pick<StudentCardState, 'pickup_requested' | 'pickup_school' | 'pickup_school_other'> {
+    return {
+      pickup_requested: currentPickupDefaults.pickup_school !== null,
+      pickup_school: currentPickupDefaults.pickup_school,
+      pickup_school_other: currentPickupDefaults.pickup_school_other,
+    };
+  }
 
   function setSummerStatus(status: StudentCardState['summer_status']) {
     onChange({
@@ -112,6 +151,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
       fall_session_ids: fs === 'change' ? state.fall_session_ids : [],
       fall_session_start_dates: fs === 'change' ? state.fall_session_start_dates : {},
       fall_notes: fs === 'pause' ? state.fall_notes : '',
+      ...(fs === 'same' ? defaultCurrentPickupState() : {}),
     }));
   }
 
@@ -145,8 +185,8 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
     onChange({
       ...state,
       pickup_requested: requested,
-      pickup_school: requested ? state.pickup_school : null,
-      pickup_school_other: requested ? state.pickup_school_other : '',
+      pickup_school: requested ? (state.pickup_school ?? currentPickupDefaults.pickup_school) : null,
+      pickup_school_other: requested ? (state.pickup_school_other || currentPickupDefaults.pickup_school_other) : '',
     });
   }
 
@@ -238,7 +278,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
           {state.summer_status === 'enrolling' && (
             <div className="ml-6 space-y-4 pt-1">
               <p className="text-xs text-slate-500">
-                Please select your preferred session or sessions.
+                Please select your preferred session(s):
               </p>
               {summerByWeekday.map(({ day, sessions }) => {
                 const dateOptions = getStartDateOptions(day as WeekdayName, 'summer');
@@ -314,7 +354,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               onChange={() => setSummerStatus('pausing')}
               className="mt-0.5 accent-sky-600"
             />
-            <span className="text-slate-700">Not attending this summer (July and August)</span>
+            <span className="text-slate-700">Not attending this summer in July and August</span>
           </label>
 
           <label className="flex items-start gap-3 cursor-pointer">
@@ -326,21 +366,18 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               className="mt-0.5 accent-sky-600"
             />
             <span className="text-slate-700">
-              <span className="block">Custom summer plan</span>
-              <span className="block text-xs text-slate-500 mt-0.5">
-                Choose the weeks/days that fit your family&apos;s summer plans.
-              </span>
+              Custom plan: choose the weeks/days that fit your family&apos;s summer plans
             </span>
           </label>
 
           {state.summer_status === 'other' && (
             <div className="ml-6 space-y-1">
               <p className="text-xs text-slate-500">
-                Tell us the weeks or days that work for you and we&apos;ll follow up to confirm the plan.
+                Tell us the weeks or days that work for you, and we&apos;ll follow up to confirm the plan.
               </p>
               <textarea
                 rows={3}
-                placeholder='e.g. "First two weeks, then Tuesdays and Saturdays"'
+                placeholder='e.g. "Attend the first two weeks in July on Tuesdays, and two Saturdays in mid-August"'
                 value={state.custom_notes}
                 onChange={e => onChange({ ...state, custom_notes: e.target.value })}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
@@ -358,7 +395,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
             <p className="text-xs text-slate-500 mt-0.5">Current session: {currentSlot}</p>
           )}
           <p className="text-xs text-slate-400 mt-1">
-            We&apos;ll reach out in August to confirm your fall schedule before classes begin in September.
+            We&apos;ll reach out in August to re-confirm your fall schedule before classes begin in September.
           </p>
         </div>
 
@@ -398,7 +435,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
           {state.fall_status === 'change' && (
             <div className="ml-6 space-y-4 pt-1">
               <p className="text-xs text-slate-400">
-                If there are any issues with availability for your preferred time, we&apos;ll let you know.
+                If there&apos;s any issue with availability for this time, we&apos;ll let you know.
               </p>
               {fallByWeekday.length === 0 ? (
                 <p className="text-sm text-slate-500">No fall sessions on file yet. We&apos;ll be in touch.</p>
@@ -470,7 +507,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                 })
               )}
               {fallByWeekday.length > 0 && state.fall_session_ids.length === 0 && (
-                <p className="text-xs text-amber-600">Select at least one fall session above.</p>
+                <p className="text-xs text-amber-600">Select at least one session above.</p>
               )}
             </div>
           )}
@@ -484,7 +521,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               className="mt-0.5 accent-emerald-600"
             />
             <span className="text-slate-700">
-              Not sure yet — we won&apos;t hold a spot for September
+              Not sure yet — we won&apos;t hold a September spot
             </span>
           </label>
 

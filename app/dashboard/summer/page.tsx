@@ -25,8 +25,8 @@ export default async function SummerPage({
 
   const { tab = 'links' } = await searchParams;
 
-  const [rows, stats, responseRows, scheduleRows, fallScheduleRows] = await Promise.all([
-    fetchParentLinkRows(),
+  const [linkRows, stats, responseRows, scheduleRows, fallScheduleRows] = await Promise.all([
+    tab === 'links' ? fetchParentLinkRows() : null,
     tab === 'responses' ? fetchSummerStats() : null,
     tab === 'responses' ? fetchSummerResponseRows() : null,
     tab === 'schedule' ? fetchSummerSchedule() : null,
@@ -56,7 +56,7 @@ export default async function SummerPage({
         </TabLink>
       </div>
 
-      {tab === 'links' && <LinkManagement rows={rows} />}
+      {tab === 'links' && linkRows && <LinkManagement rows={linkRows} />}
 
       {tab === 'responses' && stats && responseRows && (
         <ResponsesTab rows={responseRows} stats={stats} />

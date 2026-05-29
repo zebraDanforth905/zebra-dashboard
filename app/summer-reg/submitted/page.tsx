@@ -9,15 +9,15 @@ export const metadata: Metadata = {
 
 const SUMMER_LABEL: Record<string, string> = {
   enrolling: 'Continuing weekly classes in July and August',
-  pausing:   'Not attending this summer (July and August)',
+  pausing:   'Not attending this summer in July and August',
   no_change: 'No change — keeping current schedule',
-  other:     'Custom summer plan',
+  other:     'Custom plan',
 };
 
 const FALL_LABEL: Record<string, string> = {
   same:   'Keep current session',
   change: 'Requesting a different class time starting in September',
-  pause:  'Not sure yet',
+  pause:  'Not sure yet — we won\'t hold a September spot',
 };
 
 export default async function SubmittedPage({
@@ -116,7 +116,7 @@ export default async function SubmittedPage({
               Our team will review your preferences and be in touch if we have any questions.
             </p>
             <p className="text-sm text-slate-500">
-              We&apos;ll reach out in August to confirm your fall schedule before classes begin in September.
+              We&apos;ll reach out in August to re-confirm your fall schedule before classes begin in September.
             </p>
             {token && (
               <p className="text-xs text-slate-400 mt-1">

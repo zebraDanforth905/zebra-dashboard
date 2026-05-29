@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ParentLinkRow } from '@/app/lib/definitions';
 import CopyLinkButton from './copy-link-button';
@@ -44,10 +44,29 @@ function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[
   }
 }
 
+function matchesSearch(row: ParentLinkRow, search: string): boolean {
+  if (!search) return true;
+  const searchableText = [
+    row.customer_name,
+    row.alternate_name,
+    ...row.student_names,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return searchableText.includes(search);
+}
+
 export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterValue>('all');
-  const filtered = applyFilter(rows, filter);
+  const [search, setSearch] = useState('');
+  const normalizedSearch = search.trim().toLowerCase();
+  const filtered = useMemo(
+    () => applyFilter(rows, filter).filter(row => matchesSearch(row, normalizedSearch)),
+    [filter, normalizedSearch, rows],
+  );
 
   const total = rows.length;
   const responded = rows.filter(r => r.has_responded).length;
@@ -85,6 +104,21 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
         >
           {FILTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+        <input
+          type="search"
+          placeholder="Search names…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 sm:w-56"
+        />
+        {(filter !== 'all' || search) && (
+          <button
+            onClick={() => { setFilter('all'); setSearch(''); }}
+            className="text-xs text-slate-500 underline"
+          >
+            Clear
+          </button>
+        )}
         <ExportCsvButton rows={filtered} label="Export CSV" />
         <ClearExportButton rows={filtered} />
         <div className="h-5 border-l border-slate-200 hidden sm:block" />

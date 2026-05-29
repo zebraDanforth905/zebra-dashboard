@@ -480,9 +480,12 @@ export type ParentFormStudentData = {
   student_name: string;
   current_weekday: string | null;
   current_start_time: string | null;
-  latest_request: SummerSchedulingPayload | null;
+  current_pickup_school: string | null;
+  latest_request: Partial<SummerSchedulingPayload> | null;
+  latest_request_type: ParentRequestType | null;
   latest_request_id: string | null;
   latest_request_status: ParentRequestStatus | null;
+  latest_custom_notes: string | null;
 };
 
 export type ParentFormData = {

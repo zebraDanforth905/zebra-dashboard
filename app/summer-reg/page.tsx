@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Summer & Fall Schedule | Zebra Robotics',
+  title: 'Summer & Fall Plans | Zebra Robotics',
 };
 
 export default async function SummerRegPage({
@@ -36,13 +36,11 @@ export default async function SummerRegPage({
   return (
     <PageShell>
       <div className="space-y-2 mb-6">
-        <p className="text-slate-500 text-sm">Hi Zebra family,</p>
-        <h1 className="text-2xl font-semibold text-slate-800">Summer & Fall Schedule</h1>
+        <p className="text-slate-500 text-sm">Hi Zebra Family!</p>
+        <h1 className="text-2xl font-semibold text-slate-800">Summer & Fall Plans</h1>
         <div className="rounded-xl bg-sky-50 ring-1 ring-sky-100 px-4 py-3 text-sm text-sky-800 space-y-1">
-          <p>Please use this form to share your child&apos;s preferred schedule for July and August, plus your plan for classes starting in September.</p>
-          <p>For summer, choose whether your child will continue weekly classes, take a break, or request a custom plan.</p>
-          <p>You can select multiple sessions if your child will attend more than once per week.</p>
-          <p>Our team will follow up in August if anything needs confirming before classes begin in September.</p>
+          <p>Please let us know your summer plans and fall class schedule below. If your child(ren) will attend more than one session per week, you can select multiple time slots.</p>
+          <p>We&apos;ll check in again in August to reconfirm before fall classes begin in September, and you&apos;re welcome to review or adjust the enrolment at that time.</p>
         </div>
       </div>
       <SummerRegForm data={data} token={token} />
