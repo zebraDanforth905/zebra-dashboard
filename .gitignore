@@ -41,11 +41,19 @@ yarn-error.log*
 next-env.d.ts
 .env*.local
 
-# Claude files
-.claude
-.codex
-CLAUDE.md
+# Local assistant / Codex context
+.claude/
+.codex/
+.openclaw/
 AGENTS.md
+CLAUDE.md
+HEARTBEAT.md
+IDENTITY.md
+MEMORY.md
+SOUL.md
+TOOLS.md
+USER.md
+memory/
 
 # Backfill review dumps (contain parent names/emails — keep local only)
 backfill-*-dryrun.txt
