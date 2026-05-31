@@ -10,6 +10,7 @@ type StudentFormEntry = {
   summer_status: 'enrolling' | 'pausing' | 'other';
   session_ids: string[];
   session_start_dates: Record<string, string>;
+  waitlist_session_ids: string[];
   custom_notes?: string;
   pickup_requested?: boolean;
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
@@ -17,6 +18,7 @@ type StudentFormEntry = {
   fall_status: 'same' | 'change' | 'pause';
   fall_session_ids: string[];
   fall_session_start_dates: Record<string, string>;
+  fall_waitlist_session_ids: string[];
   fall_notes?: string;
 };
 
@@ -44,11 +46,22 @@ function normalizePickupSchool(school: string | null): Pick<StudentCardState, 'p
   return { pickup_school: 'other', pickup_school_other: formatTitleCase(school) };
 }
 
+function getCurrentSessions(student: ParentFormData['students'][number]) {
+  if (student.current_sessions.length > 0) return student.current_sessions;
+  if (!student.current_weekday || !student.current_start_time) return [];
+  return [{
+    weekday: student.current_weekday,
+    start_time: student.current_start_time,
+    pickup_school: student.current_pickup_school,
+  }];
+}
+
 function currentPickupDefaults(student: ParentFormData['students'][number]): Pick<StudentCardState, 'pickup_requested' | 'pickup_school' | 'pickup_school_other'> {
-  if (!isPickupSession(student.current_weekday, student.current_start_time)) {
+  const pickupSession = getCurrentSessions(student).find(session => isPickupSession(session.weekday, session.start_time));
+  if (!pickupSession) {
     return { pickup_requested: false, pickup_school: null, pickup_school_other: '' };
   }
-  const pickup = normalizePickupSchool(student.current_pickup_school);
+  const pickup = normalizePickupSchool(pickupSession.pickup_school);
   return {
     pickup_requested: pickup.pickup_school !== null,
     pickup_school: pickup.pickup_school,
@@ -62,7 +75,7 @@ function isPickupVisible(
   fallSessions: ParentFormData['fall_sessions'],
 ): boolean {
   if (sel.fall_status === 'same') {
-    return isPickupSession(student.current_weekday, student.current_start_time);
+    return getCurrentSessions(student).some(session => isPickupSession(session.weekday, session.start_time));
   }
   if (sel.fall_status !== 'change') return false;
   return fallSessions.some(
@@ -89,6 +102,7 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
       summer_status: summerStatus,
       session_ids: req.session_ids ?? [],
       session_start_dates: req.session_start_dates ?? {},
+      waitlist_session_ids: req.waitlist_session_ids ?? [],
       custom_notes: student.latest_request_type === 'other' ? (student.latest_custom_notes ?? '') : '',
       pickup_requested: req.pickup_requested ?? defaultPickup.pickup_requested,
       pickup_school: req.pickup_school ?? defaultPickup.pickup_school,
@@ -96,6 +110,7 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
       fall_status: fallStatus,
       fall_session_ids: req.fall_session_ids ?? [],
       fall_session_start_dates: req.fall_session_start_dates ?? {},
+      fall_waitlist_session_ids: req.fall_waitlist_session_ids ?? [],
       fall_notes: req.fall_notes ?? '',
     };
   }
@@ -103,16 +118,28 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
     summer_status: null,
     session_ids: [],
     session_start_dates: {},
+    waitlist_session_ids: [],
     custom_notes: '',
     ...defaultPickup,
     fall_status: 'same',
     fall_session_ids: [],
     fall_session_start_dates: {},
+    fall_waitlist_session_ids: [],
     fall_notes: '',
   };
 }
 
-export default function SummerRegForm({ data, token }: { data: ParentFormData; token: string }) {
+export default function SummerRegForm({
+  data,
+  token,
+  staffEntry = false,
+  staffName = null,
+}: {
+  data: ParentFormData;
+  token: string;
+  staffEntry?: boolean;
+  staffName?: string | null;
+}) {
   const [actionState, formAction, isPending] = useActionState(submitSummerForm, undefined);
 
   const [selections, setSelections] = useState<Record<string, StudentCardState>>(
@@ -145,6 +172,7 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
       summer_status: (sel.summer_status ?? 'other') as StudentFormEntry['summer_status'],
       session_ids: enrolling ? sel.session_ids : [],
       session_start_dates: enrolling ? sel.session_start_dates : {},
+      waitlist_session_ids: enrolling ? sel.waitlist_session_ids : [],
       custom_notes: sel.summer_status === 'other' ? sel.custom_notes || undefined : undefined,
       pickup_requested: pickupVisible ? sel.pickup_requested : undefined,
       pickup_school: pickupRequested ? (sel.pickup_school ?? undefined) : undefined,
@@ -152,6 +180,7 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
       fall_status: sel.fall_status as 'same' | 'change' | 'pause',
       fall_session_ids: changingFall ? sel.fall_session_ids : [],
       fall_session_start_dates: changingFall ? sel.fall_session_start_dates : {},
+      fall_waitlist_session_ids: changingFall ? sel.fall_waitlist_session_ids : [],
       fall_notes: sel.fall_status === 'pause' ? sel.fall_notes || undefined : undefined,
     };
   });
@@ -159,6 +188,21 @@ export default function SummerRegForm({ data, token }: { data: ParentFormData; t
   return (
     <form action={formAction} className="space-y-6">
       <input type="hidden" name="token" value={token} />
+      {staffEntry && <input type="hidden" name="staff_entry" value="1" />}
+      {staffEntry && !staffName && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <label className="block text-xs font-medium uppercase tracking-wide text-amber-800">
+            Staff name
+          </label>
+          <input
+            name="staff_name"
+            type="text"
+            required
+            placeholder="Name to show on internal response"
+            className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+          />
+        </div>
+      )}
       <input type="hidden" name="students" value={JSON.stringify(entries)} />
 
       {actionState?.error && (

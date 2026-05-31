@@ -92,7 +92,7 @@ export default function ExportCsvButton({
     <button
       onClick={handleExport}
       disabled={disabled || isPending || recipientCount === 0}
-      className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-500 transition disabled:opacity-40"
+      className="shrink-0 whitespace-nowrap rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-500 transition disabled:opacity-40"
     >
       {isPending ? 'Exporting…' : `${label} (${recipientCount})`}
     </button>

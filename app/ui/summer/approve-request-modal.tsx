@@ -41,6 +41,15 @@ const SUMMER_BADGE: Record<string, string> = {
   other:     'bg-purple-100 text-purple-700',
 };
 
+const SUBMISSION_SOURCE_STYLE: Record<string, string> = {
+  parent: 'bg-emerald-100 text-emerald-700',
+  staff:  'bg-amber-100 text-amber-800',
+};
+const SUBMISSION_SOURCE_LABEL: Record<string, string> = {
+  parent: 'Parent',
+  staff:  'Internal',
+};
+
 const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' });
 const FULL_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   weekday: 'short',
@@ -82,6 +91,30 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function SourceBadge({ source, name }: { source: string; name: string | null }) {
+  const label = SUBMISSION_SOURCE_LABEL[source] ?? source;
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SUBMISSION_SOURCE_STYLE[source] ?? 'bg-slate-100 text-slate-500'}`}>
+      {source === 'staff' && name ? `${label}: ${name}` : label}
+    </span>
+  );
+}
+
+function FamilyValue({ row }: { row: SummerResponseRow }) {
+  const alternateEmail = row.parent_alternate_email?.trim();
+  const showAlternate = alternateEmail && alternateEmail.toLowerCase() !== row.parent_email.trim().toLowerCase();
+
+  return (
+    <>
+      <span>{row.parent_name}</span>
+      <div className="text-xs text-slate-400 mt-0.5">{row.parent_email}</div>
+      {showAlternate && (
+        <div className="text-xs text-slate-400 mt-0.5">{alternateEmail}</div>
+      )}
+    </>
+  );
+}
+
 function formatStartDate(date: string | null): string | null {
   if (!date) return null;
   return FULL_DATE_FORMATTER.format(new Date(`${date}T00:00:00`));
@@ -100,11 +133,31 @@ function formatPortalDate(d: Date | string | null): string {
   return d ? SHORT_DATE_FORMATTER.format(new Date(d)) : 'Not marked';
 }
 
+function formatCsvExport(row: Pick<SummerResponseRow, 'token_export_count' | 'token_last_exported_at'>): string {
+  if (row.token_export_count === 0) return 'CSV not exported';
+  const date = row.token_last_exported_at ? formatPortalDate(row.token_last_exported_at) : 'exported';
+  return row.token_export_count > 1 ? `${date} x${row.token_export_count}` : date;
+}
+
+function formatPortalStatus(row: Pick<SummerResponseRow, 'added_to_portal_at' | 'added_to_portal_by'>): string {
+  if (!row.added_to_portal_at) return 'Not marked';
+  const date = formatPortalDate(row.added_to_portal_at);
+  return row.added_to_portal_by ? `${date} by ${row.added_to_portal_by}` : date;
+}
+
 function formatFallStatus(status: SummerResponseRow['fall_status']): string {
   return status ? (FALL_STATUS_LABEL[status] ?? status) : 'Not provided';
 }
 
 function formatPickup(row: SummerResponseRow): string {
+  if (!row.pickup_requested) return 'No pickup requested';
+  if (row.pickup_school === 'other') {
+    return row.pickup_school_other ? `Other school: ${row.pickup_school_other}` : 'Other school';
+  }
+  return row.pickup_school ?? 'Requested';
+}
+
+function formatHistoryPickup(row: SummerResponseRow['submission_history'][number]): string {
   if (!row.pickup_requested) return 'No pickup requested';
   if (row.pickup_school === 'other') {
     return row.pickup_school_other ? `Other school: ${row.pickup_school_other}` : 'Other school';
@@ -118,6 +171,18 @@ function formatTime(t: string | null): string {
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hour = h % 12 || 12;
   return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function formatCurrentSession(weekday: string | null, startTime: string | null): string | null {
+  if (!weekday) return null;
+  return `${weekday} ${formatTime(startTime)}`;
+}
+
+function formatFallChoice(row: SummerResponseRow): string {
+  if (row.fall_status !== 'same') return formatFallStatus(row.fall_status);
+
+  const currentSession = formatCurrentSession(row.current_weekday, row.current_start_time);
+  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
 }
 
 function SessionChoicesList({
@@ -165,6 +230,11 @@ function SessionChoicesList({
   );
 }
 
+function LabelList({ labels, emptyLabel }: { labels: string[]; emptyLabel: string }) {
+  if (labels.length === 0) return <span className="text-slate-400">{emptyLabel}</span>;
+  return <span>{labels.join(', ')}</span>;
+}
+
 export default function ApproveRequestModal({
   row,
   onClose,
@@ -208,7 +278,14 @@ export default function ApproveRequestModal({
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Review Request</h2>
-            <p className="mt-0.5 text-xs text-slate-500">{row.student_name} · {row.parent_name}</p>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <span>{row.student_name} · {row.parent_name}</span>
+              {row.previous_submission_count > 0 && (
+                <span className="rounded-full bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700 ring-1 ring-indigo-100">
+                  Updated {row.previous_submission_count + 1}x
+                </span>
+              )}
+            </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition">
             <XMarkIcon className="h-5 w-5" />
@@ -219,8 +296,7 @@ export default function ApproveRequestModal({
           <dl className="grid gap-4 sm:grid-cols-2">
             <Field label="Student">{row.student_name}</Field>
             <Field label="Family">
-              <span>{row.parent_name}</span>
-              <div className="text-xs text-slate-400 mt-0.5">{row.parent_email}</div>
+              <FamilyValue row={row} />
             </Field>
             <Field label="Current Schedule">
               {row.current_weekday
@@ -229,7 +305,9 @@ export default function ApproveRequestModal({
             </Field>
             <Field label="Submitted">{formatDate(row.submitted_at)}</Field>
             <Field label="Status"><StatusBadge status={row.status} /></Field>
-            <Field label="Added to Portal">{formatPortalDate(row.added_to_portal_at)}</Field>
+            <Field label="Submitted By"><SourceBadge source={row.submitted_by} name={row.submitted_by_name} /></Field>
+            <Field label="Email CSV">{formatCsvExport(row)}</Field>
+            <Field label="Added to Portal">{formatPortalStatus(row)}</Field>
           </dl>
 
           <Section title="Summer">
@@ -246,6 +324,11 @@ export default function ApproveRequestModal({
                   emptyLabel="No summer sessions selected"
                 />
               </Field>
+              {row.waitlist_session_labels.length > 0 && (
+                <Field label="Waitlist">
+                  <span className="text-amber-700">{row.waitlist_session_labels.join(', ')}</span>
+                </Field>
+              )}
               {row.custom_notes && (
                 <Field label="Summer Notes">
                   <span className="italic text-slate-600">{row.custom_notes}</span>
@@ -256,7 +339,7 @@ export default function ApproveRequestModal({
 
           <Section title="September / Fall">
             <dl className="space-y-3">
-              <Field label="Plan">{formatFallStatus(row.fall_status)}</Field>
+              <Field label="Plan">{formatFallChoice(row)}</Field>
               <Field label="Requested Sessions">
                 <SessionChoicesList
                   choices={row.fall_session_choices}
@@ -264,6 +347,11 @@ export default function ApproveRequestModal({
                   emptyLabel={row.fall_status === 'same' ? 'Keeping current session' : 'No fall sessions selected'}
                 />
               </Field>
+              {row.fall_waitlist_session_labels.length > 0 && (
+                <Field label="Waitlist">
+                  <span className="text-amber-700">{row.fall_waitlist_session_labels.join(', ')}</span>
+                </Field>
+              )}
               <Field label="School Pickup">{formatPickup(row)}</Field>
               {row.fall_notes && (
                 <Field label="Fall Notes">
@@ -272,6 +360,75 @@ export default function ApproveRequestModal({
               )}
             </dl>
           </Section>
+
+          {row.submission_history.length > 0 && (
+            <Section title="Submission History">
+              <div className="space-y-3">
+                {row.submission_history.map((item, index) => (
+                  <div key={item.request_id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm font-medium text-slate-800">
+                        Previous submission {row.submission_history.length - index}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <SourceBadge source={item.submitted_by} name={item.submitted_by_name} />
+                        <StatusBadge status={item.status} />
+                        <span className="text-xs text-slate-500">{formatDate(item.submitted_at)}</span>
+                      </div>
+                    </div>
+                    <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Summer</dt>
+                        <dd className="mt-1 text-slate-700">
+                          {SUMMER_LABEL[item.summer_status] ?? item.summer_status}
+                          {item.session_labels.length > 0 && (
+                            <div className="mt-1 text-xs text-slate-500">
+                              <LabelList labels={item.session_labels} emptyLabel="No sessions selected" />
+                            </div>
+                          )}
+                          {item.waitlist_session_labels.length > 0 && (
+                            <div className="mt-1 text-xs font-medium text-amber-700">
+                              Waitlist: {item.waitlist_session_labels.join(', ')}
+                            </div>
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Fall</dt>
+                        <dd className="mt-1 text-slate-700">
+                          {item.fall_status ? (FALL_STATUS_LABEL[item.fall_status] ?? item.fall_status) : 'Not provided'}
+                          <div className="mt-1 text-xs text-slate-500">
+                            <LabelList
+                              labels={item.fall_session_labels}
+                              emptyLabel={item.fall_status === 'same' ? 'Keeping current session' : 'No fall sessions selected'}
+                            />
+                          </div>
+                          {item.fall_waitlist_session_labels.length > 0 && (
+                            <div className="mt-1 text-xs font-medium text-amber-700">
+                              Waitlist: {item.fall_waitlist_session_labels.join(', ')}
+                            </div>
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Pickup</dt>
+                        <dd className="mt-1 text-slate-700">{formatHistoryPickup(item)}</dd>
+                      </div>
+                      {(item.custom_notes || item.fall_notes) && (
+                        <div>
+                          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Notes</dt>
+                          <dd className="mt-1 space-y-1 text-slate-700">
+                            {item.custom_notes && <div>Summer: <span className="italic">{item.custom_notes}</span></div>}
+                            {item.fall_notes && <div>Fall: <span className="italic">{item.fall_notes}</span></div>}
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
 
           {isEnrolling && (
             <Section title="Approval">

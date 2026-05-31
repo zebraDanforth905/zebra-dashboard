@@ -3,6 +3,7 @@
 import postgres from 'postgres';
 import { cacheTag } from 'next/cache';
 import {
+  CurrentSessionSummary,
   ParentFormData,
   ParentFormStudentData,
   ParentLinkRow,
@@ -55,17 +56,25 @@ function normalizeLatestRequest(
     return {
       ...request,
       fall_session_ids: [],
+      fall_waitlist_session_ids: [],
       fall_session_start_dates: undefined,
     };
   }
 
   const fallSessionIds = (request.fall_session_ids ?? []).filter(id => canonicalFallIdById.has(id));
+  const fallWaitlistSessionIds = (request.fall_waitlist_session_ids ?? []).filter(id => canonicalFallIdById.has(id));
   const normalizedFall = normalizeSessionSelection(
     fallSessionIds,
     request.fall_session_start_dates,
     canonicalFallIdById,
   );
+  const normalizedFallWaitlist = normalizeSessionSelection(
+    fallWaitlistSessionIds,
+    undefined,
+    canonicalFallIdById,
+  );
   const visibleFallIds = normalizedFall.ids.filter(id => visibleFallSessionIds.has(id));
+  const visibleFallWaitlistIds = normalizedFallWaitlist.ids.filter(id => visibleFallSessionIds.has(id));
   const visibleStartDates = visibleFallIds.reduce<Record<string, string>>((dates, id) => {
     const date = normalizedFall.startDates?.[id];
     if (date) dates[id] = date;
@@ -75,6 +84,7 @@ function normalizeLatestRequest(
   return {
     ...request,
     fall_session_ids: visibleFallIds,
+    fall_waitlist_session_ids: visibleFallWaitlistIds,
     fall_session_start_dates: Object.keys(visibleStartDates).length > 0 ? visibleStartDates : undefined,
   };
 }
@@ -105,6 +115,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
     const studentRows = await sql<{
       student_id: string;
       student_name: string;
+      current_sessions: CurrentSessionSummary[] | null;
       current_weekday: string | null;
       current_start_time: string | null;
       current_pickup_school: string | null;
@@ -117,9 +128,10 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
       SELECT
         s.id::text AS student_id,
         s.name AS student_name,
-        le.weekday AS current_weekday,
-        le.start_time AS current_start_time,
-        cp.school_name AS current_pickup_school,
+        cs.current_sessions AS current_sessions,
+        cs.current_weekday AS current_weekday,
+        cs.current_start_time AS current_start_time,
+        cs.current_pickup_school AS current_pickup_school,
         pr.id::text AS latest_request_id,
         pr.request_type AS latest_request_type,
         pr.payload AS latest_request,
@@ -127,21 +139,46 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
         pr.custom_notes AS latest_custom_notes
       FROM students s
       JOIN LATERAL (
-        SELECT se.weekday, se.start_time
-        FROM enrolments e
-        JOIN sessions se ON se.id = e.session_id
-        WHERE e.student_id = s.id
-        ORDER BY e.start_date DESC NULLS LAST
-        LIMIT 1
-      ) le ON true
-      LEFT JOIN LATERAL (
-        SELECT p.school_name
-        FROM pickups p
-        WHERE p.student_id = s.id
-          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(le.weekday))
-        ORDER BY p.id
-        LIMIT 1
-      ) cp ON true
+        SELECT
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'weekday', slots.weekday,
+              'start_time', slots.start_time,
+              'pickup_school', slots.pickup_school
+            )
+            ORDER BY slots.weekday_order, slots.start_time
+          ) AS current_sessions,
+          (ARRAY_AGG(slots.weekday ORDER BY slots.weekday_order, slots.start_time))[1] AS current_weekday,
+          (ARRAY_AGG(slots.start_time ORDER BY slots.weekday_order, slots.start_time))[1] AS current_start_time,
+          (ARRAY_AGG(slots.pickup_school ORDER BY slots.weekday_order, slots.start_time) FILTER (WHERE slots.pickup_school IS NOT NULL))[1] AS current_pickup_school
+        FROM (
+          SELECT DISTINCT
+            se.weekday,
+            se.start_time,
+            cp.school_name AS pickup_school,
+            CASE LOWER(TRIM(se.weekday))
+              WHEN 'monday' THEN 1
+              WHEN 'tuesday' THEN 2
+              WHEN 'wednesday' THEN 3
+              WHEN 'thursday' THEN 4
+              WHEN 'friday' THEN 5
+              WHEN 'saturday' THEN 6
+              WHEN 'sunday' THEN 7
+              ELSE 8
+            END AS weekday_order
+          FROM enrolments e
+          JOIN sessions se ON se.id = e.session_id
+          LEFT JOIN LATERAL (
+            SELECT p.school_name
+            FROM pickups p
+            WHERE p.student_id = s.id
+              AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+            ORDER BY p.id
+            LIMIT 1
+          ) cp ON true
+          WHERE e.student_id = s.id
+        ) slots
+      ) cs ON cs.current_sessions IS NOT NULL
       LEFT JOIN LATERAL (
         SELECT pr2.id, pr2.request_type, pr2.payload, pr2.status, pr2.custom_notes
         FROM parent_requests pr2
@@ -183,18 +220,21 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
     ]);
 
     const WEEKDAY_HOURS = new Set([16, 17, 18]); // 4, 5, 6 PM
-    const SATURDAY_HOURS = new Set([9, 10, 11, 12]); // 9 AM through 12 PM
+    const SUMMER_SATURDAY_HOURS = new Set([9, 10, 11, 12]); // Summer: 9 AM through 12 PM
+    const FALL_SATURDAY_HOURS = new Set([9, 10, 11, 13]); // Fall: 9, 10, 11 AM, 1 PM
 
     const filteredSummerSessions = summerSessions.filter(s => {
       const [h, m] = s.start_time.split(':').map(Number);
-      return !(s.weekday === 'Saturday' && h === 13 && m === 0);
+      if (s.weekday !== 'Saturday') return true;
+      if (m !== 0) return false;
+      return SUMMER_SATURDAY_HOURS.has(h);
     });
 
     const filteredFallSessions = fallSessions.filter(s => {
       const [h, m] = s.start_time.split(':').map(Number);
       if (s.weekday === 'Saturday') {
         if (m !== 0) return false;
-        return SATURDAY_HOURS.has(h);
+        return FALL_SATURDAY_HOURS.has(h);
       }
       if (s.weekday === 'Sunday') {
         if (h === 10 && m === 30) return false;
@@ -209,13 +249,16 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
 
     const latestFallSessionIds = studentRows.flatMap(r => {
       const request = r.latest_request as SummerSchedulingPayload | null;
-      return request?.fall_status === 'change' ? (request.fall_session_ids ?? []) : [];
+      return request?.fall_status === 'change'
+        ? [...(request.fall_session_ids ?? []), ...(request.fall_waitlist_session_ids ?? [])]
+        : [];
     });
     const canonicalFallIdById = await fetchCanonicalFallSessionIds(latestFallSessionIds);
 
     const students: ParentFormStudentData[] = studentRows.map(r => ({
       student_id: r.student_id,
       student_name: r.student_name,
+      current_sessions: r.current_sessions ?? [],
       current_weekday: r.current_weekday,
       current_start_time: r.current_start_time,
       current_pickup_school: r.current_pickup_school,
@@ -255,6 +298,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       student_names: string[];
       student_courses: StudentCourseEntry[];
       has_responded: boolean;
+      has_internal_response: boolean;
     }[]>`
       SELECT
         pt.id::text AS token_id,
@@ -273,11 +317,24 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         COALESCE(sn.student_names, '{}') AS student_names,
         COALESCE(sc.student_courses, '[]'::json) AS student_courses,
         EXISTS (
-          SELECT 1 FROM parent_requests pr
-          WHERE pr.token_id = pt.id
+          SELECT 1
+          FROM parent_requests pr
+          JOIN students prs ON prs.id = pr.student_id
+          WHERE prs.customer_id = c.id
             AND pr.is_latest = TRUE
             AND pr.removed_at IS NULL
-        ) AS has_responded
+            AND pr.request_type IN ('summer_scheduling', 'other')
+        ) AS has_responded,
+        EXISTS (
+          SELECT 1
+          FROM parent_requests pr
+          JOIN students prs ON prs.id = pr.student_id
+          WHERE prs.customer_id = c.id
+            AND pr.is_latest = TRUE
+            AND pr.removed_at IS NULL
+            AND pr.request_type IN ('summer_scheduling', 'other')
+            AND pr.submitted_by = 'staff'
+        ) AS has_internal_response
       FROM parent_tokens pt
       JOIN customers c ON c.id = pt.customer_id
       LEFT JOIN LATERAL (
@@ -331,14 +388,16 @@ export async function fetchSummerStats(): Promise<SummerStats> {
         FROM parent_tokens
       ),
       active_requests AS (
-        SELECT token_id, request_type, status, payload
-        FROM parent_requests
-        WHERE is_latest = TRUE
-          AND removed_at IS NULL
+        SELECT s.customer_id, pr.request_type, pr.status, pr.payload, pr.submitted_by
+        FROM parent_requests pr
+        JOIN students s ON s.id = pr.student_id
+        WHERE pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
       )
       SELECT
         token_stats.total_families,
-        COUNT(DISTINCT active_requests.token_id)::int AS responded,
+        COUNT(DISTINCT active_requests.customer_id)::int AS responded,
         COUNT(*) FILTER (
           WHERE active_requests.request_type = 'summer_scheduling'
             AND active_requests.payload->>'summer_status' = 'enrolling'
@@ -353,7 +412,9 @@ export async function fetchSummerStats(): Promise<SummerStats> {
         )::int AS no_change,
         COUNT(*) FILTER (WHERE active_requests.status = 'pending')::int AS pending,
         COUNT(*) FILTER (WHERE active_requests.status = 'needs_manual_followup')::int AS needs_followup,
-        token_stats.exported
+        token_stats.exported,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (WHERE active_requests.submitted_by = 'parent')::int AS parent_submitted,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (WHERE active_requests.submitted_by = 'staff')::int AS staff_submitted
       FROM token_stats
       LEFT JOIN active_requests ON TRUE
       GROUP BY token_stats.total_families, token_stats.exported
@@ -376,25 +437,37 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         s.name                                                               AS student_name,
         c.name                                                               AS parent_name,
         c.email                                                              AS parent_email,
+        c.alternate_email                                                    AS parent_alternate_email,
         COALESCE(pr.payload->>'summer_status', 'other')                      AS summer_status,
         COALESCE(sl.session_labels, '{}')                                    AS session_labels,
         COALESCE(sl.session_choices, '[]'::json)                             AS session_choices,
+        COALESCE(wl.waitlist_session_labels, '{}')                           AS waitlist_session_labels,
         COALESCE((pr.payload->>'pickup_requested')::boolean, FALSE)          AS pickup_requested,
         pr.payload->>'pickup_school'                                         AS pickup_school,
         pr.payload->>'pickup_school_other'                                   AS pickup_school_other,
         pr.payload->>'fall_status'                                           AS fall_status,
         COALESCE(fsl.fall_session_labels, '{}')                              AS fall_session_labels,
         COALESCE(fsl.fall_session_choices, '[]'::json)                       AS fall_session_choices,
+        COALESCE(fwl.fall_waitlist_session_labels, '{}')                     AS fall_waitlist_session_labels,
         pr.payload->>'fall_notes'                                             AS fall_notes,
         le.weekday                                                           AS current_weekday,
         le.start_time                                                        AS current_start_time,
         pr.status,
         pr.custom_notes,
+        COALESCE(pr.submitted_by, 'parent')                                  AS submitted_by,
+        pr.submitted_by_name,
         pr.submitted_at,
-        pr.added_to_portal_at
+        pt.last_exported_at                                                   AS token_last_exported_at,
+        COALESCE(pt.export_count, 0)::int                                     AS token_export_count,
+        pr.added_to_portal_at,
+        pr.added_to_portal_by,
+        COALESCE(history.previous_submission_count, 0)::int                 AS previous_submission_count,
+        history.previous_submitted_at,
+        COALESCE(history.submission_history, '[]'::json)                    AS submission_history
       FROM parent_requests pr
       JOIN students s  ON s.id  = pr.student_id
       JOIN customers c ON c.id  = s.customer_id
+      LEFT JOIN parent_tokens pt ON pt.id = pr.token_id
       LEFT JOIN LATERAL (
         SELECT
           ARRAY_AGG(
@@ -419,6 +492,15 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         FROM jsonb_array_elements_text(COALESCE(pr.payload->'session_ids', '[]'::jsonb)) AS sid
         JOIN sessions se ON se.id = sid::uuid
       ) sl ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          ARRAY_AGG(
+            se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+            ORDER BY se.weekday, se.start_time
+          ) AS waitlist_session_labels
+        FROM jsonb_array_elements_text(COALESCE(pr.payload->'waitlist_session_ids', '[]'::jsonb)) AS sid
+        JOIN sessions se ON se.id = sid::uuid
+      ) wl ON true
       LEFT JOIN LATERAL (
         SELECT
           ARRAY_AGG(slot.label ORDER BY slot.weekday, slot.start_time) AS fall_session_labels,
@@ -454,6 +536,21 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         ) slot
       ) fsl ON true
       LEFT JOIN LATERAL (
+        SELECT ARRAY_AGG(slot.label ORDER BY slot.weekday, slot.start_time) AS fall_waitlist_session_labels
+        FROM (
+          SELECT DISTINCT ON (se.weekday, se.start_time)
+            se.weekday,
+            se.start_time,
+            se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM') AS label
+          FROM jsonb_array_elements_text(COALESCE(pr.payload->'fall_waitlist_session_ids', '[]'::jsonb)) WITH ORDINALITY AS fsid(id, ordinality)
+          JOIN sessions se ON se.id = fsid.id::uuid
+          ORDER BY
+            se.weekday,
+            se.start_time,
+            fsid.ordinality DESC
+        ) slot
+      ) fwl ON true
+      LEFT JOIN LATERAL (
         SELECT se.weekday, se.start_time
         FROM enrolments e
         JOIN sessions se ON se.id = e.session_id
@@ -461,8 +558,106 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         ORDER BY e.start_date DESC NULLS LAST
         LIMIT 1
       ) le ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS previous_submission_count,
+          MAX(h.submitted_at) AS previous_submitted_at,
+          COALESCE(
+            JSON_AGG(
+              JSON_BUILD_OBJECT(
+                'request_id', h.id::text,
+                'request_type', h.request_type,
+                'summer_status', COALESCE(h.payload->>'summer_status', 'other'),
+                'session_labels', COALESCE(hsl.session_labels, '{}'),
+                'waitlist_session_labels', COALESCE(hwl.waitlist_session_labels, '{}'),
+                'pickup_requested', COALESCE((h.payload->>'pickup_requested')::boolean, FALSE),
+                'pickup_school', h.payload->>'pickup_school',
+                'pickup_school_other', h.payload->>'pickup_school_other',
+                'fall_status', h.payload->>'fall_status',
+                'fall_session_labels', COALESCE(hfsl.fall_session_labels, '{}'),
+                'fall_waitlist_session_labels', COALESCE(hfwl.fall_waitlist_session_labels, '{}'),
+                'fall_notes', h.payload->>'fall_notes',
+                'status', h.status,
+                'custom_notes', h.custom_notes,
+                'submitted_by', COALESCE(h.submitted_by, 'parent'),
+                'submitted_by_name', h.submitted_by_name,
+                'submitted_at', h.submitted_at,
+                'added_to_portal_at', h.added_to_portal_at,
+                'added_to_portal_by', h.added_to_portal_by
+              )
+              ORDER BY h.submitted_at DESC
+            ) FILTER (WHERE h.id IS NOT NULL),
+            '[]'::json
+          ) AS submission_history
+        FROM parent_requests h
+        LEFT JOIN LATERAL (
+          SELECT ARRAY_AGG(
+            se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+            || COALESCE(
+                 ' (start ' ||
+                 to_char((h.payload->'session_start_dates'->>(se.id::text))::date, 'Mon DD')
+                 || ')',
+                 ''
+               )
+            ORDER BY se.weekday, se.start_time
+          ) AS session_labels
+          FROM jsonb_array_elements_text(COALESCE(h.payload->'session_ids', '[]'::jsonb)) AS sid
+          JOIN sessions se ON se.id = sid::uuid
+        ) hsl ON true
+        LEFT JOIN LATERAL (
+          SELECT ARRAY_AGG(
+            se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+            ORDER BY se.weekday, se.start_time
+          ) AS waitlist_session_labels
+          FROM jsonb_array_elements_text(COALESCE(h.payload->'waitlist_session_ids', '[]'::jsonb)) AS sid
+          JOIN sessions se ON se.id = sid::uuid
+        ) hwl ON true
+        LEFT JOIN LATERAL (
+          SELECT ARRAY_AGG(slot.label ORDER BY slot.weekday, slot.start_time) AS fall_session_labels
+          FROM (
+            SELECT DISTINCT ON (se.weekday, se.start_time)
+              se.weekday,
+              se.start_time,
+              se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+              || COALESCE(
+                   ' (start ' ||
+                   to_char((h.payload->'fall_session_start_dates'->>(se.id::text))::date, 'Mon DD')
+                   || ')',
+                   ''
+                 ) AS label
+            FROM jsonb_array_elements_text(COALESCE(h.payload->'fall_session_ids', '[]'::jsonb)) WITH ORDINALITY AS fsid(id, ordinality)
+            JOIN sessions se ON se.id = fsid.id::uuid
+            ORDER BY
+              se.weekday,
+              se.start_time,
+              (h.payload->'fall_session_start_dates'->>(se.id::text)) IS NULL,
+              fsid.ordinality DESC
+          ) slot
+        ) hfsl ON true
+        LEFT JOIN LATERAL (
+          SELECT ARRAY_AGG(slot.label ORDER BY slot.weekday, slot.start_time) AS fall_waitlist_session_labels
+          FROM (
+            SELECT DISTINCT ON (se.weekday, se.start_time)
+              se.weekday,
+              se.start_time,
+              se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM') AS label
+            FROM jsonb_array_elements_text(COALESCE(h.payload->'fall_waitlist_session_ids', '[]'::jsonb)) WITH ORDINALITY AS fsid(id, ordinality)
+            JOIN sessions se ON se.id = fsid.id::uuid
+            ORDER BY
+              se.weekday,
+              se.start_time,
+              fsid.ordinality DESC
+          ) slot
+        ) hfwl ON true
+        WHERE h.token_id = pr.token_id
+          AND h.student_id = pr.student_id
+          AND h.id <> pr.id
+          AND h.request_type IN ('summer_scheduling', 'other')
+          AND h.removed_at IS NULL
+      ) history ON true
       WHERE pr.is_latest = TRUE
         AND pr.removed_at IS NULL
+        AND pr.request_type IN ('summer_scheduling', 'other')
       ORDER BY pr.submitted_at DESC
     `;
   } catch (error) {
@@ -501,30 +696,48 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
 
     const students = await sql<{
       student_name: string;
+      current_weekday: string | null;
+      current_start_time: string | null;
       summer_status: string;
       session_labels: string[];
+      waitlist_session_labels: string[];
       pickup_requested: boolean;
       pickup_school: string | null;
       pickup_school_other: string | null;
       fall_status: string | null;
       fall_session_labels: string[];
+      fall_waitlist_session_labels: string[];
       fall_notes: string | null;
       custom_notes: string | null;
+      previous_submission_count: number;
     }[]>`
       SELECT
         s.name AS student_name,
+        le.weekday AS current_weekday,
+        le.start_time AS current_start_time,
         COALESCE(pr.payload->>'summer_status', 'other') AS summer_status,
         COALESCE(sl.session_labels, '{}') AS session_labels,
+        COALESCE(wl.waitlist_session_labels, '{}') AS waitlist_session_labels,
         COALESCE((pr.payload->>'pickup_requested')::boolean, FALSE) AS pickup_requested,
         pr.payload->>'pickup_school' AS pickup_school,
         pr.payload->>'pickup_school_other' AS pickup_school_other,
         pr.payload->>'fall_status' AS fall_status,
         COALESCE(fsl.fall_session_labels, '{}') AS fall_session_labels,
+        COALESCE(fwl.fall_waitlist_session_labels, '{}') AS fall_waitlist_session_labels,
         pr.payload->>'fall_notes' AS fall_notes,
-        pr.custom_notes
+        pr.custom_notes,
+        COALESCE(history.previous_submission_count, 0)::int AS previous_submission_count
       FROM parent_tokens pt
-      JOIN parent_requests pr ON pr.token_id = pt.id AND pr.is_latest = TRUE AND pr.removed_at IS NULL
+      JOIN parent_requests pr ON pr.token_id = pt.id AND pr.is_latest = TRUE AND pr.removed_at IS NULL AND pr.request_type IN ('summer_scheduling', 'other')
       JOIN students s ON s.id = pr.student_id
+      LEFT JOIN LATERAL (
+        SELECT se.weekday, se.start_time
+        FROM enrolments e
+        JOIN sessions se ON se.id = e.session_id
+        WHERE e.student_id = s.id
+        ORDER BY e.start_date DESC NULLS LAST
+        LIMIT 1
+      ) le ON true
       LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(
           se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
@@ -539,6 +752,14 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
         FROM jsonb_array_elements_text(pr.payload->'session_ids') AS sid
         JOIN sessions se ON se.id = sid::uuid
       ) sl ON true
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_AGG(
+          se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM')
+          ORDER BY se.weekday, se.start_time
+        ) AS waitlist_session_labels
+        FROM jsonb_array_elements_text(COALESCE(pr.payload->'waitlist_session_ids', '[]'::jsonb)) AS sid
+        JOIN sessions se ON se.id = sid::uuid
+      ) wl ON true
       LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(slot.label ORDER BY slot.weekday, slot.start_time) AS fall_session_labels
         FROM (
@@ -561,6 +782,30 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
             fsid.ordinality DESC
         ) slot
       ) fsl ON true
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_AGG(slot.label ORDER BY slot.weekday, slot.start_time) AS fall_waitlist_session_labels
+        FROM (
+          SELECT DISTINCT ON (se.weekday, se.start_time)
+            se.weekday,
+            se.start_time,
+            se.weekday || ' ' || to_char(se.start_time, 'FMHH12:MI AM') AS label
+          FROM jsonb_array_elements_text(COALESCE(pr.payload->'fall_waitlist_session_ids', '[]'::jsonb)) WITH ORDINALITY AS fsid(id, ordinality)
+          JOIN sessions se ON se.id = fsid.id::uuid
+          ORDER BY
+            se.weekday,
+            se.start_time,
+            fsid.ordinality DESC
+        ) slot
+      ) fwl ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS previous_submission_count
+        FROM parent_requests h
+        WHERE h.token_id = pr.token_id
+          AND h.student_id = pr.student_id
+          AND h.id <> pr.id
+          AND h.request_type IN ('summer_scheduling', 'other')
+          AND h.removed_at IS NULL
+      ) history ON true
       WHERE pt.token = ${token}
       ORDER BY s.name
     `;

@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This document is the authoritative implementation reference for the parent-facing summer scheduling system in the Zebra Dashboard.
+This document is the historical implementation reference for the parent-facing summer scheduling system in the Zebra Dashboard.
+
+For the current future-week schedule plan, see `Summer-Schedule-Future-Week-Plan.md`.
 
 Built for:
 - Next.js 15 App Router
@@ -15,9 +17,25 @@ Built for:
 
 ## Executive Summary
 
-Parents receive a tokenized per-family link (`/summer-reg?token=abc123`). They open it, see each of their active students, see each child's current class context, pick the summer evening sessions they want to enroll in(if any)(multiple allowed), and submit. Staff review responses in `/dashboard/summer`, sort/filter them into action queues, and approve → enrolments are created automatically with course auto-inherited.
+Parents receive a tokenized per-family link (`/summer-reg?token=abc123`). They open it, see each active student, see current class context, pick summer sessions if attending, record fall plans if needed, and submit. Staff review responses in `/dashboard/summer`, apply choices to the Zebra Portal, then mark each response as Added to Portal.
 
-**Key framing:** This is an **enrolment form**, not a preference form. Parents choose actual sessions. Course is always inherited from existing enrolments — no course-picker UI anywhere.
+**Key framing:** Responses are the intake workflow. The future live summer schedule should come from portal sync after staff applies responses to the portal, not directly from `parent_requests`.
+
+## Current Addendum — 2026-05-29
+
+Summer responses are already shaped well enough for the summer schedule handoff. The form persists selected session IDs plus per-session start dates, so no response schema change is required unless staff needs parents to express non-contiguous week-by-week attendance in structured fields.
+
+The next schedule work is separate:
+
+- add a week selector to `/dashboard/schedule`
+- keep default schedule behavior unchanged when no week is selected
+- make schedule counts and rosters date-aware with `start_date` and `end_date`
+- classify portal-synced sessions as summer or regular
+- scope portal-sync deletes before scraping partial summer date ranges
+
+See `Summer-Schedule-Future-Week-Plan.md` for implementation details and launch gates.
+
+Current migration set for summer responses is `008` through `022`. Migration `022` adds response source tracking (`submitted_by`, `submitted_by_name`) and portal staff tracking (`added_to_portal_by`).
 
 ---
 
@@ -27,12 +45,12 @@ Parents receive a tokenized per-family link (`/summer-reg?token=abc123`). They o
 |----------|--------|
 | Enrollment or preference form? | Enrollment — parents pick actual sessions |
 | Multiple sessions per student? | Yes — Mon 4:15 AND Sat 10:00 each become a real enrolment |
-| "No change" option? | Yes — `summer_status: 'no_change'` with empty `session_ids[]`; staff can bulk-complete these without touching enrolments |
+| "No change" option? | Historical only. Current parent form offers Enroll, Pause, and Custom. Existing `no_change` rows can still be bulk-completed. |
 | Course selection? | Neither form nor approval — auto-inherited from student's existing enrolment |
 | Token expiry? | No hard expiry — staff control by flipping `is_summer=FALSE` on sessions |
 | Form stays live how long? | Until staff flip all summer sessions to `is_summer=FALSE` |
 | Resubmission? | Yes — old row `superseded`, new `is_latest=TRUE` row created |
-| September scheduling? | Separate future flow — not in this form |
+| September scheduling? | Current form includes a fall section with same/change/pause options and per-session fall start dates. |
 | Restart (inactive siblings)? | Phase 3 — same link, extra card section, detected automatically |
 | Capacity limits? | No hard blocks — staff flip `is_summer=FALSE` to close a session later phase we could have auto calculation on Coach Capacity |
 | Per-student or per-family link? | Per-family (one link per customer) |
@@ -49,7 +67,7 @@ Parent clicks /summer-reg?token=abc123
                                               ↓
 Form fetches live sessions WHERE is_summer=TRUE
   → If none: shows "Summer times coming soon — check back shortly"
-Parent sees each student's current September slot (context only)
+Parent sees each student's current class context
 For each student (actual enrollment):
   ├── Check off session(s) they want  [Mon 4:15] [Tue 4:15] [Sat 10:00] etc.
   ├── Pause for summer → one click
@@ -58,9 +76,9 @@ Parent submits → parent_requests row(s) created (is_latest=TRUE)
                                               ↓
 Staff dashboard /dashboard/summer
 ├── See all submissions (filtered by status)
-├── Approve individually → course auto-inherited → enrolment(s) created
-├── Approve All Enrolling (bulk)
-└── Remove from Summer (delete enrolments, keep request record)
+├── Review details and custom notes
+├── Apply selected choices to Zebra Portal
+└── Mark Added to Portal when done
 ```
 
 ---
@@ -74,7 +92,7 @@ These items are part of the real launch plan and should be tracked alongside the
 - **Family link QA before send:** Staff must be able to preview any generated family link while logged in so they can verify the correct children and current class context appear before emailing that family.
 - **Internal end-to-end test:** Before the first campaign send, staff should send at least one real token to an internal address, open the email, submit the form, and run the approval flow through to enrolment creation.
 - **Response triage for schedule building:** Staff need both filters and sorting on the response dashboard so they can work queues such as `enrolling`, `no_change`, `pausing`, `needs_followup`, and requested session/time.
-- **Email send tracking:** If links are sent manually through Constant Contact, `email_sent_at` / `email_sent_count` will not update automatically unless we add a manual "mark as sent" action. The dashboard should not show an "Emailed" count as authoritative until that is handled.
+- **Export tracking:** Constant Contact remains the send source of truth. Dashboard tracks CSV export with `last_exported_at` / `export_count`, not actual email delivery.
 
 ---
 
@@ -158,7 +176,7 @@ Decision: treat alternate_email as a staff-managed field. Staff fill it in for t
 // session_ids are UUIDs of sessions WHERE is_summer=TRUE
 // course_id NOT stored — auto-inherited at approval time
 { summer_status: 'enrolling' | 'pausing' | 'no_change', session_ids: string[] }
-// no_change: session_ids is always [] — student continues in their existing slot, no enrolment action needed
+// no_change: historical only; current form does not offer it
 
 // request_type: 'restart' (Phase 3)
 { session_id: string }  // course auto-inherited from last known enrolment
@@ -175,11 +193,11 @@ Decision: treat alternate_email as a staff-managed field. Staff fill it in for t
 |--------|---------|--------|
 | `pending` | Submitted, not yet reviewed | System on submit |
 | `superseded` | Replaced by a newer submission | System on resubmit |
-| `reviewed` | Staff has seen it | Staff |
+| `reviewed` | Legacy status retained for old rows | Historical |
 | `completed` | Enrolment(s) created | System on approval |
 | `needs_manual_followup` | Custom request, requires human | System on "Other" submit |
 
-**Re-submission:** Old row → `is_latest=FALSE, status='superseded'`. If approved enrolment exists → DELETE it first. New row → `is_latest=TRUE, status='pending'`.
+**Re-submission:** Old summer/fall planning row → `is_latest=FALSE, status='superseded'`. New row → `is_latest=TRUE, status='pending'` or `needs_manual_followup`.
 
 ---
 
@@ -287,8 +305,7 @@ All follow data.ts patterns: `'use server'`, `'use cache'` + `cacheTag` inside f
 //   → customers            (email, alternate_email)
 //   → students             (for student_names[])
 //   → enrolments → sessions → courses  (course_name, weekday, start_time per student)
-// Aggregate into student_courses[] on the customer row so ExportCsvButton can render the
-// "Current Courses" CSV column without a second query.
+// Aggregate into student_courses[] on the customer row for staff QA/reference.
 //
 // ParentLinkRow shape (definitions.ts):
 // {
@@ -305,8 +322,8 @@ All follow data.ts patterns: `'use server'`, `'use cache'` + `cacheTag` inside f
 //     start_time: string;
 //   }>;
 //   token: string;
-//   email_sent_at: Date | null;
-//   email_sent_count: number;
+//   last_exported_at: Date | null;
+//   export_count: number;
 //   has_responded: boolean;
 // }
 
@@ -338,8 +355,11 @@ All follow data.ts patterns: `'use server'`, `'use cache'` + `cacheTag` inside f
 // approveAllEnrolling(formData)     — FormData: start_date only
 //   Must filter: status='pending' AND payload->>'summer_status'='enrolling' to avoid double-approving
 // removeFromSummer(formData)        — deletes all enrolment_ids[], resets to pending
-// markReviewed(formData)
+// markAddedToPortal(requestId)      — records when staff has applied response to portal
+// clearAddedToPortal(requestId)
 // markNeedsFollowup(formData)
+// clearFollowup(requestId)
+// updateSummerResponseSource(requestId, 'parent' | 'staff')
 // sendSummerFormEmails(customerIds?) — Phase 4, uses Resend
 ```
 
@@ -358,17 +378,21 @@ const RemoveFromSummerSchema = z.object({ request_id: z.string().uuid() });
 ```
 [Student Name] — currently in: Wednesday 5:15 PM
 
-○ No change — keep my current schedule through summer
-○ Enroll in different/additional summer sessions:
+○ Continue weekly classes in July and August:
     Mon / Fri:         [ ] 4:15 PM
     Tue / Wed / Thu:   [ ] 4:15 PM   [ ] 5:15 PM
     Saturday:          [ ] 9:00 AM   [ ] 10:00 AM   [ ] 11:00 AM   [ ] 12:00 PM   [ ] 1:00 PM
-○ Pause for summer
+○ Not attending this summer in July and August
 ○ Custom / unusual request: [___________________________]
   e.g. "Only June evenings, then pause in July and resume mid-August"
+
+Fall section:
+○ Keep current session
+○ Request a different class time starting in September
+○ Pause in September
 ```
 
-**"No change" behavior:** stores `summer_status: 'no_change'`, `session_ids: []`. Staff can bulk-complete these with a "Mark all No-Change as Reviewed" action — no enrolment insert needed.
+**"No change" behavior:** historical only. Old `summer_status: 'no_change'` rows may exist and can still be bulk-completed, but the current parent form does not offer this option.
 
 Sessions are grouped by weekday from live DB rows (`is_summer=TRUE`). No hardcoded slot config.
 
@@ -383,28 +407,24 @@ Sessions are grouped by weekday from live DB rows (`is_summer=TRUE`). No hardcod
 
 ## Staff Dashboard Components
 
-- **`SummerStatsCards`** — Total Families, Responded, Enrolling, Pausing, Pending, Needs Follow-up, Emailed
-- **`SummerTabs`** — `?tab=responses` / `?tab=links`
+- **Stats cards** — Total Families, Responded, Not Responded, Exported, Enrolling, Pausing, Needs Follow-up, Parent Submitted, Staff Submitted
+- **Tabs** — `links`, `responses`, `schedule`, `fall-schedule`
 - **`SummerResponsesSection`** — table: Student, Parent, Choice, Sessions, Sept Slot, Submitted, Actions; sortable by submitted date, family, student, response type, and current slot
-- **`ApproveModal`** — start_date only (sessions already stored; course auto-inherited). No session or course picker.
-- **`ApproveAllModal`** — start_date only, bulk. Shows count of enrolling students.
-- **`RemoveButton`** — inline confirm before `removeFromSummer`
+- **`ApproveModal` / `ApproveAllModal`** — historical/local enrolment path. Primary operating workflow is now response → portal → Added to Portal.
+- **`Delete response`** — testing/cleanup action. Current code hard-deletes the `parent_requests` row after deleting linked enrolments; if audit preservation is required, restore the `removed_at` soft-delete plan before launch.
+- **`AddedToPortalButton`** — marks portal application complete and records staff name.
 - **`SummerLinkManagement`** — Generate All Tokens, Export CSV, Copy individual links, Preview link, and flag rows missing a usable email
 - **`CopyLinkButton`** — `navigator.clipboard.writeText(origin + '/summer-reg?token=' + token)`
 - **`PreviewLinkButton`** — opens `/summer-reg?token=...` in a new tab so staff can QA a family's form before send
 - **`ExportCsvButton`** — client-side CSV, **one row per family** (deduplicated at customer level)
 
-**CSV columns — first four are Constant Contact template variables; last two are staff QA reference only (CC ignores extra columns):**
+**Current CSV columns:**
 ```
-Full Name, Email Address, Alternate Email, Students, Current Courses, Link
+Email, Alternate Email, Students, Link
 ```
-Example row:
-```
-"John Smith","john@example.com","jane@example.com","Emma, Liam","Emma — Robotics Wed 5:15 PM; Liam — Robotics Sat 10:00 AM","https://dashboard.zebrarobotics.com/summer-reg?token=abc123"
-```
-- **Alternate Email** — pulled from `customers.alternate_email`; empty string `""` if null (CC handles blank gracefully).
-- **Current Courses** — staff-only reference so they can QA that each child's class context is correct before send. Populated from the `student_courses[]` JOIN in `fetchParentLinkRows`. Format: `"[Student] — [Course] [Weekday] [Time]"`, multiple students separated by `"; "`.
-- CC template uses `{{Full Name}}`, `{{Students}}`, `{{Link}}` as personalization variables. `{{Alternate Email}}` can optionally be wired to CC's built-in "also email" feature.
+- **Alternate Email** — pulled from `customers.alternate_email`; empty string if null.
+- **Students** — active students only, formatted for email copy.
+- CC template uses `{{Students}}` and `{{Link}}` personalization variables.
 
 Staff uploads to CC → creates email template → CC sends one personalized email per family.
 
@@ -435,9 +455,9 @@ Time estimates are realistic single-session focused work. Total Steps 1–5: ~22
 12. `fetchParentLinkRows` (with alternate_email + student_courses JOIN) + `generateAllParentTokens` — 90 min
 13. `app/dashboard/summer/page.tsx` (links tab) — 30 min
 14. `SummerLinkManagement`, `CopyLinkButton`, `PreviewLinkButton` — 60 min
-15. `ExportCsvButton` (6-column CSV: Full Name, Email Address, Alternate Email, Students, Current Courses, Link) — 45 min
+15. `ExportCsvButton` (current filtered CSV: Email, Alternate Email, Students, Link) — 45 min
 16. Add `Summer Reg` nav link — 10 min
-17. **Test:** generate all tokens → export CSV → open in Sheets → verify 6 columns, one row per family
+17. **Test:** generate all tokens → export CSV → open in Sheets → verify 4 columns, one row per family
 18. **Test:** preview selected family links while logged in → correct children + current class context appear
 19. **Operational:** review blank/missing `email` and `alternate_email` before importing into Constant Contact
 
@@ -448,7 +468,7 @@ Time estimates are realistic single-session focused work. Total Steps 1–5: ~22
 23. **Test:** submit responses → dashboard shows correct data and sorting/filtering work for staff queues
 
 ### Step 5 — Approval Flow (~5 hrs)
-24. `approveSummerRequest`, `approveAllEnrolling`, `removeFromSummer`, `markReviewed`, `markNeedsFollowup` — 2.5 hrs
+24. `approveSummerRequest`, `approveAllEnrolling`, `deleteSummerResponse`, `markAddedToPortal`, `markNeedsFollowup`, `clearFollowup` — 2.5 hrs
 25. `ApproveModal`, `ApproveAllModal`, `RemoveButton` — 2 hrs
 26. **Test full cycle:** submit → approve → enrolment on schedule → remove → enrolment gone, request kept — 30 min
 
@@ -499,7 +519,7 @@ Assumes ~3–4 hrs of focused coding per day alongside regular studio work. Adju
 
 ### Apr 29 (Tue) — Link management UI
 **WHY:** Staff need to export the CSV and preview links before anything goes out via Constant Contact. This is the last step before operational QA.
-**HOW:** Build `SummerLinkManagement`, `CopyLinkButton`, `PreviewLinkButton`. Build `ExportCsvButton` with the 6-column CSV spec (Full Name, Email Address, Alternate Email, Students, Current Courses, Link). Build `app/dashboard/summer/page.tsx` with the links tab. Add `Summer Reg` to nav links.
+**HOW:** Build `SummerLinkManagement`, `CopyLinkButton`, `PreviewLinkButton`. Build `ExportCsvButton` with the current CSV spec (Email, Alternate Email, Students, Link). Build `app/dashboard/summer/page.tsx` with the links tab. Add `Summer Reg` to nav links.
 
 ---
 
@@ -517,7 +537,7 @@ Assumes ~3–4 hrs of focused coding per day alongside regular studio work. Adju
 
 ### May 2 (Fri) — Approval flow (actions)
 **WHY:** Core business logic: auto-inherit course, insert enrolments, handle re-approval cleanly. This is the highest-stakes code in the system.
-**HOW:** Implement `approveSummerRequest` (fetch request → inherit course_id from latest enrolment → `sql.begin`: INSERT enrolments, UPDATE request). Implement `approveAllEnrolling` (filter `status='pending'` AND `payload->>'summer_status'='enrolling'`). Implement `removeFromSummer`, `markReviewed`, `markNeedsFollowup`. Write Zod schemas. Test each action directly before wiring to UI.
+**HOW:** Implement `approveSummerRequest` (fetch request → inherit course_id from latest enrolment → `sql.begin`: INSERT enrolments, UPDATE request). Implement `approveAllEnrolling` (filter `status='pending'` AND `payload->>'summer_status'='enrolling'`). Implement response cleanup, `markAddedToPortal`, `markNeedsFollowup`, and `clearFollowup`. Test each action directly before wiring to UI.
 
 ---
 
@@ -547,7 +567,7 @@ Assumes ~3–4 hrs of focused coding per day alongside regular studio work. Adju
 
 ### May 9 (Fri) — Constant Contact import dry run
 **WHY:** CC has its own CSV import UI with column-mapping steps. Confirming the format works now avoids a last-minute scramble on send day.
-**HOW:** Import the exported CSV into a Constant Contact test list. Verify Full Name, Email Address, Alternate Email map as expected. Preview a templated email using `{{Full Name}}`, `{{Students}}`, `{{Link}}` variables. Confirm list count matches expected active family count.
+**HOW:** Import the exported CSV into a Constant Contact test list. Verify Email Address, Alternate Email, Students, and Link map as expected. Preview a templated email using `{{Students}}` and `{{Link}}` variables. Confirm list count matches expected active family count.
 
 ---
 
@@ -573,11 +593,11 @@ Assumes ~3–4 hrs of focused coding per day alongside regular studio work. Adju
 ## Compatibility With Existing Systems
 
 - **No change** to invoices, payments, recurring invoices, or billing
-- **No change** to `/dashboard/schedule`, attendance, makeups, or trials
-- **No change** to portal sync / `insert_from_portal.ts` — summer data is in separate tables
-- **No automatic enrolment changes** — staff approve individually or in bulk
+- Current response launch does not require changes to `/dashboard/schedule`, attendance, makeups, or trials.
+- Future portal-derived summer schedule does require changes to `/dashboard/schedule` and portal sync; see `Summer-Schedule-Future-Week-Plan.md`.
+- No automatic enrolment changes happen from parent submission alone. Staff must apply responses in portal or use the historical local approval path.
 
-The only change to existing behavior is the `auth.config.ts` fix to allow `/summer-reg` for logged-in users.
+Default schedule behavior must remain unchanged until staff explicitly selects a future week.
 
 ---
 
@@ -681,6 +701,7 @@ Do not merge/delete duplicate customer rows until token ownership and student `c
 **Co-parent extraction logic:** Find the row in `parents[]` whose `user_id` ≠ the queried `familyId` (cast both to `Number` — the DB returns `portal_parent_id` as string). Fall back to `primary_ind === 0` if user_id match fails. Apply self-loop guards: skip when co-parent email or name normalizes equal to the primary's. Migration `015` cleaned up the same self-loop pattern from earlier broken bridge code.
 
 **Backfill route:** `app/jobs/backfill-alt-parents/route.ts`
+- Protected by `BACKFILL_ALT_PARENTS_SECRET`; pass it as `x-job-secret` or `?secret=...`.
 - Default = DRY RUN. Apply with `?apply=1`.
 - Optional `?limit=N` and `?customerId=<uuid>` for targeted runs.
 - Batches of 10 with `Promise.all` (JWT cached, fits inside 50-min window).
@@ -709,14 +730,13 @@ Full list saved to `backfill-alt-parents-dryrun.txt` (gitignored — review loca
 2. ✅ Backfill route built with self-loop guards + dry run validated
 3. ✅ Spot-check 5–10 entries against known families — names match
 4. ⏳ Polish pass on remaining items (responses Details modal, schedule tab refactor, etc.)
-5. ⏳ Prod migration window: run `?apply=1` once → verify row counts → delete probe + backfill routes
+5. ⏳ Prod migration window: run `?apply=1` once with `BACKFILL_ALT_PARENTS_SECRET` → verify row counts → delete backfill route
 6. ⏳ Phase B: integrate `fetchFamilyView` into daily scrape so new families gain alt name automatically (separate work, after Phase A apply confirmed)
 7. ⏳ Restore `alternate_name` to `syncCustomers` upsert + `DO UPDATE SET COALESCE(...)` clause so future portal syncs don't wipe what backfill set
 8. ⏳ Add `Alternate Name` column to CSV export for CC personalization
 
-**Files added (delete after apply):**
-- `app/jobs/probe-portal/route.ts` — discovery probe
-- `app/jobs/backfill-alt-parents/route.ts` — one-shot enrichment
+**Temporary file (delete after apply):**
+- `app/jobs/backfill-alt-parents/route.ts` — one-shot enrichment, secret-protected
 
 **Why historical context still matters:** Portal sync currently captures `alternate_email` only. `alternate_name` was removed from sync in commit `ee0b561` because the portal's `alternate_emails` field is plain email text — no name attached. The bidirectional co-parent bridge (in `syncCustomers`) was also stripped of its `alternate_name` writes at the same time to avoid self-loops; migration `015` cleared the resulting bad rows. The `family-view` endpoint solves both problems: it returns each parent as a structured row with `name` and clear `primary_ind` so co-parent identification is unambiguous.
 
@@ -759,11 +779,7 @@ Full list saved to `backfill-alt-parents-dryrun.txt` (gitignored — review loca
 - Parent form: full sessions render grayed-out with strikethrough + "Full" badge, checkbox disabled. Applies to BOTH summer and fall blocks in `student-card.tsx`.
 - Server action: `toggleSessionFull(sessionId, isFull)` in `summer-actions.ts`. Revalidates `schedule` and `summer-responses` tags.
 - **Summer staff UI — DONE:** `SessionFullToggle` button on each card in `summer-schedule-tab.tsx`. Card header turns red when full.
-- **[TODO] Fall staff UI:** No equivalent toggle for fall sessions. Options:
-  1. Add `is_full` column to existing `/dashboard/schedule` cards (touches non-summer code path — needs care).
-  2. Add a "Fall" subtab to `/dashboard/summer` showing fall sessions used by the parent form (weekdays 4/5/6 PM + weekend on-the-hour minus noon, matching the form filter) with the same `SessionFullToggle`.
-  3. Inline toggle in responses-tab session-cell tooltip — least intrusive but lowest visibility.
-  - **Recommended:** option 2. Keeps all summer-reg-related UI in one place; doesn't affect the regular schedule tab. Wire `fetchFallSessionsForSummerReg()` (mirrors form filter) → render cards → reuse `SessionFullToggle`.
+- **Fall staff UI — DONE:** Fall Schedule subtab on `/dashboard/summer` reuses `SummerScheduleTab` and `SessionFullToggle`.
 
 ### Summer schedule tab — ✅ DONE (refactor pending)
 
@@ -795,10 +811,11 @@ Billing integration is also deferred. `enrolment_ids` are stored on approved `pa
 
 **Remove button — testing-only.** Renamed to `Remove (test)` with explicit confirm copy ("Deletes enrolments. For testing only."). Reason: approval history must be preserved in production; remove is only intended for QA / internal testing of the round-trip.
 
-### Preserve approval history on remove — ✅ CODE DONE (2026-05-08), MIGRATION 019 NOT YET DEPLOYED
+### Preserve approval history on remove — HISTORICAL PLAN, RECHECK BEFORE LAUNCH
 - Migration `019_add_removed_at_to_parent_requests.sql` written — adds `parent_requests.removed_at TIMESTAMPTZ` + partial index. Idempotent.
-- `removeFromSummer` no longer deletes the row. It deletes any linked enrolments, then sets `removed_at = NOW()`, `is_latest = FALSE`, clears `enrolment_ids`. Status stays as-is so the approval audit trail (`reviewed_at`, `reviewed_by`) is preserved.
-- All response queries already filter `is_latest = TRUE`, so removed rows drop out of staff views automatically.
+- Current `deleteSummerResponse` code hard-deletes the row after deleting linked enrolments.
+- If production audit history must be preserved, restore the `removed_at` soft-delete behavior before launch.
+- All response queries already filter `is_latest = TRUE` and `removed_at IS NULL`, so soft-deleted rows would drop out of staff views automatically.
 - A subsequent submission for the same (token, student) supersedes the removed row via the existing `is_latest` flip in `submitSummerForm`.
 
 Bundle with 008–018 when the prod migration window opens.
@@ -827,7 +844,7 @@ Data exposed (parent emails, tokens that grant form access without auth, every f
 
 ---
 
-## Staff-on-Behalf Submissions [TODO]
+## Staff-on-Behalf Submissions — CODE DONE, PROCESS TEST NEEDED
 
 Use case: A parent calls / emails / tells staff in person what they want for summer + fall. Staff opens the family's link (via Preview Link) and submits the form on the parent's behalf.
 
@@ -842,10 +859,10 @@ How this maps to the current form:
 ### Open design questions
 1. Should the form have a **resume date** field on the "Pause for summer" option? Today there's no way to capture "pause now, return on X date" — staff has to track this externally.
 2. Should there be a separate **"Pause now"** option distinct from "Pause for summer", since the parent might be pausing mid-spring before summer even starts?
-3. When staff submits on behalf, do we want a flag in `parent_requests` like `submitted_by: 'staff' | 'parent'` for audit?
+3. Staff-vs-parent source is now tracked with `submitted_by` and `submitted_by_name`.
 
 ### Plan
-- Try the Lewis Thang submission with the current form once migrations 008–017 are deployed.
+- Try the Lewis Thang submission with the current form once migrations through 022 are deployed.
 - Record what info couldn't be captured cleanly.
 - Decide whether to add a resume date field or rely on `custom_notes` for now.
 
@@ -923,7 +940,7 @@ Round 1 (quick wins, no migration) — **DONE 2026-05-08**:
 
 Round 2 (medium) — **DONE 2026-05-08**:
 5. ✅ CSV `student_names` single field + grammar (`formatStudentNamesGrammar` in `export-csv-button.tsx`). CSV columns reduced to `Email, Alternate Email, Students, Link` (dropped Full Name, Alternate Name, Current Courses per meeting decision).
-6. ✅ Filter UI + single Export CSV button in `link-management.tsx`. Filter dropdown: `All families / Not responded / Not exported / Exported / Responded`. Export CSV exports filtered list and calls new `markTokensExported(tokenIds)` action which bumps `email_sent_at` + `email_sent_count` for the exported rows. Dropped dual `ExportCsvButton` ("Export All" / "Export Non-Responders") and `MarkSentButton`. Deleted `app/ui/summer/mark-sent-button.tsx` and the now-unused `markAllEmailSent` / `markNonRespondersEmailSent` actions.
+6. ✅ Filter UI + single Export CSV button in `link-management.tsx`. Filter dropdown: `All families / Not responded / Not exported / Exported / Responded`. Export CSV exports filtered list and calls new `markTokensExported(tokenIds)` action which bumps `last_exported_at` + `export_count` for the exported rows. Dropped dual `ExportCsvButton` ("Export All" / "Export Non-Responders") and `MarkSentButton`. Deleted `app/ui/summer/mark-sent-button.tsx` and the now-unused `markAllEmailSent` / `markNonRespondersEmailSent` actions.
 7. ✅ UI rename "Last Emailed" → "Last Exported" (column header in link-management.tsx). Column still backed by `parent_tokens.email_sent_at` until Round 3 migration 018 renames concept to `last_exported_at`.
 
 Round 3 (migration window, batched into 018) — **CODE DONE 2026-05-08, MIGRATION 018 NOT YET DEPLOYED**:
@@ -973,7 +990,7 @@ Ordered by impact on launch readiness:
 
 | Item | Why |
 |------|-----|
-| September scheduling / fall slots | Separate future flow on same token infrastructure |
+| Fall-only campaign | Current form captures fall plans, but a later fall-only campaign needs campaign/request scoping. |
 | Restart / resume inactive sibling | Phase 3 — detected automatically, same link |
 | Automated email sending (Resend) | Phase 4 — use CSV → CC manually while researching |
 | Course selection / switching | Course always inherited — not needed |
@@ -981,7 +998,7 @@ Ordered by impact on launch readiness:
 | Billing automation | Manual review preferred; store enrolment_ids for later |
 | Per-session capacity limits | Add when enrollment counts stabilize |
 | Parent login portal | Long-term vision; token-based sufficient for now |
-| Summer schedule tab | Needs design decisions — see Product Adjustments above |
+| Future-week schedule selector | Active plan now documented in `Summer-Schedule-Future-Week-Plan.md`. |
 | Portal sync on approval | No API contract yet — deferred post-MVP |
 | Session blocking admin UI | MVP: DB edit; future: toggle on dashboard |
 | VEX flex schedule | Needs design confirmation — see VEX section above |

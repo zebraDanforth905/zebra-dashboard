@@ -14,6 +14,8 @@
 // Optional params:
 //   ?limit=N            — only process first N customers (for testing)
 //   ?customerId=<uuid>  — only process one customer (for spot-check)
+//
+// Requires BACKFILL_ALT_PARENTS_SECRET via `x-job-secret` header or `?secret=...`.
 
 import { NextResponse } from "next/server";
 import { connection } from "next/server";
@@ -21,6 +23,7 @@ import postgres from "postgres";
 import { fetchFamilyView } from "@/app/lib/scraper_helpers";
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: "require" });
+const BACKFILL_SECRET = process.env.BACKFILL_ALT_PARENTS_SECRET;
 
 type CustomerRow = {
   id: string;
@@ -105,9 +108,18 @@ function shareNameTokens(a: string | null | undefined, b: string | null | undefi
   return false;
 }
 
+function hasBackfillAccess(req: Request, url: URL): boolean {
+  const providedSecret = req.headers.get("x-job-secret") ?? url.searchParams.get("secret");
+  return Boolean(BACKFILL_SECRET && providedSecret && providedSecret === BACKFILL_SECRET);
+}
+
 export async function GET(req: Request) {
-  await connection();
   const url = new URL(req.url);
+  if (!hasBackfillAccess(req, url)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  await connection();
   const apply = url.searchParams.get("apply") === "1";
   const modeParam = url.searchParams.get("mode");
   const mode: "fill" | "dedupe" | "refresh" | "clear-self-dupe" =

@@ -1,5 +1,6 @@
 import { fetchParentFormData } from '@/app/lib/summer-data';
 import SummerRegForm from '@/app/ui/summer/summer-reg-form';
+import { auth } from '@/auth';
 import Image from 'next/image';
 import { Metadata } from 'next';
 
@@ -10,9 +11,9 @@ export const metadata: Metadata = {
 export default async function SummerRegPage({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<{ token?: string; staff?: string }>;
 }) {
-  const { token } = await searchParams;
+  const { token, staff } = await searchParams;
 
   if (!token) return <PageShell><InvalidLink /></PageShell>;
 
@@ -33,6 +34,11 @@ export default async function SummerRegPage({
     );
   }
 
+  const session = staff === '1' ? await auth() : null;
+  const sessionUser = session?.user as { name?: string | null; email?: string | null; user_type?: string } | undefined;
+  const isStaffEntry = staff === '1' && sessionUser?.user_type === 'admin';
+  const staffName = sessionUser?.name || sessionUser?.email || null;
+
   return (
     <PageShell>
       <div className="space-y-2 mb-6">
@@ -42,8 +48,13 @@ export default async function SummerRegPage({
           <p>Please let us know your summer plans and fall class schedule below. If your child(ren) will attend more than one session per week, you can select multiple time slots.</p>
           <p>We&apos;ll check in again in August to reconfirm before fall classes begin in September, and you&apos;re welcome to review or adjust the enrolment at that time.</p>
         </div>
+        {isStaffEntry && (
+          <div className="rounded-xl bg-amber-50 ring-1 ring-amber-100 px-4 py-3 text-sm text-amber-800">
+            Staff entry mode{staffName ? `: ${staffName}` : ''}. Submitted responses will be marked as staff-entered.
+          </div>
+        )}
       </div>
-      <SummerRegForm data={data} token={token} />
+      <SummerRegForm data={data} token={token} staffEntry={isStaffEntry} staffName={staffName} />
     </PageShell>
   );
 }

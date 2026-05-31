@@ -33,7 +33,7 @@ export default function ClearExportButton({ rows }: { rows: ParentLinkRow[] }) {
         onClick={handleClick}
         disabled={eligible.length === 0 || isPending}
         title="Test-only: resets export counts and timestamps for filtered families"
-        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-40"
+        className="shrink-0 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-40"
       >
         Clear Export ({eligible.length})
       </button>

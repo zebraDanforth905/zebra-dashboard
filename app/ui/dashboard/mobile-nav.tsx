@@ -7,18 +7,7 @@ import clsx from 'clsx';
 import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline';
 import Image from 'next/image';
 import GlobalStudentSearch from '../global-student-search';
-
-const links = [
-  { name: 'Schedule', href: '/dashboard/schedule' },
-  { name: 'My Schedule', href: '/dashboard/my-schedule' },
-  { name: 'Staff Scheduling', href: '/dashboard/staff-schedule', adminOnly: true },
-  { name: 'Camps', href: '/dashboard/camp' },
-  { name: 'Billing', href: '/dashboard/billing', adminOnly: true },
-  { name: 'Slips', href: '/dashboard/printable' },
-  { name: 'Accounts', href: '/dashboard/scratch-accounts' },
-  { name: 'Incidents', href: '/dashboard/admin/incident-reports', adminOnly: true },
-  { name: 'Settings', href: '/dashboard/settings' }
-];
+import { links } from './nav-links';
 
 type MobileNavProps = {
   signOutAction: () => Promise<void>;
