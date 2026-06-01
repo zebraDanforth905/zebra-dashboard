@@ -8,17 +8,32 @@ export const metadata: Metadata = {
 };
 
 const SUMMER_LABEL: Record<string, string> = {
-  enrolling: 'Enrolling in summer sessions',
-  pausing:   'Pausing for summer',
+  enrolling: 'Continuing weekly classes in July and August',
+  pausing:   'Not attending this summer in July and August',
   no_change: 'No change — keeping current schedule',
-  other:     'Custom request',
+  other:     'Custom plan',
 };
 
 const FALL_LABEL: Record<string, string> = {
-  same:   'Keep current slot',
-  change: 'Requesting a different time',
-  pause:  'Pausing fall / not sure yet',
+  same:   'Keep current session',
+  change: 'Requesting a different class time starting in September',
+  pause:  'Not sure yet — we won\'t hold a September spot',
 };
+
+function formatTime(t: string | null): string {
+  if (!t) return '—';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function formatFallChoice(status: string | null, weekday: string | null, startTime: string | null): string {
+  if (status !== 'same') return status ? (FALL_LABEL[status] ?? status) : '—';
+  return weekday
+    ? `${FALL_LABEL.same} - ${weekday} ${formatTime(startTime)}`
+    : FALL_LABEL.same;
+}
 
 export default async function SubmittedPage({
   searchParams,
@@ -27,6 +42,7 @@ export default async function SubmittedPage({
 }) {
   const { token } = await searchParams;
   const data = token ? await fetchSubmittedChoices(token) : null;
+  const isUpdate = data?.students.some(student => student.previous_submission_count > 0) ?? false;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -45,8 +61,12 @@ export default async function SubmittedPage({
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-slate-800">You&apos;re all set!</h1>
-              <p className="text-sm text-slate-500 mt-1">Hi Zebra family — thanks for submitting.</p>
+              <h1 className="text-xl font-semibold text-slate-800">
+                {isUpdate ? 'Your response has been updated!' : "You're all set!"}
+              </h1>
+              <p className="text-sm text-slate-500 mt-1">
+                {isUpdate ? 'Thanks — we saved your latest changes.' : 'Hi Zebra family — thanks for submitting.'}
+              </p>
             </div>
           </div>
 
@@ -57,6 +77,11 @@ export default async function SubmittedPage({
               {data.students.map((s, i) => (
                 <div key={i} className="rounded-xl border border-slate-200 bg-white px-4 py-3 space-y-3">
                   <p className="font-semibold text-slate-800 text-base">{s.student_name}</p>
+                  {s.previous_submission_count > 0 && (
+                    <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      Updated response
+                    </span>
+                  )}
 
                   {/* Summer block */}
                   <div className="rounded-lg bg-sky-50 px-3 py-2 space-y-1">
@@ -70,12 +95,10 @@ export default async function SubmittedPage({
                         {s.session_labels.join(', ')}
                       </p>
                     )}
-                    {s.pickup_requested && (
-                      <p className="text-xs text-slate-600">
-                        <span className="text-slate-400">School pickup: </span>
-                        {s.pickup_school === 'other'
-                          ? (s.pickup_school_other ?? 'Other school')
-                          : (s.pickup_school ?? 'Requested')}
+                    {s.waitlist_session_labels.length > 0 && (
+                      <p className="text-xs text-amber-700">
+                        <span className="text-amber-600">Waitlist: </span>
+                        {s.waitlist_session_labels.join(', ')}
                       </p>
                     )}
                     {s.custom_notes && (
@@ -90,12 +113,32 @@ export default async function SubmittedPage({
                   <div className="rounded-lg bg-emerald-50 px-3 py-2 space-y-1">
                     <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">September (Fall)</p>
                     <p className="text-sm text-slate-700 font-medium">
-                      {s.fall_status ? (FALL_LABEL[s.fall_status] ?? s.fall_status) : '—'}
+                      {formatFallChoice(s.fall_status, s.current_weekday, s.current_start_time)}
                     </p>
                     {s.fall_session_labels.length > 0 && (
                       <p className="text-xs text-slate-600">
                         <span className="text-slate-400">Requested times: </span>
                         {s.fall_session_labels.join(', ')}
+                      </p>
+                    )}
+                    {s.fall_waitlist_session_labels.length > 0 && (
+                      <p className="text-xs text-amber-700">
+                        <span className="text-amber-600">Waitlist: </span>
+                        {s.fall_waitlist_session_labels.join(', ')}
+                      </p>
+                    )}
+                    {s.fall_notes && (
+                      <p className="text-xs text-slate-600">
+                        <span className="text-slate-400">Note: </span>
+                        <span className="italic">{s.fall_notes}</span>
+                      </p>
+                    )}
+                    {s.pickup_requested && (
+                      <p className="text-xs text-slate-600">
+                        <span className="text-slate-400">School pickup: </span>
+                        {s.pickup_school === 'other'
+                          ? (s.pickup_school_other ?? 'Other school')
+                          : (s.pickup_school ?? 'Requested')}
                       </p>
                     )}
                   </div>
@@ -107,10 +150,10 @@ export default async function SubmittedPage({
           {/* Footer notes */}
           <div className="text-center space-y-2 pt-2 border-t border-slate-100">
             <p className="text-sm text-slate-500">
-              Our staff will review your preferences and be in touch if we have any questions.
+              Our team will review your preferences and be in touch if we have any questions.
             </p>
             <p className="text-sm text-slate-500">
-              We&apos;ll reach out in August to re-confirm your fall schedule before September begins.
+              We&apos;ll reach out in August to re-confirm your fall schedule before classes begin in September.
             </p>
             {token && (
               <p className="text-xs text-slate-400 mt-1">

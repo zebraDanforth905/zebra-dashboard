@@ -9,6 +9,33 @@ export const config = {
 };
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const isLoginRoute = pathname.startsWith('/login');
+  const isPublicParentRoute = pathname.startsWith('/summer-reg');
+  const isBillingRoute = pathname.startsWith('/dashboard/billing');
+  const shouldRequireLogin =
+    pathname === '/' || (pathname.startsWith('/dashboard') && !isBillingRoute);
+
+  if (shouldRequireLogin && !isLoginRoute && !isPublicParentRoute) {
+    const token = await getToken({
+      req: request,
+      secret: process.env.AUTH_SECRET as string,
+      secureCookie: process.env.NODE_ENV === 'production',
+    });
+
+    if (!token) {
+      const loginUrl = new URL('/login', request.url);
+      loginUrl.searchParams.set(
+        'callbackUrl',
+        pathname === '/' ? '/dashboard' : `${pathname}${request.nextUrl.search}`
+      );
+      return NextResponse.redirect(loginUrl);
+    }
+
+    if (pathname === '/') {
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
+  }
 
   // Protect admin routes - admin access only
   if (request.nextUrl.pathname.startsWith('/dashboard/admin')) {

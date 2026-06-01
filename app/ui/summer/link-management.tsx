@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { ParentLinkRow } from '@/app/lib/definitions';
 import CopyLinkButton from './copy-link-button';
 import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
+import ClearExportButton from './clear-export-button';
 import LockedFieldCell from './locked-field-cell';
 import RefreshLinksButton from './refresh-links-button';
 import Link from 'next/link';
@@ -22,7 +24,7 @@ function formatDate(d: Date | null): string {
   return new Date(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-type FilterValue = 'all' | 'not_responded' | 'not_exported' | 'exported' | 'responded';
+type FilterValue = 'all' | 'not_responded' | 'not_exported' | 'exported' | 'responded' | 'internal_responded';
 
 const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'all',           label: 'All families' },
@@ -30,6 +32,7 @@ const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'not_exported',  label: 'Not exported' },
   { value: 'exported',      label: 'Exported' },
   { value: 'responded',     label: 'Responded' },
+  { value: 'internal_responded', label: 'Internal response' },
 ];
 
 function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[] {
@@ -38,16 +41,38 @@ function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[
     case 'responded':     return rows.filter(r => r.has_responded);
     case 'not_exported':  return rows.filter(r => r.export_count === 0);
     case 'exported':      return rows.filter(r => r.export_count > 0);
+    case 'internal_responded': return rows.filter(r => r.has_internal_response);
     default:              return rows;
   }
 }
 
+function matchesSearch(row: ParentLinkRow, search: string): boolean {
+  if (!search) return true;
+  const searchableText = [
+    row.customer_name,
+    row.alternate_name,
+    ...row.student_names,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return searchableText.includes(search);
+}
+
 export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
+  const router = useRouter();
   const [filter, setFilter] = useState<FilterValue>('all');
-  const filtered = applyFilter(rows, filter);
+  const [search, setSearch] = useState('');
+  const normalizedSearch = search.trim().toLowerCase();
+  const filtered = useMemo(
+    () => applyFilter(rows, filter).filter(row => matchesSearch(row, normalizedSearch)),
+    [filter, normalizedSearch, rows],
+  );
 
   const total = rows.length;
   const responded = rows.filter(r => r.has_responded).length;
+  const internalResponded = rows.filter(r => r.has_internal_response).length;
   const missingEmail = rows.filter(r => !r.email).length;
 
   const [isRefreshing, startRefresh] = useTransition();
@@ -59,9 +84,10 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       try {
         const res = await refreshEmailsFromPortal();
         setRefreshResult(
-          `Refreshed ${res.updated}/${res.scanned} from portal` +
+          `Synced ${res.updated}/${res.scanned} from portal` +
             (res.fetchFailed > 0 ? ` · ${res.fetchFailed} fetch failed` : ''),
         );
+        router.refresh();
       } catch (err) {
         setRefreshResult(err instanceof Error ? err.message : 'Refresh failed');
       }
@@ -71,26 +97,42 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
   return (
     <div className="space-y-4">
       {/* Action bar */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 2xl:flex-nowrap">
         <GenerateTokensButton />
-        <div className="h-5 border-l border-slate-200 hidden sm:block" />
+        <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
         <select
           value={filter}
           onChange={e => setFilter(e.target.value as FilterValue)}
-          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
+          className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
         >
           {FILTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+        <input
+          type="search"
+          placeholder="Search names…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 sm:w-56 2xl:w-48"
+        />
+        {(filter !== 'all' || search) && (
+          <button
+            onClick={() => { setFilter('all'); setSearch(''); }}
+            className="text-xs text-slate-500 underline"
+          >
+            Clear
+          </button>
+        )}
         <ExportCsvButton rows={filtered} label="Export CSV" />
-        <div className="h-5 border-l border-slate-200 hidden sm:block" />
+        <ClearExportButton rows={filtered} />
+        <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
         <RefreshLinksButton />
         <button
           onClick={handleRefreshEmails}
           disabled={isRefreshing}
-          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 transition disabled:opacity-40"
+          className="shrink-0 whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 transition disabled:opacity-40"
           title="Pull primary + alternate emails from portal family-view for every family (skips locked fields)"
         >
-          {isRefreshing ? 'Refreshing emails…' : 'Refresh Emails from Portal'}
+          {isRefreshing ? 'Syncing emails…' : 'Sync Emails from Portal'}
         </button>
         {refreshResult && (
           <span className="text-xs text-slate-500">{refreshResult}</span>
@@ -101,6 +143,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{total}</span> families</span>
         <span><span className="font-semibold text-emerald-700">{responded}</span> responded</span>
+        <span><span className="font-semibold text-amber-700">{internalResponded}</span> internal response</span>
         <span><span className="font-semibold text-slate-800">{total - responded}</span> not yet responded</span>
         {missingEmail > 0 && (
           <span className="text-amber-700 font-medium">⚠ {missingEmail} missing email</span>
@@ -113,7 +156,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       {/* Table */}
       {rows.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 text-sm">
-          No tokens generated yet. Click "Generate All Tokens" to create links for all active families.
+          No tokens generated yet. Use Generate All Tokens to create links for all active families.
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -201,7 +244,12 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
                     {row.student_names.length > 0 ? row.student_names.join(', ') : '—'}
                   </td>
                   <td className="px-4 py-3">
-                    {row.has_responded ? (
+                    {row.has_internal_response ? (
+                      <span className="inline-flex flex-col items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium leading-tight text-amber-800">
+                        <span>Internal</span>
+                        <span>response</span>
+                      </span>
+                    ) : row.has_responded ? (
                       <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
                         Responded
                       </span>
@@ -221,9 +269,16 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
                     <div className="flex items-center gap-2">
                       <CopyLinkButton token={row.token} />
                       <Link
+                        href={`/summer-reg?token=${row.token}&staff=1`}
+                        target="_blank"
+                        className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded border border-slate-200 bg-white px-3 text-xs leading-none text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Staff Entry
+                      </Link>
+                      <Link
                         href={`/summer-reg?token=${row.token}`}
                         target="_blank"
-                        className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
+                        className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded border border-slate-200 bg-white px-3 text-xs leading-none text-slate-600 transition hover:bg-slate-50"
                       >
                         Preview
                       </Link>

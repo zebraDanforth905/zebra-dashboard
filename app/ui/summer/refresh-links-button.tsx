@@ -19,9 +19,10 @@ export default function RefreshLinksButton() {
     <button
       onClick={handleClick}
       disabled={isPending}
-      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
+      title="Reload the link table from the database"
+      className="shrink-0 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
     >
-      {isPending ? 'Refreshing…' : 'Refresh'}
+      {isPending ? 'Reloading…' : 'Reload Table'}
     </button>
   );
 }

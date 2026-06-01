@@ -4,6 +4,7 @@ import { ParentFormStudentData, Session } from '@/app/lib/definitions';
 import { getStartDateOptions, formatStartDate, WeekdayName } from '@/app/lib/tdsb-calendar';
 
 const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const PICKUP_WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday']);
 
 function formatTime(t: string): string {
   const [h, m] = t.split(':').map(Number);
@@ -12,8 +13,44 @@ function formatTime(t: string): string {
   return m === 0 ? `${hour} ${ampm}` : `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-function getHour(startTime: string): number {
-  return parseInt(startTime.split(':')[0], 10);
+function formatCurrentTime(t: string): string {
+  return formatTime(t).replace(' ', '').toLowerCase();
+}
+
+function formatTitleCase(value: string): string {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function formatCurrentSlot(weekday: string | null, startTime: string | null, pickupSchool: string | null): string | null {
+  if (!weekday || !startTime) return null;
+  const slot = `${formatTitleCase(weekday)} at ${formatCurrentTime(startTime)}`;
+  return pickupSchool ? `${slot} with ${formatTitleCase(pickupSchool)} pickup` : slot;
+}
+
+function formatCurrentSlots(sessions: ParentFormStudentData['current_sessions']): string | null {
+  if (sessions.length === 0) return null;
+  return sessions
+    .map(session => formatCurrentSlot(session.weekday, session.start_time, session.pickup_school))
+    .filter(Boolean)
+    .join(', ');
+}
+
+function isPickupSession(weekday: string | null, startTime: string | null): boolean {
+  if (!weekday || !startTime || !PICKUP_WEEKDAYS.has(weekday.trim().toLowerCase())) return false;
+  const [hour, minute] = startTime.split(':').map(Number);
+  return hour === 16 && minute === 0;
+}
+
+function normalizePickupSchool(school: string | null): Pick<StudentCardState, 'pickup_school' | 'pickup_school_other'> {
+  if (!school) return { pickup_school: null, pickup_school_other: '' };
+  const normalized = school.trim().toLowerCase();
+  if (normalized === 'jackman') return { pickup_school: 'Jackman', pickup_school_other: '' };
+  if (normalized === 'frankland') return { pickup_school: 'Frankland', pickup_school_other: '' };
+  return { pickup_school: 'other', pickup_school_other: formatTitleCase(school) };
 }
 
 function groupByWeekday<T extends { weekday: string }>(sessions: T[]) {
@@ -28,6 +65,7 @@ export type StudentCardState = {
   summer_status: 'enrolling' | 'pausing' | 'other' | null;
   session_ids: string[];
   session_start_dates: Record<string, string>;
+  waitlist_session_ids: string[];
   custom_notes: string;
   pickup_requested: boolean;
   pickup_school: 'Jackman' | 'Frankland' | 'other' | null;
@@ -35,6 +73,7 @@ export type StudentCardState = {
   fall_status: 'same' | 'change' | 'pause' | null;
   fall_session_ids: string[];
   fall_session_start_dates: Record<string, string>;
+  fall_waitlist_session_ids: string[];
   fall_notes: string;
 };
 
@@ -50,20 +89,30 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
   const summerByWeekday = groupByWeekday(summerSessions);
   const fallByWeekday = groupByWeekday(fallSessions);
 
-  const currentIs4pm =
-    !!student.current_start_time && getHour(student.current_start_time) === 16;
-  const fallChangeHas4pm = fallSessions.some(
-    s => state.fall_session_ids.includes(s.id) && getHour(s.start_time) === 16,
-  );
-  const fallPickupVisible =
-    (state.fall_status === 'same' && currentIs4pm) ||
-    (state.fall_status === 'change' && fallChangeHas4pm);
+  const currentSessions = student.current_sessions.length > 0
+    ? student.current_sessions
+    : student.current_weekday && student.current_start_time
+      ? [{
+          weekday: student.current_weekday,
+          start_time: student.current_start_time,
+          pickup_school: student.current_pickup_school,
+        }]
+      : [];
+  const currentPickupSession = currentSessions.find(session => isPickupSession(session.weekday, session.start_time));
+  const currentPickupEligible = currentPickupSession !== undefined;
 
-  const currentSlot =
-    student.current_weekday && student.current_start_time
-      ? `${student.current_weekday} ${formatTime(student.current_start_time)}`
-      : null;
-  const hasCurrentEnrolment = student.has_current_enrolment;
+  const currentSlot = formatCurrentSlots(currentSessions);
+  const currentPickupDefaults = currentPickupSession
+    ? normalizePickupSchool(currentPickupSession.pickup_school)
+    : { pickup_school: null, pickup_school_other: '' };
+
+  function defaultCurrentPickupState(): Pick<StudentCardState, 'pickup_requested' | 'pickup_school' | 'pickup_school_other'> {
+    return {
+      pickup_requested: currentPickupDefaults.pickup_school !== null,
+      pickup_school: currentPickupDefaults.pickup_school,
+      pickup_school_other: currentPickupDefaults.pickup_school_other,
+    };
+  }
 
   function setSummerStatus(status: StudentCardState['summer_status']) {
     onChange({
@@ -71,6 +120,8 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
       summer_status: status,
       session_ids: status === 'enrolling' ? state.session_ids : [],
       session_start_dates: status === 'enrolling' ? state.session_start_dates : {},
+      waitlist_session_ids: status === 'enrolling' ? state.waitlist_session_ids : [],
+      custom_notes: status === 'other' ? state.custom_notes : '',
     });
   }
 
@@ -85,8 +136,23 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
       const options = getStartDateOptions(weekday as WeekdayName, 'summer');
       const dates = { ...state.session_start_dates };
       if (options.length > 0) dates[id] = options[0];
-      onChange({ ...state, session_ids: [...state.session_ids, id], session_start_dates: dates });
+      onChange({
+        ...state,
+        session_ids: [...state.session_ids, id],
+        session_start_dates: dates,
+        waitlist_session_ids: state.waitlist_session_ids.filter(x => x !== id),
+      });
     }
+  }
+
+  function toggleSummerWaitlistSession(id: string) {
+    const isChecked = state.waitlist_session_ids.includes(id);
+    onChange({
+      ...state,
+      waitlist_session_ids: isChecked
+        ? state.waitlist_session_ids.filter(x => x !== id)
+        : [...state.waitlist_session_ids, id],
+    });
   }
 
   function setSummerSessionDate(id: string, date: string) {
@@ -94,12 +160,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
   }
 
   function clearPickupIfHidden(next: StudentCardState): StudentCardState {
-    const next4pmChange = fallSessions.some(
-      s => next.fall_session_ids.includes(s.id) && getHour(s.start_time) === 16,
+    const nextPickupEligibleChange = fallSessions.some(
+      s => next.fall_session_ids.includes(s.id) && isPickupSession(s.weekday, s.start_time),
     );
     const stillVisible =
-      (next.fall_status === 'same' && currentIs4pm) ||
-      (next.fall_status === 'change' && next4pmChange);
+      (next.fall_status === 'same' && currentPickupEligible) ||
+      (next.fall_status === 'change' && nextPickupEligibleChange);
     if (stillVisible) return next;
     return {
       ...next,
@@ -115,6 +181,9 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
       fall_status: fs,
       fall_session_ids: fs === 'change' ? state.fall_session_ids : [],
       fall_session_start_dates: fs === 'change' ? state.fall_session_start_dates : {},
+      fall_waitlist_session_ids: fs === 'change' ? state.fall_waitlist_session_ids : [],
+      fall_notes: fs === 'pause' ? state.fall_notes : '',
+      ...(fs === 'same' ? defaultCurrentPickupState() : {}),
     }));
   }
 
@@ -133,8 +202,19 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
         ...state,
         fall_session_ids: [...state.fall_session_ids, id],
         fall_session_start_dates: dates,
+        fall_waitlist_session_ids: state.fall_waitlist_session_ids.filter(x => x !== id),
       }));
     }
+  }
+
+  function toggleFallWaitlistSession(id: string) {
+    const isChecked = state.fall_waitlist_session_ids.includes(id);
+    onChange({
+      ...state,
+      fall_waitlist_session_ids: isChecked
+        ? state.fall_waitlist_session_ids.filter(x => x !== id)
+        : [...state.fall_waitlist_session_ids, id],
+    });
   }
 
   function setFallSessionDate(id: string, date: string) {
@@ -144,19 +224,80 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
     });
   }
 
+  function setPickupRequested(requested: boolean) {
+    onChange({
+      ...state,
+      pickup_requested: requested,
+      pickup_school: requested ? (state.pickup_school ?? currentPickupDefaults.pickup_school) : null,
+      pickup_school_other: requested ? (state.pickup_school_other || currentPickupDefaults.pickup_school_other) : '',
+    });
+  }
+
+  function setPickupSchool(school: StudentCardState['pickup_school']) {
+    onChange({
+      ...state,
+      pickup_school: school,
+      pickup_school_other: school !== 'other' ? '' : state.pickup_school_other,
+    });
+  }
+
+  function renderPickupControls() {
+    return (
+      <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 space-y-2">
+        <label className="flex items-center gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={state.pickup_requested}
+            onChange={e => setPickupRequested(e.target.checked)}
+            className="accent-emerald-600"
+          />
+          <span className="text-sm font-medium text-slate-700">With school pickup</span>
+        </label>
+
+        {state.pickup_requested && (
+          <div className="ml-6 space-y-2">
+            {(['Jackman', 'Frankland', 'other'] as const).map(school => (
+              <label key={school} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name={`pickup_school_${student.student_id}`}
+                  checked={state.pickup_school === school}
+                  onChange={() => setPickupSchool(school)}
+                  className="accent-emerald-600"
+                />
+                <span className="text-sm text-slate-700">
+                  {school === 'other' ? 'Other school' : school}
+                </span>
+              </label>
+            ))}
+            {state.pickup_school === 'other' && (
+              <>
+                <input
+                  type="text"
+                  placeholder="School name"
+                  value={state.pickup_school_other}
+                  onChange={e => onChange({ ...state, pickup_school_other: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none"
+                />
+                <p className="text-xs text-slate-500 italic">
+                  We&apos;ll do our best to accommodate &quot;Other school&quot; pickup, but we can&apos;t guarantee availability for schools outside Jackman / Frankland. We&apos;ll be in touch to confirm.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm p-6 space-y-5">
       {/* Header */}
       <div>
         <h2 className="text-lg font-semibold text-slate-800">{student.student_name}</h2>
         <p className="text-sm text-slate-500 mt-0.5">
-          {currentSlot ? `Currently enrolled: ${currentSlot}` : 'Not currently enrolled'}
+          {currentSlot ? `Current session${currentSessions.length > 1 ? 's' : ''}: ${currentSlot}` : 'No current class on file'}
         </p>
-        {!hasCurrentEnrolment && (
-          <p className="text-xs text-sky-700 mt-1">
-            You can request a new summer schedule, a September schedule, or both.
-          </p>
-        )}
       </div>
 
       {/* ── Summer section ──────────────────────────────────────────────── */}
@@ -174,44 +315,80 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               onChange={() => setSummerStatus('enrolling')}
               className="mt-0.5 accent-sky-600"
             />
-            <span className="text-slate-700">Enroll in summer sessions</span>
+            <span className="text-slate-700">Continue weekly classes in July and August</span>
           </label>
 
           {state.summer_status === 'enrolling' && (
             <div className="ml-6 space-y-4 pt-1">
+              <p className="text-xs text-slate-500">
+                Please select your preferred session(s):
+              </p>
               {summerByWeekday.map(({ day, sessions }) => {
                 const dateOptions = getStartDateOptions(day as WeekdayName, 'summer');
                 return (
                   <div key={day}>
-                    <p className="text-sm font-medium text-slate-600 mb-1.5">{day}</p>
+                    <p className="text-sm font-medium text-slate-600 mb-2">{day}</p>
                     <div className="flex flex-col gap-2">
                       {sessions.map(s => {
                         const full = s.is_full === true;
                         const checked = state.session_ids.includes(s.id);
+                        const waitlisted = state.waitlist_session_ids.includes(s.id);
                         const selectedDate = state.session_start_dates[s.id] ?? dateOptions[0] ?? '';
                         return (
-                          <div key={s.id} className="flex flex-wrap items-center gap-2">
-                            <label
-                              className={`flex items-center gap-1.5 ${full ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                            >
-                              <input
-                                type="checkbox"
-                                disabled={full}
-                                checked={checked && !full}
-                                onChange={() => toggleSummerSession(s.id, day)}
-                                className="accent-sky-600"
-                              />
-                              <span className={`text-sm ${full ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                                {formatTime(s.start_time)}
-                              </span>
-                              {full && (
-                                <span className="text-[10px] font-semibold uppercase tracking-wide text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
-                                  Full
+                          <div
+                            key={s.id}
+                            className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${
+                              full
+                                ? waitlisted
+                                  ? 'border-amber-300 bg-amber-50'
+                                  : 'border-slate-200 bg-slate-50'
+                                : checked
+                                  ? 'border-sky-400 bg-sky-50'
+                                  : 'border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            {full ? (
+                              <>
+                                <div className="flex min-w-[9rem] items-center gap-3">
+                                  <span className="text-sm text-slate-700">
+                                    {formatTime(s.start_time)}
+                                  </span>
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
+                                    Full
+                                  </span>
+                                </div>
+                                <label className="flex items-center gap-2 cursor-pointer sm:ml-auto">
+                                  <input
+                                    type="checkbox"
+                                    checked={waitlisted}
+                                    onChange={() => toggleSummerWaitlistSession(s.id)}
+                                    className="accent-amber-600"
+                                  />
+                                  <span className="text-sm font-medium text-amber-800">
+                                    Add to waitlist
+                                  </span>
+                                </label>
+                                {waitlisted && (
+                                  <p className="basis-full text-xs font-medium text-amber-700 sm:pl-[9rem]">
+                                    For now, please select another time slot.
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              <label className="flex items-center gap-3 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleSummerSession(s.id, day)}
+                                  className="accent-sky-600"
+                                />
+                                <span className="text-sm text-slate-700">
+                                  {formatTime(s.start_time)}
                                 </span>
-                              )}
-                            </label>
-                            {checked && !full && dateOptions.length > 0 && (
-                              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                              </label>
+                            )}
+                            {!full && checked && dateOptions.length > 0 && (
+                              <label className="flex items-center gap-1.5 text-xs text-slate-600 ml-auto">
                                 Start:
                                 <select
                                   value={selectedDate}
@@ -233,7 +410,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               })}
 
               {state.session_ids.length === 0 && (
-                <p className="text-xs text-amber-600">Select at least one session above.</p>
+                <p className="text-xs text-amber-600">Select at least one summer session above.</p>
               )}
             </div>
           )}
@@ -246,7 +423,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               onChange={() => setSummerStatus('pausing')}
               className="mt-0.5 accent-sky-600"
             />
-            <span className="text-slate-700">Not attending in summer</span>
+            <span className="text-slate-700">Not attending this summer in July and August</span>
           </label>
 
           <label className="flex items-start gap-3 cursor-pointer">
@@ -257,17 +434,19 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               onChange={() => setSummerStatus('other')}
               className="mt-0.5 accent-sky-600"
             />
-            <span className="text-slate-700">Custom / unusual request</span>
+            <span className="text-slate-700">
+              Custom plan: choose the weeks/days that fit your family&apos;s summer plans
+            </span>
           </label>
 
-          {state.summer_status && (
+          {state.summer_status === 'other' && (
             <div className="ml-6 space-y-1">
               <p className="text-xs text-slate-500">
-                Need a custom or non-standard schedule? Add details below and we&apos;ll follow up.
+                Tell us the weeks or days that work for you, and we&apos;ll follow up to confirm the plan.
               </p>
               <textarea
                 rows={3}
-                placeholder='e.g. "Only June evenings, then pause in July and resume mid-August"'
+                placeholder='e.g. "Attend the first two weeks in July on Tuesdays, and two Saturdays in mid-August"'
                 value={state.custom_notes}
                 onChange={e => onChange({ ...state, custom_notes: e.target.value })}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
@@ -282,10 +461,10 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
         <div>
           <p className="text-sm font-semibold text-slate-700 uppercase tracking-wide">September (Fall) Schedule</p>
           {currentSlot && (
-            <p className="text-xs text-slate-500 mt-0.5">Current slot: {currentSlot}</p>
+            <p className="text-xs text-slate-500 mt-0.5">Current session{currentSessions.length > 1 ? 's' : ''}: {currentSlot}</p>
           )}
           <p className="text-xs text-slate-400 mt-1">
-            We&apos;ll reach out in August to re-confirm your fall schedule before September begins.
+            We&apos;ll reach out in August to re-confirm your fall schedule before classes begin in September.
           </p>
         </div>
 
@@ -301,9 +480,15 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               className="mt-0.5 accent-emerald-600"
             />
             <span className="text-slate-700">
-              {currentSlot ? `Keep current slot — ${currentSlot}` : 'Not attending in September'}
+              {currentSlot ? `Keep current session${currentSessions.length > 1 ? 's' : ''} - ${currentSlot}` : 'Keep current session'}
             </span>
           </label>
+
+          {state.fall_status === 'same' && currentPickupEligible && (
+            <div className="ml-6">
+              {renderPickupControls()}
+            </div>
+          )}
 
           <label className="flex items-start gap-3 cursor-pointer">
             <input
@@ -313,13 +498,13 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               onChange={() => setFallStatus('change')}
               className="mt-0.5 accent-emerald-600"
             />
-            <span className="text-slate-700">Request a September class time</span>
+            <span className="text-slate-700">Request a different class time starting in September</span>
           </label>
 
           {state.fall_status === 'change' && (
             <div className="ml-6 space-y-4 pt-1">
               <p className="text-xs text-slate-400">
-                Availability is based on coach capacity. All requests are subject to staff confirmation.
+                If there&apos;s any issue with availability for this time, we&apos;ll let you know.
               </p>
               {fallByWeekday.length === 0 ? (
                 <p className="text-sm text-slate-500">No fall sessions on file yet. We&apos;ll be in touch.</p>
@@ -333,36 +518,63 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                         {sessions.map(s => {
                           const full = s.is_full === true;
                           const checked = state.fall_session_ids.includes(s.id);
+                          const waitlisted = state.fall_waitlist_session_ids.includes(s.id);
                           const selectedDate = state.fall_session_start_dates[s.id] ?? dateOptions[0] ?? '';
+                          const pickupEligible = isPickupSession(s.weekday, s.start_time);
                           return (
                             <div
                               key={s.id}
                               className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${
                                 full
-                                  ? 'border-slate-200 bg-slate-50 opacity-60'
+                                  ? waitlisted
+                                    ? 'border-amber-300 bg-amber-50'
+                                    : 'border-slate-200 bg-slate-50'
                                   : checked
                                     ? 'border-emerald-400 bg-emerald-50'
                                     : 'border-slate-200 hover:bg-slate-50'
                               }`}
                             >
-                              <label className={`flex items-center gap-3 ${full ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-                                <input
-                                  type="checkbox"
-                                  disabled={full}
-                                  checked={checked && !full}
-                                  onChange={() => toggleFallSession(s.id, day)}
-                                  className="accent-emerald-600"
-                                />
-                                <span className={`text-sm ${full ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                                  {formatTime(s.start_time)}
-                                </span>
-                                {full && (
-                                  <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
-                                    Full
+                              {full ? (
+                                <>
+                                  <div className="flex min-w-[9rem] items-center gap-3">
+                                    <span className="text-sm text-slate-700">
+                                      {formatTime(s.start_time)}
+                                    </span>
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
+                                      Full
+                                    </span>
+                                  </div>
+                                  <label className="flex items-center gap-2 cursor-pointer sm:ml-auto">
+                                    <input
+                                      type="checkbox"
+                                      checked={waitlisted}
+                                      onChange={() => toggleFallWaitlistSession(s.id)}
+                                      className="accent-amber-600"
+                                    />
+                                    <span className="text-sm font-medium text-amber-800">
+                                      Add to waitlist
+                                    </span>
+                                  </label>
+                                  {waitlisted && (
+                                    <p className="basis-full text-xs font-medium text-amber-700 sm:pl-[9rem]">
+                                      For now, please select another time slot.
+                                    </p>
+                                  )}
+                                </>
+                              ) : (
+                                <label className="flex items-center gap-3 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleFallSession(s.id, day)}
+                                    className="accent-emerald-600"
+                                  />
+                                  <span className="text-sm text-slate-700">
+                                    {formatTime(s.start_time)}
                                   </span>
-                                )}
-                              </label>
-                              {checked && !full && dateOptions.length > 0 && (
+                                </label>
+                              )}
+                              {!full && checked && dateOptions.length > 0 && (
                                 <label className="flex items-center gap-1.5 text-xs text-slate-600 ml-auto">
                                   Start:
                                   <select
@@ -376,6 +588,11 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                                   </select>
                                 </label>
                               )}
+                              {checked && !full && pickupEligible && (
+                                <div className="basis-full pl-7">
+                                  {renderPickupControls()}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -385,7 +602,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                 })
               )}
               {fallByWeekday.length > 0 && state.fall_session_ids.length === 0 && (
-                <p className="text-xs text-amber-600">Select at least one fall time above.</p>
+                <p className="text-xs text-amber-600">Select at least one session above.</p>
               )}
             </div>
           )}
@@ -399,7 +616,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
               className="mt-0.5 accent-emerald-600"
             />
             <span className="text-slate-700">
-              Pause for fall / Not sure yet — we won&apos;t hold a spot for September
+              Not sure yet — we won&apos;t hold a September spot
             </span>
           </label>
 
@@ -412,69 +629,6 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                 onChange={e => onChange({ ...state, fall_notes: e.target.value })}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none"
               />
-            </div>
-          )}
-
-          {/* ── School pickup (shown only when a 4 PM fall session is in play) ── */}
-          {fallPickupVisible && (
-            <div className="rounded-xl bg-emerald-50 ring-1 ring-emerald-100 px-4 py-3 space-y-3">
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={state.pickup_requested}
-                  onChange={e =>
-                    onChange({
-                      ...state,
-                      pickup_requested: e.target.checked,
-                      pickup_school: e.target.checked ? state.pickup_school : null,
-                      pickup_school_other: e.target.checked ? state.pickup_school_other : '',
-                    })
-                  }
-                  className="accent-emerald-600"
-                />
-                <span className="text-sm font-medium text-slate-700">
-                  Request school pickup for September 4 PM class
-                </span>
-              </label>
-
-              {state.pickup_requested && (
-                <div className="ml-6 space-y-2">
-                  {(['Jackman', 'Frankland', 'other'] as const).map(school => (
-                    <label key={school} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name={`pickup_school_${student.student_id}`}
-                        checked={state.pickup_school === school}
-                        onChange={() =>
-                          onChange({
-                            ...state,
-                            pickup_school: school,
-                            pickup_school_other: school !== 'other' ? '' : state.pickup_school_other,
-                          })
-                        }
-                        className="accent-emerald-600"
-                      />
-                      <span className="text-sm text-slate-700">
-                        {school === 'other' ? 'Other school' : school}
-                      </span>
-                    </label>
-                  ))}
-                  {state.pickup_school === 'other' && (
-                    <>
-                      <input
-                        type="text"
-                        placeholder="School name"
-                        value={state.pickup_school_other}
-                        onChange={e => onChange({ ...state, pickup_school_other: e.target.value })}
-                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none"
-                      />
-                      <p className="text-xs text-slate-500 italic">
-                        We&apos;ll do our best to accommodate &quot;Other school&quot; pickup, but we can&apos;t guarantee availability for schools outside Jackman / Frankland. We&apos;ll be in touch to confirm.
-                      </p>
-                    </>
-                  )}
-                </div>
-              )}
             </div>
           )}
         </fieldset>

@@ -5,15 +5,28 @@ import { revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { randomBytes } from 'crypto';
 import { auth } from '@/auth';
+import { normalizeSessionSelection } from '@/app/lib/session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
+type SessionUserWithType = {
+  name?: string | null;
+  email?: string | null;
+  user_type?: string;
+};
+
 async function requireAdmin(): Promise<void> {
   const session = await auth();
-  const userType = (session?.user as any)?.user_type;
+  const userType = (session?.user as SessionUserWithType | undefined)?.user_type;
   if (userType !== 'admin') {
     throw new Error('Forbidden: admin access required');
   }
+}
+
+async function staffDisplayName(): Promise<string> {
+  const session = await auth();
+  const sessionUser = session?.user as SessionUserWithType | undefined;
+  return sessionUser?.name?.trim() || sessionUser?.email?.trim() || 'staff';
 }
 
 // ── Token management ──────────────────────────────────────────────────────────
@@ -89,6 +102,19 @@ export async function markTokensExported(tokenIds: string[]): Promise<{ updated:
   const rows = await sql<{ id: string }[]>`
     UPDATE parent_tokens
     SET last_exported_at = NOW(), export_count = export_count + 1
+    WHERE id::text = ANY(${tokenIds}::text[])
+    RETURNING id
+  `;
+  revalidateTag('summer-tokens', 'max');
+  return { updated: rows.length };
+}
+
+export async function clearExportedForTokens(tokenIds: string[]): Promise<{ updated: number }> {
+  await requireAdmin();
+  if (tokenIds.length === 0) return { updated: 0 };
+  const rows = await sql<{ id: string }[]>`
+    UPDATE parent_tokens
+    SET last_exported_at = NULL, export_count = 0
     WHERE id::text = ANY(${tokenIds}::text[])
     RETURNING id
   `;
@@ -213,11 +239,13 @@ export async function approveSummerRequest(
   const reqs = await sql<{
     id: string;
     student_id: string;
-    payload: { summer_status: string; session_ids?: string[] };
+    payload: { summer_status: string; session_ids?: string[]; session_start_dates?: Record<string, string> };
   }[]>`
     SELECT id, student_id, payload
     FROM parent_requests
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
     LIMIT 1
   `;
   if (reqs.length === 0) return { error: 'Request not found.' };
@@ -227,7 +255,20 @@ export async function approveSummerRequest(
   if (summerStatus === 'enrolling') {
     const sessionIds = req.payload?.session_ids ?? [];
     if (sessionIds.length === 0) return { error: 'No sessions on this request to enrol into.' };
-    if (!startDate) return { error: 'Start date is required for enrolling requests.' };
+    const fallbackStartDate = typeof startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(startDate)
+      ? startDate
+      : null;
+    const startDateBySessionId = new Map<string, string>();
+    for (const sessionId of sessionIds) {
+      const requestedStartDate = req.payload?.session_start_dates?.[sessionId];
+      const enrolmentStartDate = typeof requestedStartDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(requestedStartDate)
+        ? requestedStartDate
+        : fallbackStartDate;
+      if (!enrolmentStartDate) {
+        return { error: 'Start date is missing for one or more selected sessions.' };
+      }
+      startDateBySessionId.set(sessionId, enrolmentStartDate);
+    }
 
     // Auto-inherit course_id from student's most recent enrolment
     const courseRows = await sql<{ course_id: string }[]>`
@@ -245,13 +286,15 @@ export async function approveSummerRequest(
     const newEnrolmentIds: string[] = [];
     await sql.begin(async tx => {
       for (const sessionId of sessionIds) {
+        const enrolmentStartDate = startDateBySessionId.get(sessionId);
+        if (!enrolmentStartDate) continue;
         const inserted = await tx<{ id: string }[]>`
           INSERT INTO enrolments (student_id, course_id, session_id, start_date)
           VALUES (
             ${req.student_id},
-            ${courseId}::uuid,
+            ${courseId},
             ${sessionId}::uuid,
-            ${startDate}::date
+            ${enrolmentStartDate}::date
           )
           ON CONFLICT (student_id, session_id)
           DO UPDATE SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date
@@ -268,6 +311,8 @@ export async function approveSummerRequest(
           reviewed_by = 'staff',
           updated_at = NOW()
         WHERE id = ${requestId}::uuid
+          AND is_latest = TRUE
+          AND removed_at IS NULL
       `;
     });
   } else {
@@ -275,7 +320,9 @@ export async function approveSummerRequest(
     await sql`
       UPDATE parent_requests
       SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
-      WHERE id = ${requestId}::uuid AND is_latest = TRUE
+      WHERE id = ${requestId}::uuid
+        AND is_latest = TRUE
+        AND removed_at IS NULL
     `;
   }
 
@@ -283,7 +330,7 @@ export async function approveSummerRequest(
   return {};
 }
 
-export async function approveAllEnrolling(startDate: string): Promise<{ created: number; skipped: number }> {
+export async function approveAllEnrolling(startDate: string): Promise<{ created: number; skipped: number; completedIds: string[] }> {
   await requireAdmin();
   const pending = await sql<{
     id: string;
@@ -294,12 +341,14 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
     FROM parent_requests
     WHERE is_latest = TRUE
       AND status = 'pending'
+      AND removed_at IS NULL
       AND request_type = 'summer_scheduling'
       AND payload->>'summer_status' = 'enrolling'
   `;
 
   let created = 0;
   let skipped = 0;
+  const completedIds: string[] = [];
 
   for (const req of pending) {
     const sessionIds = req.payload?.session_ids ?? [];
@@ -317,7 +366,7 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
       for (const sessionId of sessionIds) {
         const inserted = await tx<{ id: string }[]>`
           INSERT INTO enrolments (student_id, course_id, session_id, start_date)
-          VALUES (${req.student_id}, ${courseId}::uuid, ${sessionId}::uuid, ${startDate}::date)
+          VALUES (${req.student_id}, ${courseId}, ${sessionId}::uuid, ${startDate}::date)
           ON CONFLICT (student_id, session_id)
           DO UPDATE SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date
           RETURNING id::text
@@ -333,70 +382,84 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
           reviewed_by = 'staff',
           updated_at = NOW()
         WHERE id = ${req.id}::uuid
+          AND is_latest = TRUE
+          AND removed_at IS NULL
       `;
     });
     created++;
+    completedIds.push(req.id);
   }
 
   revalidateTag('summer-responses', 'max');
-  return { created, skipped };
+  return { created, skipped, completedIds };
 }
 
-export async function removeFromSummer(requestId: string): Promise<void> {
+export async function deleteSummerResponse(requestId: string): Promise<{ deleted: boolean }> {
   await requireAdmin();
-  const reqs = await sql<{ enrolment_ids: string[] }[]>`
-    SELECT enrolment_ids
-    FROM parent_requests WHERE id = ${requestId}::uuid LIMIT 1
-  `;
-  if (reqs.length === 0) return;
-  const { enrolment_ids } = reqs[0];
-  if (enrolment_ids?.length > 0) {
-    await sql`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
-  }
-  // Mark removed instead of deleting — preserves approval history.
-  // Drops is_latest so a fresh submission can take its place.
-  await sql`
-    UPDATE parent_requests
-    SET removed_at = NOW(),
-        is_latest = FALSE,
-        enrolment_ids = '{}'::uuid[],
-        updated_at = NOW()
+  const reqs = await sql<{ id: string; enrolment_ids: string[] }[]>`
+    SELECT id::text, enrolment_ids
+    FROM parent_requests
     WHERE id = ${requestId}::uuid
+    LIMIT 1
   `;
+  if (reqs.length === 0) return { deleted: false };
+  const { enrolment_ids } = reqs[0];
+  await sql.begin(async tx => {
+    if (enrolment_ids?.length > 0) {
+      await tx`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
+    }
+    await tx`
+      DELETE FROM parent_requests
+      WHERE id = ${requestId}::uuid
+    `;
+  });
   revalidateTag('summer-responses', 'max');
+  revalidateTag('summer-tokens', 'max');
+  return { deleted: true };
 }
 
-export async function markAllNoChangeComplete(): Promise<{ updated: number }> {
+export async function markAllNoChangeComplete(): Promise<{ updated: number; updatedIds: string[] }> {
   await requireAdmin();
   const rows = await sql<{ id: string }[]>`
     UPDATE parent_requests
     SET status = 'completed', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
     WHERE is_latest = TRUE
       AND status = 'pending'
+      AND removed_at IS NULL
       AND request_type = 'summer_scheduling'
       AND payload->>'summer_status' = 'no_change'
-    RETURNING id
+    RETURNING id::text AS id
   `;
   revalidateTag('summer-responses', 'max');
-  return { updated: rows.length };
+  return { updated: rows.length, updatedIds: rows.map(row => row.id) };
 }
 
-export async function markAddedToPortal(requestId: string): Promise<void> {
+export async function markAddedToPortal(requestId: string): Promise<{ added_to_portal_at: Date; added_to_portal_by: string }> {
   await requireAdmin();
-  await sql`
+  const addedBy = await staffDisplayName();
+  const rows = await sql<{ added_to_portal_at: Date; added_to_portal_by: string }[]>`
     UPDATE parent_requests
-    SET added_to_portal_at = NOW(), updated_at = NOW()
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    SET added_to_portal_at = NOW(), added_to_portal_by = ${addedBy}, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+    RETURNING added_to_portal_at, added_to_portal_by
   `;
+  if (rows.length === 0) {
+    throw new Error('Response not found.');
+  }
   revalidateTag('summer-responses', 'max');
+  return rows[0];
 }
 
 export async function clearAddedToPortal(requestId: string): Promise<void> {
   await requireAdmin();
   await sql`
     UPDATE parent_requests
-    SET added_to_portal_at = NULL, updated_at = NOW()
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    SET added_to_portal_at = NULL, added_to_portal_by = NULL, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
   `;
   revalidateTag('summer-responses', 'max');
 }
@@ -406,9 +469,67 @@ export async function markNeedsFollowup(requestId: string): Promise<void> {
   await sql`
     UPDATE parent_requests
     SET status = 'needs_manual_followup', reviewed_at = NOW(), reviewed_by = 'staff', updated_at = NOW()
-    WHERE id = ${requestId}::uuid AND is_latest = TRUE
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
   `;
   revalidateTag('summer-responses', 'max');
+}
+
+export async function clearFollowup(requestId: string): Promise<void> {
+  await requireAdmin();
+  await sql`
+    UPDATE parent_requests
+    SET status = 'pending', reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+      AND status = 'needs_manual_followup'
+  `;
+  revalidateTag('summer-responses', 'max');
+}
+
+export async function updateSummerResponseSource(
+  requestId: string,
+  source: 'parent' | 'staff',
+): Promise<{ request_ids: string[]; submitted_by: 'parent' | 'staff'; submitted_by_name: string | null }> {
+  await requireAdmin();
+  const submittedByName = source === 'staff'
+    ? await staffDisplayName()
+    : null;
+
+  const rows = await sql<{ request_id: string; submitted_by: 'parent' | 'staff'; submitted_by_name: string | null }[]>`
+    WITH selected_family AS (
+      SELECT s.customer_id
+      FROM parent_requests pr
+      JOIN students s ON s.id = pr.student_id
+      WHERE pr.id = ${requestId}::uuid
+        AND pr.is_latest = TRUE
+        AND pr.removed_at IS NULL
+      LIMIT 1
+    )
+    UPDATE parent_requests pr
+    SET
+      submitted_by = ${source},
+      submitted_by_name = ${submittedByName},
+      updated_at = NOW()
+    FROM students s, selected_family
+    WHERE pr.student_id = s.id
+      AND s.customer_id = selected_family.customer_id
+      AND pr.is_latest = TRUE
+      AND pr.removed_at IS NULL
+      AND pr.request_type IN ('summer_scheduling', 'other')
+    RETURNING pr.id::text AS request_id, pr.submitted_by, pr.submitted_by_name
+  `;
+  if (rows.length === 0) {
+    throw new Error('Response not found.');
+  }
+  revalidateTag('summer-responses', 'max');
+  return {
+    request_ids: rows.map(row => row.request_id),
+    submitted_by: rows[0].submitted_by,
+    submitted_by_name: rows[0].submitted_by_name,
+  };
 }
 
 // ── Parent form submission ────────────────────────────────────────────────────
@@ -432,6 +553,7 @@ type StudentFormEntry = {
   summer_status: 'enrolling' | 'pausing' | 'no_change' | 'other';
   session_ids: string[];
   session_start_dates?: Record<string, string>;
+  waitlist_session_ids: string[];
   custom_notes?: string;
   pickup_requested?: boolean;
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
@@ -439,8 +561,75 @@ type StudentFormEntry = {
   fall_status: 'same' | 'change' | 'pause';
   fall_session_ids: string[];
   fall_session_start_dates?: Record<string, string>;
+  fall_waitlist_session_ids: string[];
   fall_notes?: string;
 };
+
+async function canonicalizeFallSessionEntries(entries: StudentFormEntry[]): Promise<StudentFormEntry[]> {
+  const fallSessionIds = Array.from(new Set(
+    entries
+      .filter(entry => entry.fall_status === 'change')
+      .flatMap(entry => [...entry.fall_session_ids, ...entry.fall_waitlist_session_ids]),
+  ));
+
+  if (fallSessionIds.length === 0) {
+    return entries.map(entry => ({
+      ...entry,
+      fall_session_ids: [],
+      fall_session_start_dates: undefined,
+      fall_waitlist_session_ids: [],
+    }));
+  }
+
+  const rows = await sql<{ id: string; canonical_id: string }[]>`
+    WITH selected AS (
+      SELECT id::text AS id, weekday, start_time
+      FROM sessions
+      WHERE id = ANY(${fallSessionIds}::uuid[])
+        AND is_summer = FALSE
+    )
+    SELECT
+      selected.id,
+      MIN(canonical.id::text) AS canonical_id
+    FROM selected
+    JOIN sessions canonical
+      ON canonical.is_summer = FALSE
+      AND canonical.weekday = selected.weekday
+      AND canonical.start_time = selected.start_time
+    GROUP BY selected.id
+  `;
+
+  const canonicalById = new Map(rows.map(row => [row.id, row.canonical_id]));
+
+  return entries.map(entry => {
+    if (entry.fall_status !== 'change') {
+      return {
+        ...entry,
+        fall_session_ids: [],
+        fall_session_start_dates: undefined,
+        fall_waitlist_session_ids: [],
+      };
+    }
+
+    const normalizedFallSessions = normalizeSessionSelection(
+      entry.fall_session_ids,
+      entry.fall_session_start_dates,
+      canonicalById,
+    );
+    const normalizedFallWaitlist = normalizeSessionSelection(
+      entry.fall_waitlist_session_ids,
+      undefined,
+      canonicalById,
+    );
+
+    return {
+      ...entry,
+      fall_session_ids: normalizedFallSessions.ids,
+      fall_session_start_dates: normalizedFallSessions.startDates,
+      fall_waitlist_session_ids: normalizedFallWaitlist.ids,
+    };
+  });
+}
 
 export async function submitSummerForm(
   prevState: { error: string } | undefined,
@@ -469,8 +658,16 @@ export async function submitSummerForm(
 
   if (entries.length === 0) return { error: 'No student data submitted.' };
 
+  entries = entries.map(entry => ({
+    ...entry,
+    session_ids: Array.isArray(entry.session_ids) ? entry.session_ids : [],
+    waitlist_session_ids: Array.isArray(entry.waitlist_session_ids) ? entry.waitlist_session_ids : [],
+    fall_session_ids: Array.isArray(entry.fall_session_ids) ? entry.fall_session_ids : [],
+    fall_waitlist_session_ids: Array.isArray(entry.fall_waitlist_session_ids) ? entry.fall_waitlist_session_ids : [],
+  }));
+
   // Validate summer session_ids are still is_summer=TRUE
-  const allSummerSessionIds = entries.flatMap(e => e.session_ids);
+  const allSummerSessionIds = entries.flatMap(e => [...e.session_ids, ...e.waitlist_session_ids]);
   if (allSummerSessionIds.length > 0) {
     const validSummer = await sql<{ id: string }[]>`
       SELECT id::text FROM sessions WHERE is_summer = TRUE AND id = ANY(${allSummerSessionIds}::uuid[])
@@ -481,13 +678,13 @@ export async function submitSummerForm(
     }
   }
 
-  // Validate fall_session_ids are real sessions (only when fall_status === 'change')
+  // Validate fall_session_ids are real fall sessions (only when fall_status === 'change')
   const fallSessionIds = entries
     .filter(e => e.fall_status === 'change')
-    .flatMap(e => e.fall_session_ids);
+    .flatMap(e => [...e.fall_session_ids, ...e.fall_waitlist_session_ids]);
   if (fallSessionIds.length > 0) {
     const validFall = await sql<{ id: string }[]>`
-      SELECT id::text FROM sessions WHERE id = ANY(${fallSessionIds}::uuid[])
+      SELECT id::text FROM sessions WHERE is_summer = FALSE AND id = ANY(${fallSessionIds}::uuid[])
     `;
     const validSet = new Set(validFall.map(r => r.id));
     if (fallSessionIds.some(id => !validSet.has(id))) {
@@ -495,16 +692,31 @@ export async function submitSummerForm(
     }
   }
 
+  const normalizedEntries = await canonicalizeFallSessionEntries(entries);
+  const staffEntryRequested = formData.get('staff_entry') === '1';
+  const session = staffEntryRequested ? await auth() : null;
+  const sessionUser = session?.user as SessionUserWithType | undefined;
+  const isStaffEntry = staffEntryRequested && sessionUser?.user_type === 'admin';
+  const rawStaffName = formData.get('staff_name');
+  const fallbackStaffName = typeof rawStaffName === 'string' ? rawStaffName.trim() : '';
+  const submittedBy = isStaffEntry ? 'staff' : 'parent';
+  const submittedByName = isStaffEntry
+    ? (sessionUser?.name?.trim() || sessionUser?.email?.trim() || fallbackStaffName || 'staff')
+    : null;
+
   // Upsert each student's request inside a transaction
   await sql.begin(async tx => {
-    for (const entry of entries) {
-      // Supersede any existing latest request for this student (any type)
+    for (const entry of normalizedEntries) {
+      // Supersede the current summer/fall planning answer only. Future parent
+      // request flows should not be marked stale by this form.
       await tx`
         UPDATE parent_requests
         SET is_latest = FALSE, status = 'superseded', updated_at = NOW()
         WHERE token_id = ${token_id}::uuid
           AND student_id = ${Number(entry.student_id)}
+          AND request_type IN ('summer_scheduling', 'other')
           AND is_latest = TRUE
+          AND removed_at IS NULL
       `;
 
       const isOther = entry.summer_status === 'other';
@@ -516,11 +728,14 @@ export async function submitSummerForm(
             pickup_school: entry.pickup_school,
             ...(entry.pickup_school === 'other' ? { pickup_school_other: entry.pickup_school_other } : {}),
           }
-        : {};
+        : entry.pickup_requested === false
+          ? { pickup_requested: false }
+          : {};
       const fallStartDates = pickStartDates(entry.fall_session_start_dates, entry.fall_session_ids);
       const fallFields = {
         fall_status: entry.fall_status,
         fall_session_ids: entry.fall_session_ids,
+        ...(entry.fall_waitlist_session_ids.length > 0 ? { fall_waitlist_session_ids: entry.fall_waitlist_session_ids } : {}),
         ...(fallStartDates ? { fall_session_start_dates: fallStartDates } : {}),
         ...pickupFields,
         ...(entry.fall_notes ? { fall_notes: entry.fall_notes } : {}),
@@ -531,13 +746,14 @@ export async function submitSummerForm(
         : {
             summer_status: entry.summer_status,
             session_ids: entry.session_ids,
+            ...(entry.waitlist_session_ids.length > 0 ? { waitlist_session_ids: entry.waitlist_session_ids } : {}),
             ...(summerStartDates ? { session_start_dates: summerStartDates } : {}),
             ...fallFields,
           };
 
       await tx`
         INSERT INTO parent_requests
-          (token_id, student_id, request_type, status, is_latest, payload, custom_notes)
+          (token_id, student_id, request_type, status, is_latest, payload, custom_notes, submitted_by, submitted_by_name)
         VALUES (
           ${token_id}::uuid,
           ${Number(entry.student_id)},
@@ -545,7 +761,9 @@ export async function submitSummerForm(
           ${status},
           TRUE,
           ${sql.json(payload)},
-          ${entry.custom_notes ?? null}
+          ${entry.custom_notes ?? null},
+          ${submittedBy},
+          ${submittedByName}
         )
       `;
     }

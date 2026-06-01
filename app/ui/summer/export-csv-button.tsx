@@ -1,6 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { ParentLinkRow } from '@/app/lib/definitions';
 import { markTokensExported } from '@/app/lib/summer-actions';
 
@@ -18,6 +19,14 @@ export function formatStudentNamesGrammar(names: string[]): string {
   return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
 }
 
+function recipientCountForRow(row: ParentLinkRow): number {
+  const primaryEmail = row.email?.trim();
+  const alternateEmail = row.alternate_email?.trim();
+  if (!primaryEmail) return alternateEmail ? 1 : 0;
+  if (!alternateEmail) return 1;
+  return alternateEmail.toLowerCase() === primaryEmail.toLowerCase() ? 1 : 2;
+}
+
 export default function ExportCsvButton({
   rows,
   label = 'Export CSV',
@@ -27,21 +36,41 @@ export default function ExportCsvButton({
   label?: string;
   disabled?: boolean;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const recipientCount = rows.reduce((count, row) => count + recipientCountForRow(row), 0);
 
   function handleExport() {
     const origin = window.location.origin;
-    const header = 'Email,Alternate Email,Alternate Name,Students,Link';
-    const body = rows.map(r => {
+    const header = 'Email,Parent Name,Students,Link';
+    const body = rows.flatMap(r => {
       const students = formatStudentNamesGrammar(r.student_names);
-      return [
-        csv(r.email),
-        csv(r.alternate_email ?? ''),
-        csv(r.alternate_name ?? ''),
-        csv(students),
-        csv(`${origin}/summer-reg?token=${r.token}`),
-      ].join(',');
+      const link = `${origin}/summer-reg?token=${r.token}`;
+      const primaryEmail = r.email?.trim();
+      const alternateEmail = r.alternate_email?.trim();
+      const recipientRows: string[] = [];
+
+      if (primaryEmail) {
+        recipientRows.push([
+          csv(primaryEmail),
+          csv(r.customer_name),
+          csv(students),
+          csv(link),
+        ].join(','));
+      }
+
+      if (alternateEmail && alternateEmail.toLowerCase() !== primaryEmail?.toLowerCase()) {
+        recipientRows.push([
+          csv(alternateEmail),
+          csv(r.alternate_name?.trim() || r.customer_name),
+          csv(students),
+          csv(link),
+        ].join(','));
+      }
+
+      return recipientRows;
     });
+    if (body.length === 0) return;
 
     const blob = new Blob([[header, ...body].join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -50,10 +79,11 @@ export default function ExportCsvButton({
     a.click();
     URL.revokeObjectURL(a.href);
 
-    const tokenIds = rows.map(r => r.token_id);
+    const tokenIds = rows.filter(r => recipientCountForRow(r) > 0).map(r => r.token_id);
     if (tokenIds.length > 0) {
       startTransition(async () => {
         await markTokensExported(tokenIds);
+        router.refresh();
       });
     }
   }
@@ -61,10 +91,10 @@ export default function ExportCsvButton({
   return (
     <button
       onClick={handleExport}
-      disabled={disabled || isPending || rows.length === 0}
-      className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-500 transition disabled:opacity-40"
+      disabled={disabled || isPending || recipientCount === 0}
+      className="shrink-0 whitespace-nowrap rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-500 transition disabled:opacity-40"
     >
-      {isPending ? 'Exporting…' : `${label} (${rows.length})`}
+      {isPending ? 'Exporting…' : `${label} (${recipientCount})`}
     </button>
   );
 }
