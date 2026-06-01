@@ -94,7 +94,7 @@ These items are part of the real launch plan and should be tracked alongside the
 - **Response triage for schedule building:** Staff need both filters and sorting on the response dashboard so they can work queues such as `enrolling`, `no_change`, `pausing`, `needs_followup`, and requested session/time.
 - **Export tracking:** Constant Contact remains the send source of truth. Dashboard tracks CSV export with `last_exported_at` / `export_count`, not actual email delivery.
 
-## OnTrack / Small Backlog Items
+## Small Backlog Items
 
 Use this section for lightweight operational/productivity follow-ups that are too small for a dedicated GitHub issue. Bigger feature implementations should still get a GitHub issue so design, acceptance criteria, and PRs can be tracked cleanly.
 
