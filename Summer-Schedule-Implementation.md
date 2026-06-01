@@ -94,6 +94,12 @@ These items are part of the real launch plan and should be tracked alongside the
 - **Response triage for schedule building:** Staff need both filters and sorting on the response dashboard so they can work queues such as `enrolling`, `no_change`, `pausing`, `needs_followup`, and requested session/time.
 - **Export tracking:** Constant Contact remains the send source of truth. Dashboard tracks CSV export with `last_exported_at` / `export_count`, not actual email delivery.
 
+## OnTrack / Small Backlog Items
+
+Use this section for lightweight operational/productivity follow-ups that are too small for a dedicated GitHub issue. Bigger feature implementations should still get a GitHub issue so design, acceptance criteria, and PRs can be tracked cleanly.
+
+- **Investigate Vercel deploy workflow workaround:** Current launch flow depends on Taite merging/pushing to `main` so Vercel deploys the live site. After summer launch, find a better workflow for preview/staging deploys from `summer-responses` or other feature branches without requiring a production merge first. Options to evaluate: Vercel project access for Kyle, GitHub preview deployment settings, a separate staging Vercel project, or a documented Taite approval/deploy handoff.
+
 ---
 
 ## Schema — Migrations
