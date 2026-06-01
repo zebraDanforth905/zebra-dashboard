@@ -8,6 +8,7 @@ import { auth } from '@/auth';
 import { normalizeSessionSelection } from '@/app/lib/session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+type PostgresJsonValue = Parameters<typeof sql.json>[0];
 
 type SessionUserWithType = {
   name?: string | null;
@@ -29,22 +30,121 @@ async function staffDisplayName(): Promise<string> {
   return sessionUser?.name?.trim() || sessionUser?.email?.trim() || 'staff';
 }
 
+async function parentTokenActiveSnapshotColumnsExist(): Promise<boolean> {
+  const rows = await sql<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'parent_tokens'
+        AND column_name IN ('last_seen_active_at', 'last_active_snapshot')
+      GROUP BY table_name
+      HAVING COUNT(*) = 2
+    ) AS exists
+  `;
+  return rows[0]?.exists === true;
+}
+
 // ── Token management ──────────────────────────────────────────────────────────
 
 // Idempotent: if a token already exists for this customer, returns the existing one.
 export async function generateParentToken(customerId: string): Promise<string> {
   await requireAdmin();
+  const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
+  let activeSnapshot: PostgresJsonValue = [];
+  let activeCount = 0;
+  if (canTrackLastSeenActive) {
+    const activeSnapshotRows = await sql<{ active_count: number; last_active_snapshot: PostgresJsonValue }[]>`
+      SELECT
+        COUNT(e.id)::int AS active_count,
+        COALESCE(
+          JSONB_AGG(
+            DISTINCT JSONB_BUILD_OBJECT(
+              'student_id', s.id::text,
+              'student_name', s.name,
+              'course_name', co.name,
+              'weekday', se.weekday,
+              'start_time', se.start_time,
+              'pickup_school', cp.school_name
+            )
+          ) FILTER (WHERE e.id IS NOT NULL),
+          '[]'::jsonb
+        ) AS last_active_snapshot
+      FROM students s
+      JOIN enrolments e ON e.student_id = s.id
+      JOIN sessions se ON se.id = e.session_id
+      LEFT JOIN courses co ON co.id = e.course_id
+      LEFT JOIN LATERAL (
+        SELECT p.school_name
+        FROM pickups p
+        WHERE p.student_id = s.id
+          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+        ORDER BY p.id
+        LIMIT 1
+      ) cp ON true
+      WHERE s.customer_id = ${customerId}::uuid
+    `;
+    activeSnapshot = activeSnapshotRows[0]?.last_active_snapshot ?? [];
+    activeCount = activeSnapshotRows[0]?.active_count ?? 0;
+    await sql`
+      UPDATE parent_tokens pt
+      SET
+        last_seen_active_at = NOW(),
+        last_active_snapshot = active_family_snapshot.snapshot
+      FROM (
+        SELECT
+          s.customer_id,
+          JSONB_AGG(
+            DISTINCT JSONB_BUILD_OBJECT(
+              'student_id', s.id::text,
+              'student_name', s.name,
+              'course_name', co.name,
+              'weekday', se.weekday,
+              'start_time', se.start_time,
+              'pickup_school', cp.school_name
+            )
+          ) AS snapshot
+        FROM students s
+        JOIN enrolments e ON e.student_id = s.id
+        JOIN sessions se ON se.id = e.session_id
+        LEFT JOIN courses co ON co.id = e.course_id
+        LEFT JOIN LATERAL (
+          SELECT p.school_name
+          FROM pickups p
+          WHERE p.student_id = s.id
+            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+          ORDER BY p.id
+          LIMIT 1
+        ) cp ON true
+        WHERE s.customer_id = ${customerId}::uuid
+        GROUP BY s.customer_id
+      ) active_family_snapshot
+      WHERE pt.customer_id = active_family_snapshot.customer_id
+    `;
+  }
   const existing = await sql<{ token: string }[]>`
     SELECT token FROM parent_tokens WHERE customer_id = ${customerId}::uuid LIMIT 1
   `;
   if (existing.length > 0) return existing[0].token;
 
   const token = randomBytes(24).toString('hex');
-  await sql`
-    INSERT INTO parent_tokens (customer_id, token)
-    VALUES (${customerId}::uuid, ${token})
-    ON CONFLICT (customer_id) DO NOTHING
-  `;
+  if (canTrackLastSeenActive) {
+    await sql`
+      INSERT INTO parent_tokens (customer_id, token, last_seen_active_at, last_active_snapshot)
+      VALUES (
+        ${customerId}::uuid,
+        ${token},
+        CASE WHEN ${activeCount}::int > 0 THEN NOW() ELSE NULL END,
+        ${sql.json(activeSnapshot)}::jsonb
+      )
+      ON CONFLICT (customer_id) DO NOTHING
+    `;
+  } else {
+    await sql`
+      INSERT INTO parent_tokens (customer_id, token)
+      VALUES (${customerId}::uuid, ${token})
+      ON CONFLICT (customer_id) DO NOTHING
+    `;
+  }
 
   // Re-read in the race-condition case where another request won the INSERT
   const row = await sql<{ token: string }[]>`
@@ -57,26 +157,93 @@ export async function generateParentToken(customerId: string): Promise<string> {
 // Bulk-generates tokens for every customer with at least one enrolment. Skips existing tokens.
 export async function generateAllParentTokens(): Promise<{ created: number }> {
   await requireAdmin();
-  const eligible = await sql<{ customer_id: string }[]>`
-    SELECT DISTINCT c.id::text AS customer_id
+  const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
+  if (canTrackLastSeenActive) {
+    await sql`
+      UPDATE parent_tokens pt
+      SET
+        last_seen_active_at = NOW(),
+        last_active_snapshot = active_family_snapshot.snapshot
+      FROM (
+        SELECT
+          s.customer_id,
+          JSONB_AGG(
+            DISTINCT JSONB_BUILD_OBJECT(
+              'student_id', s.id::text,
+              'student_name', s.name,
+              'course_name', co.name,
+              'weekday', se.weekday,
+              'start_time', se.start_time,
+              'pickup_school', cp.school_name
+            )
+          ) AS snapshot
+        FROM students s
+        JOIN enrolments e ON e.student_id = s.id
+        JOIN sessions se ON se.id = e.session_id
+        LEFT JOIN courses co ON co.id = e.course_id
+        LEFT JOIN LATERAL (
+          SELECT p.school_name
+          FROM pickups p
+          WHERE p.student_id = s.id
+            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+          ORDER BY p.id
+          LIMIT 1
+        ) cp ON true
+        GROUP BY s.customer_id
+      ) active_family_snapshot
+      WHERE pt.customer_id = active_family_snapshot.customer_id
+    `;
+  }
+  const eligible = await sql<{ customer_id: string; last_active_snapshot: PostgresJsonValue }[]>`
+    SELECT
+      c.id::text AS customer_id,
+      JSONB_AGG(
+        DISTINCT JSONB_BUILD_OBJECT(
+          'student_id', s.id::text,
+          'student_name', s.name,
+          'course_name', co.name,
+          'weekday', se.weekday,
+          'start_time', se.start_time,
+          'pickup_school', cp.school_name
+        )
+      ) AS last_active_snapshot
     FROM customers c
     JOIN students s ON s.customer_id = c.id
     JOIN enrolments e ON e.student_id = s.id
+    JOIN sessions se ON se.id = e.session_id
+    LEFT JOIN courses co ON co.id = e.course_id
+    LEFT JOIN LATERAL (
+      SELECT p.school_name
+      FROM pickups p
+      WHERE p.student_id = s.id
+        AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+      ORDER BY p.id
+      LIMIT 1
+    ) cp ON true
     WHERE NOT EXISTS (
       SELECT 1 FROM parent_tokens pt WHERE pt.customer_id = c.id
     )
+    GROUP BY c.id
   `;
   if (eligible.length === 0) {
     revalidateTag('summer-tokens', 'max');
     return { created: 0 };
   }
-  for (const { customer_id } of eligible) {
+  for (const { customer_id, last_active_snapshot } of eligible) {
     const token = randomBytes(24).toString('hex');
-    await sql`
-      INSERT INTO parent_tokens (customer_id, token)
-      VALUES (${customer_id}::uuid, ${token})
-      ON CONFLICT (customer_id) DO NOTHING
-    `;
+    if (canTrackLastSeenActive) {
+      await sql`
+        INSERT INTO parent_tokens (customer_id, token, last_seen_active_at, last_active_snapshot)
+        VALUES (${customer_id}::uuid, ${token}, NOW(), ${sql.json(last_active_snapshot)}::jsonb)
+        ON CONFLICT (customer_id) DO NOTHING
+      `;
+    } else {
+      await sql`
+        INSERT INTO parent_tokens (customer_id, token)
+        VALUES (${customer_id}::uuid, ${token})
+        ON CONFLICT (customer_id) DO NOTHING
+      `;
+    }
   }
   revalidateTag('summer-tokens', 'max');
   return { created: eligible.length };
@@ -106,6 +273,7 @@ export async function markTokensExported(tokenIds: string[]): Promise<{ updated:
     RETURNING id
   `;
   revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
   return { updated: rows.length };
 }
 
@@ -119,6 +287,7 @@ export async function clearExportedForTokens(tokenIds: string[]): Promise<{ upda
     RETURNING id
   `;
   revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
   return { updated: rows.length };
 }
 
@@ -558,12 +727,165 @@ type StudentFormEntry = {
   pickup_requested?: boolean;
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
   pickup_school_other?: string;
-  fall_status: 'same' | 'change' | 'pause';
+  fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
   fall_session_ids: string[];
   fall_session_start_dates?: Record<string, string>;
   fall_waitlist_session_ids: string[];
   fall_notes?: string;
+  current_sessions_snapshot?: {
+    weekday: string;
+    start_time: string;
+    pickup_school: string | null;
+    course_name?: string | null;
+  }[];
 };
+
+type CurrentSessionSnapshot = NonNullable<StudentFormEntry['current_sessions_snapshot']>[number];
+type TokenCurrentSessionSnapshot = CurrentSessionSnapshot & { student_id: string };
+
+function cleanSnapshotString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeSubmittedCurrentSessionsSnapshot(
+  value: StudentFormEntry['current_sessions_snapshot'],
+): CurrentSessionSnapshot[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 8).flatMap(session => {
+    if (!session || typeof session !== 'object') return [];
+    const weekday = cleanSnapshotString(session.weekday);
+    const startTime = cleanSnapshotString(session.start_time);
+    if (!weekday || !/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) return [];
+    const pickupSchool = cleanSnapshotString(session.pickup_school);
+    const courseName = cleanSnapshotString(session.course_name);
+    return [{
+      weekday,
+      start_time: startTime,
+      pickup_school: pickupSchool || null,
+      ...(courseName ? { course_name: courseName } : {}),
+    }];
+  });
+}
+
+function normalizeTokenCurrentSessionSnapshots(value: unknown): Map<number, CurrentSessionSnapshot[]> {
+  const map = new Map<number, CurrentSessionSnapshot[]>();
+  if (!Array.isArray(value)) return map;
+
+  for (const rawSession of value) {
+    if (!rawSession || typeof rawSession !== 'object') continue;
+    const session = rawSession as Partial<TokenCurrentSessionSnapshot>;
+    const studentId = Number(session.student_id);
+    const weekday = cleanSnapshotString(session.weekday);
+    const startTime = cleanSnapshotString(session.start_time);
+    if (!Number.isFinite(studentId) || !weekday || !/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) continue;
+
+    const pickupSchool = cleanSnapshotString(session.pickup_school);
+    const courseName = cleanSnapshotString(session.course_name);
+    const currentSession: CurrentSessionSnapshot = {
+      weekday,
+      start_time: startTime,
+      pickup_school: pickupSchool || null,
+      ...(courseName ? { course_name: courseName } : {}),
+    };
+    map.set(studentId, [...(map.get(studentId) ?? []), currentSession]);
+  }
+
+  return map;
+}
+
+async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[]): Promise<Map<number, CurrentSessionSnapshot[]>> {
+  const ids = Array.from(new Set(studentIds.filter(Number.isFinite)));
+  if (ids.length === 0) return new Map();
+
+  const rows = await sql<{ student_id: number; current_sessions: CurrentSessionSnapshot[] }[]>`
+    SELECT
+      s.id::int AS student_id,
+      COALESCE(
+        JSONB_AGG(
+          JSONB_BUILD_OBJECT(
+            'weekday', slots.weekday,
+            'start_time', slots.start_time,
+            'pickup_school', slots.pickup_school,
+            'course_name', slots.course_name
+          )
+          ORDER BY slots.weekday_order, slots.start_time, slots.course_name
+        ) FILTER (WHERE slots.weekday IS NOT NULL),
+        '[]'::jsonb
+      ) AS current_sessions
+    FROM students s
+    LEFT JOIN LATERAL (
+      SELECT DISTINCT
+        se.weekday,
+        se.start_time,
+        cp.school_name AS pickup_school,
+        co.name AS course_name,
+        CASE LOWER(TRIM(se.weekday))
+          WHEN 'monday' THEN 1
+          WHEN 'tuesday' THEN 2
+          WHEN 'wednesday' THEN 3
+          WHEN 'thursday' THEN 4
+          WHEN 'friday' THEN 5
+          WHEN 'saturday' THEN 6
+          WHEN 'sunday' THEN 7
+          ELSE 8
+        END AS weekday_order
+      FROM enrolments e
+      JOIN sessions se ON se.id = e.session_id
+      LEFT JOIN courses co ON co.id = e.course_id
+      LEFT JOIN LATERAL (
+        SELECT p.school_name
+        FROM pickups p
+        WHERE p.student_id = s.id
+          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+        ORDER BY p.id
+        LIMIT 1
+      ) cp ON true
+      WHERE e.student_id = s.id
+    ) slots ON true
+    WHERE s.id = ANY(${ids}::int[])
+    GROUP BY s.id
+  `;
+
+  const dbMap = new Map(rows.map(row => [row.student_id, row.current_sessions]));
+  const tokenRows = await sql<{ last_active_snapshot: unknown }[]>`
+    SELECT COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
+    FROM parent_tokens pt
+    WHERE pt.id = ${tokenId}::uuid
+    LIMIT 1
+  `;
+  const tokenMap = normalizeTokenCurrentSessionSnapshots(tokenRows[0]?.last_active_snapshot);
+
+  return new Map(ids.map(id => {
+    const dbSessions = dbMap.get(id) ?? [];
+    return [id, dbSessions.length > 0 ? dbSessions : (tokenMap.get(id) ?? [])];
+  }));
+}
+
+async function validateTokenCurrentStudentIds(tokenId: string, studentIds: number[]): Promise<boolean> {
+  const ids = Array.from(new Set(studentIds.filter(Number.isFinite)));
+  if (ids.length === 0 || ids.length !== studentIds.length) return false;
+
+  const rows = await sql<{ id: number }[]>`
+    SELECT s.id::int AS id
+    FROM parent_tokens pt
+    JOIN students s ON s.customer_id = pt.customer_id
+    WHERE pt.id = ${tokenId}::uuid
+      AND s.id = ANY(${ids}::int[])
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM enrolments e
+          WHERE e.student_id = s.id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) snapshot
+          WHERE snapshot->>'student_id' = s.id::text
+        )
+      )
+  `;
+  return rows.length === ids.length;
+}
 
 async function canonicalizeFallSessionEntries(entries: StudentFormEntry[]): Promise<StudentFormEntry[]> {
   const fallSessionIds = Array.from(new Set(
@@ -666,6 +988,35 @@ export async function submitSummerForm(
     fall_waitlist_session_ids: Array.isArray(entry.fall_waitlist_session_ids) ? entry.fall_waitlist_session_ids : [],
   }));
 
+  const staffEntryRequested = formData.get('staff_entry') === '1';
+  const session = staffEntryRequested ? await auth() : null;
+  const sessionUser = session?.user as SessionUserWithType | undefined;
+  const isStaffEntry = staffEntryRequested && sessionUser?.user_type === 'admin';
+  const rawStaffName = formData.get('staff_name');
+  const fallbackStaffName = typeof rawStaffName === 'string' ? rawStaffName.trim() : '';
+  const submittedBy = isStaffEntry ? 'staff' : 'parent';
+  const submittedByName = isStaffEntry
+    ? (sessionUser?.name?.trim() || sessionUser?.email?.trim() || fallbackStaffName || 'staff')
+    : null;
+
+  const validSummerStatuses = new Set(['enrolling', 'pausing', 'no_change', 'other']);
+  const validFallStatuses = new Set(isStaffEntry
+    ? ['same', 'change', 'pause', 'unsure', 'not_returning']
+    : ['same', 'change', 'pause', 'unsure']
+  );
+  if (entries.some(entry => !validSummerStatuses.has(entry.summer_status) || !validFallStatuses.has(entry.fall_status))) {
+    return { error: 'One or more schedule choices are invalid. Please reload and try again.' };
+  }
+
+  const submittedStudentIds = entries.map(entry => Number(entry.student_id));
+  const uniqueSubmittedStudentIds = new Set(submittedStudentIds);
+  if (
+    uniqueSubmittedStudentIds.size !== submittedStudentIds.length ||
+    !(await validateTokenCurrentStudentIds(token_id, submittedStudentIds))
+  ) {
+    return { error: 'One or more submitted students are invalid for this link. Please reload and try again.' };
+  }
+
   // Validate summer session_ids are still is_summer=TRUE
   const allSummerSessionIds = entries.flatMap(e => [...e.session_ids, ...e.waitlist_session_ids]);
   if (allSummerSessionIds.length > 0) {
@@ -693,16 +1044,10 @@ export async function submitSummerForm(
   }
 
   const normalizedEntries = await canonicalizeFallSessionEntries(entries);
-  const staffEntryRequested = formData.get('staff_entry') === '1';
-  const session = staffEntryRequested ? await auth() : null;
-  const sessionUser = session?.user as SessionUserWithType | undefined;
-  const isStaffEntry = staffEntryRequested && sessionUser?.user_type === 'admin';
-  const rawStaffName = formData.get('staff_name');
-  const fallbackStaffName = typeof rawStaffName === 'string' ? rawStaffName.trim() : '';
-  const submittedBy = isStaffEntry ? 'staff' : 'parent';
-  const submittedByName = isStaffEntry
-    ? (sessionUser?.name?.trim() || sessionUser?.email?.trim() || fallbackStaffName || 'staff')
-    : null;
+  const currentSessionSnapshotsByStudentId = await fetchCurrentSessionSnapshots(
+    token_id,
+    normalizedEntries.map(entry => Number(entry.student_id)),
+  );
 
   // Upsert each student's request inside a transaction
   await sql.begin(async tx => {
@@ -732,7 +1077,14 @@ export async function submitSummerForm(
           ? { pickup_requested: false }
           : {};
       const fallStartDates = pickStartDates(entry.fall_session_start_dates, entry.fall_session_ids);
+      const studentId = Number(entry.student_id);
+      const dbCurrentSessionsSnapshot = currentSessionSnapshotsByStudentId.get(studentId) ?? [];
+      const staffCurrentSessionsSnapshot = normalizeSubmittedCurrentSessionsSnapshot(entry.current_sessions_snapshot);
+      const currentSessionsSnapshot = isStaffEntry && staffCurrentSessionsSnapshot.length > 0
+        ? staffCurrentSessionsSnapshot
+        : dbCurrentSessionsSnapshot;
       const fallFields = {
+        current_sessions_snapshot: currentSessionsSnapshot,
         fall_status: entry.fall_status,
         fall_session_ids: entry.fall_session_ids,
         ...(entry.fall_waitlist_session_ids.length > 0 ? { fall_waitlist_session_ids: entry.fall_waitlist_session_ids } : {}),
@@ -756,7 +1108,7 @@ export async function submitSummerForm(
           (token_id, student_id, request_type, status, is_latest, payload, custom_notes, submitted_by, submitted_by_name)
         VALUES (
           ${token_id}::uuid,
-          ${Number(entry.student_id)},
+          ${studentId},
           ${request_type},
           ${status},
           TRUE,

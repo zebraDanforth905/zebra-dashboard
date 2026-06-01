@@ -200,6 +200,7 @@ export async function scrapeEnrolmentNow(opts?: {
   revalidatePath("/dashboard", 'layout');
   revalidatePath("/students", 'layout');
   revalidatePath("/billing", 'layout');
+  revalidateTag('summer-tokens', 'max');
 
   return { ok: true, rows: normalized.length, customers: customerRes, emails: emailRes, ...res };
 }

@@ -15,11 +15,12 @@ type StudentFormEntry = {
   pickup_requested?: boolean;
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
   pickup_school_other?: string;
-  fall_status: 'same' | 'change' | 'pause';
+  fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
   fall_session_ids: string[];
   fall_session_start_dates: Record<string, string>;
   fall_waitlist_session_ids: string[];
   fall_notes?: string;
+  current_sessions_snapshot: ParentFormData['students'][number]['current_sessions'];
 };
 
 const PICKUP_WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday']);
@@ -83,6 +84,35 @@ function isPickupVisible(
   );
 }
 
+function isStudentComplete(
+  student: ParentFormData['students'][number],
+  sel: StudentCardState,
+  fallSessions: ParentFormData['fall_sessions'],
+  staffEntry: boolean,
+): boolean {
+  const pickupVisible = isPickupVisible(student, sel, fallSessions);
+  const manualCurrentFields = [
+    sel.manual_current_course_name,
+    sel.manual_current_weekday,
+    sel.manual_current_start_time,
+    sel.manual_current_pickup_school,
+  ].some(value => value.trim());
+
+  if (staffEntry && manualCurrentFields) {
+    if (!sel.manual_current_course_name.trim() || !sel.manual_current_weekday || !sel.manual_current_start_time) return false;
+  }
+  if (!sel.summer_status) return false;
+  if (sel.summer_status === 'enrolling' && sel.session_ids.length === 0) return false;
+  if (sel.summer_status === 'other' && !sel.custom_notes.trim()) return false;
+  if (pickupVisible && sel.pickup_requested) {
+    if (!sel.pickup_school) return false;
+    if (sel.pickup_school === 'other' && !sel.pickup_school_other.trim()) return false;
+  }
+  if (!sel.fall_status) return false;
+  if (sel.fall_status === 'change' && sel.fall_session_ids.length === 0) return false;
+  return true;
+}
+
 function initState(student: ParentFormData['students'][number]): StudentCardState {
   const req = student.latest_request;
   const fallStatus = req?.fall_status ?? 'same';
@@ -112,6 +142,10 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
       fall_session_start_dates: req.fall_session_start_dates ?? {},
       fall_waitlist_session_ids: req.fall_waitlist_session_ids ?? [],
       fall_notes: req.fall_notes ?? '',
+      manual_current_course_name: '',
+      manual_current_weekday: '',
+      manual_current_start_time: '',
+      manual_current_pickup_school: '',
     };
   }
   return {
@@ -126,6 +160,10 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
     fall_session_start_dates: {},
     fall_waitlist_session_ids: [],
     fall_notes: '',
+    manual_current_course_name: '',
+    manual_current_weekday: '',
+    manual_current_start_time: '',
+    manual_current_pickup_school: '',
   };
 }
 
@@ -146,20 +184,28 @@ export default function SummerRegForm({
     () => Object.fromEntries(data.students.map(s => [s.student_id, initState(s)])),
   );
 
-  const isValid = data.students.every(s => {
-    const sel = selections[s.student_id];
-    const pickupVisible = isPickupVisible(s, sel, data.fall_sessions);
-    if (!sel.summer_status) return false;
-    if (sel.summer_status === 'enrolling' && sel.session_ids.length === 0) return false;
-    if (sel.summer_status === 'other' && !sel.custom_notes.trim()) return false;
-    if (pickupVisible && sel.pickup_requested) {
-      if (!sel.pickup_school) return false;
-      if (sel.pickup_school === 'other' && !sel.pickup_school_other.trim()) return false;
+  const incompleteCount = data.students.filter(s => !isStudentComplete(s, selections[s.student_id], data.fall_sessions, staffEntry)).length;
+  const isValid = incompleteCount === 0;
+
+  function currentSessionsSnapshot(
+    student: ParentFormData['students'][number],
+    sel: StudentCardState,
+  ): ParentFormData['students'][number]['current_sessions'] {
+    if (
+      staffEntry &&
+      sel.manual_current_course_name.trim() &&
+      sel.manual_current_weekday &&
+      sel.manual_current_start_time
+    ) {
+      return [{
+        weekday: sel.manual_current_weekday,
+        start_time: sel.manual_current_start_time,
+        pickup_school: sel.manual_current_pickup_school.trim() || null,
+        course_name: sel.manual_current_course_name.trim(),
+      }];
     }
-    if (!sel.fall_status) return false;
-    if (sel.fall_status === 'change' && sel.fall_session_ids.length === 0) return false;
-    return true;
-  });
+    return getCurrentSessions(student);
+  }
 
   const entries: StudentFormEntry[] = data.students.map(s => {
     const sel = selections[s.student_id];
@@ -177,16 +223,17 @@ export default function SummerRegForm({
       pickup_requested: pickupVisible ? sel.pickup_requested : undefined,
       pickup_school: pickupRequested ? (sel.pickup_school ?? undefined) : undefined,
       pickup_school_other: pickupRequested && sel.pickup_school === 'other' ? sel.pickup_school_other || undefined : undefined,
-      fall_status: sel.fall_status as 'same' | 'change' | 'pause',
+      fall_status: sel.fall_status as 'same' | 'change' | 'pause' | 'unsure' | 'not_returning',
       fall_session_ids: changingFall ? sel.fall_session_ids : [],
       fall_session_start_dates: changingFall ? sel.fall_session_start_dates : {},
       fall_waitlist_session_ids: changingFall ? sel.fall_waitlist_session_ids : [],
-      fall_notes: sel.fall_status === 'pause' ? sel.fall_notes || undefined : undefined,
+      fall_notes: sel.fall_status && !['same', 'change'].includes(sel.fall_status) ? sel.fall_notes || undefined : undefined,
+      current_sessions_snapshot: currentSessionsSnapshot(s, sel),
     };
   });
 
   return (
-    <form action={formAction} className="space-y-6">
+    <form action={formAction} className="space-y-6 pb-28 sm:pb-0">
       <input type="hidden" name="token" value={token} />
       {staffEntry && <input type="hidden" name="staff_entry" value="1" />}
       {staffEntry && !staffName && (
@@ -217,18 +264,29 @@ export default function SummerRegForm({
           student={student}
           summerSessions={data.summer_sessions}
           fallSessions={data.fall_sessions}
+          courseOptions={data.course_options ?? []}
+          staffEntry={staffEntry}
           state={selections[student.student_id]}
           onChange={s => setSelections(prev => ({ ...prev, [student.student_id]: s }))}
         />
       ))}
 
-      <button
-        type="submit"
-        disabled={isPending || !isValid}
-        className="w-full rounded-lg bg-sky-600 px-4 py-3 text-white font-medium shadow-lg shadow-sky-900/20 hover:bg-sky-500 active:scale-[0.99] transition disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isPending ? 'Submitting…' : 'Submit Summer & Fall Plans'}
-      </button>
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:shadow-none sm:backdrop-blur-none">
+        <div className="mx-auto max-w-3xl space-y-2">
+          {!isValid && (
+            <p className="text-center text-xs font-medium text-amber-700">
+              {incompleteCount} {incompleteCount === 1 ? 'student needs' : 'students need'} required items before submitting.
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={isPending || !isValid}
+            className="w-full rounded-lg bg-sky-600 px-4 py-3 text-white font-medium shadow-lg shadow-sky-900/20 transition hover:bg-sky-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isPending ? 'Submitting…' : 'Submit Summer & Fall Plans'}
+          </button>
+        </div>
+      </div>
     </form>
   );
 }

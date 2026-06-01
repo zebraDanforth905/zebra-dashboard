@@ -23,7 +23,8 @@ export default function GenerateTokensButton() {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-3">
+    <div className="flex min-w-[11rem] shrink-0 flex-col items-start gap-1">
+      {message && <p className="max-w-44 text-xs leading-tight text-slate-600">{message}</p>}
       <button
         onClick={handleClick}
         disabled={isPending}
@@ -31,7 +32,6 @@ export default function GenerateTokensButton() {
       >
         {isPending ? 'Generating…' : 'Generate All Tokens'}
       </button>
-      {message && <p className="text-sm text-slate-600">{message}</p>}
     </div>
   );
 }

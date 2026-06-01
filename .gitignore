@@ -58,3 +58,4 @@ memory/
 # Backfill review dumps (contain parent names/emails — keep local only)
 backfill-*-dryrun.txt
 refresh-*-dryrun.txt
+snapshots/

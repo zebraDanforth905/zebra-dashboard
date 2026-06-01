@@ -15,9 +15,11 @@ const SUMMER_LABEL: Record<string, string> = {
 };
 
 const FALL_LABEL: Record<string, string> = {
-  same:   'Keep current session',
-  change: 'Requesting a different class time starting in September',
-  pause:  'Not sure yet — we won\'t hold a September spot',
+  same:          'Keep current session',
+  change:        'Requesting a different class time starting in September',
+  pause:         'Not sure yet — we won\'t hold a September spot',
+  unsure:        'Returning in September, but not sure which day yet',
+  not_returning: 'Definitely not returning in September',
 };
 
 function formatTime(t: string | null): string {
@@ -28,8 +30,35 @@ function formatTime(t: string | null): string {
   return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-function formatFallChoice(status: string | null, weekday: string | null, startTime: string | null): string {
+function formatCurrentSessions(
+  sessions: {
+    weekday: string;
+    start_time: string;
+    course_name?: string | null;
+  }[],
+): string | null {
+  if (sessions.length === 0) return null;
+  return sessions
+    .map(session => {
+      const slot = `${session.weekday} ${formatTime(session.start_time)}`;
+      return session.course_name ? `${slot} (${session.course_name})` : slot;
+    })
+    .join(', ');
+}
+
+function formatFallChoice(
+  status: string | null,
+  weekday: string | null,
+  startTime: string | null,
+  currentSessions: {
+    weekday: string;
+    start_time: string;
+    course_name?: string | null;
+  }[],
+): string {
   if (status !== 'same') return status ? (FALL_LABEL[status] ?? status) : '—';
+  const snapshotLabel = formatCurrentSessions(currentSessions);
+  if (snapshotLabel) return `${FALL_LABEL.same} - ${snapshotLabel}`;
   return weekday
     ? `${FALL_LABEL.same} - ${weekday} ${formatTime(startTime)}`
     : FALL_LABEL.same;
@@ -113,7 +142,7 @@ export default async function SubmittedPage({
                   <div className="rounded-lg bg-emerald-50 px-3 py-2 space-y-1">
                     <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">September (Fall)</p>
                     <p className="text-sm text-slate-700 font-medium">
-                      {formatFallChoice(s.fall_status, s.current_weekday, s.current_start_time)}
+                      {formatFallChoice(s.fall_status, s.current_weekday, s.current_start_time, s.current_sessions_snapshot)}
                     </p>
                     {s.fall_session_labels.length > 0 && (
                       <p className="text-xs text-slate-600">
