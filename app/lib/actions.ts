@@ -1135,10 +1135,11 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
         
         if (paymentData.email && paymentData.email.trim()) {
           try {
-            // Look for customer with matching email
+            // Look for customer with matching email (primary or alternate)
             const customerMatch = await sql`
               SELECT id FROM customers
               WHERE LOWER(email) = LOWER(${paymentData.email.trim()})
+                 OR LOWER(alternate_email) = LOWER(${paymentData.email.trim()})
               LIMIT 1;
             `;
             
@@ -1339,7 +1340,13 @@ export async function assignStudentToCustomer(studentId: string, customerId: str
   }
 }
 
-export async function updateCustomer(customerId: string, name: string, email: string) {
+export async function updateCustomer(
+  customerId: string,
+  name: string,
+  email: string,
+  alternateName?: string,
+  alternateEmail?: string,
+) {
   try {
     if (!name || !name.trim()) {
       throw new Error('Customer name is required');
@@ -1347,7 +1354,11 @@ export async function updateCustomer(customerId: string, name: string, email: st
 
     await sql`
       UPDATE customers
-      SET name = ${name.trim()}, email = ${email?.trim() || ''}
+      SET
+        name = ${name.trim()},
+        email = ${email?.trim() || ''},
+        alternate_name = ${alternateName?.trim() || null},
+        alternate_email = ${alternateEmail?.trim().toLowerCase() || null}
       WHERE id = ${customerId};
     `;
 
@@ -1809,6 +1820,27 @@ export async function updateCampSeatAssignment(
   }
 }
 
+export async function updateCampEnrolmentNote(
+  enrolmentId: string,
+  note: string
+) {
+  try {
+    const trimmedNote = note.trim();
+
+    await sql`
+      UPDATE camp_enrolments
+      SET note = ${trimmedNote || null}
+      WHERE id = ${enrolmentId};
+    `;
+
+    revalidateTag('camps', 'max');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating camp enrolment note:', error);
+    return { ok: false, error: 'Failed to update camp enrolment note' };
+  }
+}
+
 export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent[]) {
   try {
     const session = await auth();
@@ -2101,6 +2133,14 @@ const UpdateStaffAbsenceSchema = z.object({
 });
 
 const CreateUntemplatedShiftSchema = z.object({
+  userId: z.string().min(1),
+  date: z.string().min(1),
+  startTime: z.string().min(1),
+  endTime: z.string().min(1),
+});
+
+const UpdateUntemplatedShiftSchema = z.object({
+  id: z.coerce.number().int().positive(),
   userId: z.string().min(1),
   date: z.string().min(1),
   startTime: z.string().min(1),
@@ -2432,6 +2472,42 @@ export async function createUntemplatedShift(formData: FormData) {
       ON CONFLICT (untemplated_shift_id, shift_type) DO NOTHING
     `;
   });
+  revalidatePath('/dashboard/staff-schedule');
+}
+
+export async function updateUntemplatedShift(formData: FormData) {
+  const parsed = UpdateUntemplatedShiftSchema.safeParse({
+    id: formData.get('id'),
+    userId: formData.get('userId'),
+    date: formData.get('date'),
+    startTime: formData.get('startTime'),
+    endTime: formData.get('endTime'),
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message || 'Invalid untemplated shift data');
+  }
+
+  const { id, userId, date, startTime, endTime } = parsed.data;
+  const shiftTypes = parseShiftTypes(formData);
+
+  await sql.begin(async (trx) => {
+    await trx`
+      UPDATE untemplated_shift
+      SET user_id = ${userId},
+          date = ${date}::date,
+          start_time = ${startTime}::time,
+          end_time = ${endTime}::time
+      WHERE id = ${id}
+    `;
+    await trx`DELETE FROM untemplated_shift_type WHERE untemplated_shift_id = ${id}`;
+    await trx`
+      INSERT INTO untemplated_shift_type (untemplated_shift_id, shift_type)
+      SELECT ${id}, shift_type
+      FROM UNNEST(${shiftTypes}::text[]) AS t(shift_type)
+      ON CONFLICT (untemplated_shift_id, shift_type) DO NOTHING
+    `;
+  });
+
   revalidatePath('/dashboard/staff-schedule');
 }
 

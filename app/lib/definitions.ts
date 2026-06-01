@@ -12,6 +12,8 @@ export type Customer = {
   id: string;
   name: string;
   email: string;
+  alternate_name?: string | null;
+  alternate_email?: string | null;
   setup_up_qbo?: boolean;
 }
 
@@ -214,6 +216,8 @@ export type CustomerTableData = {
   id: string;
   name: string;
   email: string;
+  alternate_name?: string | null;
+  alternate_email?: string | null;
   set_up_qbo?: boolean;
   total_due: number;
   next_invoice_date: Date | null;
@@ -305,6 +309,13 @@ export type RecurringInvoiceListData = {
   description: string;
 }
 
+export type StudentSpecificData = {
+
+}
+export type CustomerSpecificData = {
+
+}
+
 export type PickupListDisplay = {
   id: string;
   student_id: string;
@@ -340,6 +351,7 @@ export type CampEnrolmentWithStudent = {
   course_id: string;
   camp_type: 'FD' | 'PM' | 'AM';
   assigned_seat_number: number | null;
+  note: string | null;
   special_needs: string | null;
   extended_care: boolean;
 };

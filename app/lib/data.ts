@@ -33,7 +33,12 @@ export async function fetchFilteredCustomers(
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
   
   // Build WHERE clause based on filters
-  let whereConditions = sql`(c.name ILIKE '%' || ${query} || '%' OR c.email ILIKE '%' || ${query} || '%')`;
+  let whereConditions = sql`(
+    c.name ILIKE '%' || ${query} || '%'
+    OR c.email ILIKE '%' || ${query} || '%'
+    OR COALESCE(c.alternate_name, '') ILIKE '%' || ${query} || '%'
+    OR COALESCE(c.alternate_email, '') ILIKE '%' || ${query} || '%'
+  )`;
   
   if (qboFilter === 'setup') {
     whereConditions = sql`${whereConditions} AND c.set_up_qbo = true`;
@@ -190,6 +195,8 @@ export async function fetchFilteredCustomers(
         c.id,
         c.name,
         c.email,
+        c.alternate_name,
+        c.alternate_email,
         c.set_up_qbo,
         COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0) AS total_due,
         rec.next_invoice_date,
@@ -234,7 +241,12 @@ export async function fetchCustomerPages(
 ) {
   try {
     // Build base WHERE conditions - use 'c' alias for consistency
-    let whereConditions = sql`(c.name ILIKE ${`%${query}%`} OR c.email ILIKE ${`%${query}%`})`;
+    let whereConditions = sql`(
+      c.name ILIKE ${`%${query}%`}
+      OR c.email ILIKE ${`%${query}%`}
+      OR COALESCE(c.alternate_name, '') ILIKE ${`%${query}%`}
+      OR COALESCE(c.alternate_email, '') ILIKE ${`%${query}%`}
+    )`;
     
     if (qboFilter === 'setup') {
       whereConditions = sql`${whereConditions} AND c.set_up_qbo = true`;
@@ -570,6 +582,8 @@ export async function fetchCustomerById(customerId: string | "") {
         c.id,
         c.name,
         c.email,
+        c.alternate_name,
+        c.alternate_email,
         COALESCE(inv.sum_invoices,0) - COALESCE(pay.sum_payments,0) AS total_due,
         pay.next_payment_date,
         pay.next_payment_amount,
@@ -1019,9 +1033,12 @@ export async function fetchCustomersList(query: string) {
 
   try {
     const customers = await sql<CustomerTableData[]>`
-      SELECT id, name, email
+      SELECT id, name, email, alternate_name, alternate_email
       FROM customers
-      WHERE name ILIKE '%' || ${query} || '%' OR email ILIKE '%' || ${query} || '%'
+      WHERE name ILIKE '%' || ${query} || '%'
+        OR email ILIKE '%' || ${query} || '%'
+        OR COALESCE(alternate_name, '') ILIKE '%' || ${query} || '%'
+        OR COALESCE(alternate_email, '') ILIKE '%' || ${query} || '%'
       ORDER BY name
       LIMIT 200
     ;`;
@@ -1719,6 +1736,7 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
         course_id: string;
         camp_type: 'FD' | 'PM' | 'AM';
         assigned_seat_number: number | null;
+        note: string | null;
         special_needs: string | null;
         extended_care: boolean;
       }>;
@@ -1735,6 +1753,7 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
             'course_id', ce.course_id,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
+            'note', ce.note,
             'special_needs', s.special_needs,
             'extended_care', cs.extended_care
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
@@ -1778,6 +1797,7 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
         course_id: string;
         camp_type: 'FD' | 'PM' | 'AM';
         assigned_seat_number: number | null;
+        note: string | null;
         special_needs: string | null;
         extended_care: boolean;
       }>;
@@ -1794,6 +1814,7 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
             'course_id', ce.course_id,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
+            'note', ce.note,
             'special_needs', s.special_needs,
             'extended_care', cs.extended_care
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC

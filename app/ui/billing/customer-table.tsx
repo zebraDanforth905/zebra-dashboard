@@ -85,8 +85,18 @@ export default async function CustomerTable({
               customers.map((c) => (
                 <ClickableRow key={c.id} href={`/dashboard/billing/${c.id}/edit`}>
                   
-                  <td className="relative px-1.5 py-1.5 font-medium text-slate-900">{c.name}</td>
-                  <td className="relative px-1.5 py-1.5 text-slate-700 max-w-xs truncate">{c.email}</td>
+                  <td className="relative px-1.5 py-1.5 font-medium text-slate-900">
+                    <div className="truncate">{c.name}</div>
+                    {c.alternate_name && (
+                      <div className="text-[10px] text-slate-500 truncate">Alt: {c.alternate_name}</div>
+                    )}
+                  </td>
+                  <td className="relative px-1.5 py-1.5 text-slate-700 max-w-xs">
+                    <div className="truncate">{c.email}</div>
+                    {c.alternate_email && (
+                      <div className="text-[10px] text-slate-500 truncate">Alt: {c.alternate_email}</div>
+                    )}
+                  </td>
                   <td className="relative px-1.5 py-1.5 text-center z-10">
                     <div className="flex justify-center">
                       <QBOToggle customerId={c.id} isSetUp={c.set_up_qbo || false} />
