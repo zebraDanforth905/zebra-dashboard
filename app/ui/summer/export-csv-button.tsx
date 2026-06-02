@@ -41,11 +41,10 @@ export default function ExportCsvButton({
   const recipientCount = rows.reduce((count, row) => count + recipientCountForRow(row), 0);
 
   function handleExport() {
-    const origin = window.location.origin;
-    const header = 'Email,Parent Name,Students,Link';
+    const header = 'Email,Parent Name,Students,Token';
     const body = rows.flatMap(r => {
       const students = formatStudentNamesGrammar(r.student_names);
-      const link = `${origin}/summer-reg?token=${r.token}`;
+      const token = r.token;
       const primaryEmail = r.email?.trim();
       const alternateEmail = r.alternate_email?.trim();
       const recipientRows: string[] = [];
@@ -55,7 +54,7 @@ export default function ExportCsvButton({
           csv(primaryEmail),
           csv(r.customer_name),
           csv(students),
-          csv(link),
+          csv(token),
         ].join(','));
       }
 
@@ -64,7 +63,7 @@ export default function ExportCsvButton({
           csv(alternateEmail),
           csv(r.alternate_name?.trim() || r.customer_name),
           csv(students),
-          csv(link),
+          csv(token),
         ].join(','));
       }
 

@@ -351,22 +351,38 @@ function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onD
   );
 }
 
+const NOTE_PREVIEW_LENGTH = 120;
+
+function NoteBlock({ label, note }: { label: string; note: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = note.length > NOTE_PREVIEW_LENGTH;
+  const visibleNote = expanded || !isLong ? note : `${note.slice(0, NOTE_PREVIEW_LENGTH).trimEnd()}...`;
+
+  return (
+    <div className="rounded-md border border-slate-100 bg-slate-50 px-2 py-1.5">
+      <div className="font-medium text-slate-500">{label}</div>
+      <div className="mt-0.5 whitespace-pre-wrap break-words italic leading-5 text-slate-600">
+        {visibleNote}
+      </div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded(value => !value)}
+          className="mt-1 text-[11px] font-medium text-sky-700 hover:text-sky-900"
+        >
+          {expanded ? 'Show less' : 'More details'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NotesCell({ summerNotes, fallNotes }: { summerNotes: string | null; fallNotes: string | null }) {
   if (!summerNotes && !fallNotes) return <span className="text-slate-400">—</span>;
   return (
-    <div className="space-y-1">
-      {summerNotes && (
-        <div>
-          <span className="font-medium text-slate-500">Summer: </span>
-          <span className="italic">{summerNotes}</span>
-        </div>
-      )}
-      {fallNotes && (
-        <div>
-          <span className="font-medium text-slate-500">Fall: </span>
-          <span className="italic">{fallNotes}</span>
-        </div>
-      )}
+    <div className="space-y-2">
+      {summerNotes && <NoteBlock label="Summer" note={summerNotes} />}
+      {fallNotes && <NoteBlock label="Fall" note={fallNotes} />}
     </div>
   );
 }
@@ -516,13 +532,13 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                 <tr className="border-b border-slate-100 bg-slate-50 text-left font-semibold text-slate-500">
                   <th className="px-3 py-2">Student</th>
                   <th className="px-3 py-2">Family</th>
-                  <th className="px-3 py-2">Current</th>
+                  <th className="px-3 py-2 min-w-[160px]">Current</th>
                   <th className="px-3 py-2">Summer</th>
                   <th className="px-3 py-2">Summer Sessions</th>
                   <th className="px-3 py-2">Pickup</th>
-                  <th className="px-3 py-2">Fall</th>
+                  <th className="px-3 py-2 min-w-[180px]">Fall</th>
                   <th className="px-3 py-2">Fall Sessions</th>
-                  <th className="px-3 py-2">Notes</th>
+                  <th className="px-3 py-2 min-w-[200px]">Notes</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Submitted</th>
                   <th className="px-3 py-2">Source</th>
@@ -538,7 +554,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                     <td className="px-3 py-2 whitespace-nowrap">
                       <FamilyCell row={row} emailClassName="text-[11px]" />
                     </td>
-                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
+                    <td className="px-3 py-2 min-w-[160px] max-w-[200px] whitespace-normal break-words text-slate-500 leading-5">
                       {row.current_weekday
                         ? `${row.current_weekday} ${formatTime(row.current_start_time)}`
                         : '—'}
@@ -557,7 +573,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                         pickupSchoolOther={item.pickup_school_other}
                       />
                     </td>
-                    <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
+                    <td className="px-3 py-2 min-w-[180px] max-w-[240px] whitespace-normal break-words text-slate-600 leading-5">
                       {formatHistoryFallChoice(item, row)}
                     </td>
                     <td className="px-3 py-2 text-slate-600">
@@ -567,7 +583,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                       />
                       <WaitlistLabelsCell labels={item.fall_waitlist_session_labels} />
                     </td>
-                    <td className="px-3 py-2 text-slate-500 max-w-[220px]">
+                    <td className="px-3 py-2 min-w-[200px] max-w-[260px] text-slate-500">
                       <NotesCell summerNotes={item.custom_notes} fallNotes={item.fall_notes} />
                     </td>
                     <td className="px-3 py-2">
@@ -938,13 +954,13 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
                 <th className="px-4 py-3">Student</th>
                 <th className="px-4 py-3">Family</th>
-                <th className="px-4 py-3">Current</th>
+                <th className="px-4 py-3 min-w-[190px]">Current</th>
                 <th className="px-4 py-3">Summer</th>
                 <th className="px-4 py-3">Summer Sessions</th>
                 <th className="px-4 py-3">Pickup</th>
-                <th className="px-4 py-3">Fall Plan</th>
+                <th className="px-4 py-3 min-w-[240px]">Fall Plan</th>
                 <th className="px-4 py-3">Fall Sessions</th>
-                <th className="px-4 py-3">Notes</th>
+                <th className="px-4 py-3 min-w-[240px]">Notes</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Submitted</th>
                 <th className="px-4 py-3">Source</th>
@@ -975,7 +991,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                   <td className="px-4 py-3 whitespace-nowrap">
                     <FamilyCell row={row} />
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
+                  <td className="px-4 py-3 min-w-[190px] max-w-[240px] whitespace-normal break-words text-xs leading-5 text-slate-500">
                     {formatCurrentSessions(row)}
                   </td>
                   <td className="px-4 py-3">
@@ -992,14 +1008,14 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                       pickupSchoolOther={row.pickup_school_other}
                     />
                   </td>
-                  <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">
+                  <td className="px-4 py-3 min-w-[240px] max-w-[320px] whitespace-normal break-words text-xs leading-5 text-slate-600">
                     {row.fall_status ? formatFallStatus(row) : <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-slate-600 text-xs">
                     <SessionChoicesCell choices={row.fall_session_choices} fallbackLabels={row.fall_session_labels} />
                     <WaitlistLabelsCell labels={row.fall_waitlist_session_labels} />
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[180px]">
+                  <td className="px-4 py-3 min-w-[220px] max-w-[280px] text-xs text-slate-500">
                     <NotesCell summerNotes={row.custom_notes} fallNotes={row.fall_notes} />
                   </td>
                   <td className="px-4 py-3">

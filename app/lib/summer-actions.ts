@@ -861,7 +861,11 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
   }));
 }
 
-async function validateTokenCurrentStudentIds(tokenId: string, studentIds: number[]): Promise<boolean> {
+async function validateTokenCurrentStudentIds(
+  tokenId: string,
+  studentIds: number[],
+  includeInactiveStudents = false,
+): Promise<boolean> {
   const ids = Array.from(new Set(studentIds.filter(Number.isFinite)));
   if (ids.length === 0 || ids.length !== studentIds.length) return false;
 
@@ -872,15 +876,18 @@ async function validateTokenCurrentStudentIds(tokenId: string, studentIds: numbe
     WHERE pt.id = ${tokenId}::uuid
       AND s.id = ANY(${ids}::int[])
       AND (
-        EXISTS (
-          SELECT 1
-          FROM enrolments e
-          WHERE e.student_id = s.id
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) snapshot
-          WHERE snapshot->>'student_id' = s.id::text
+        ${includeInactiveStudents}::boolean
+        OR (
+          EXISTS (
+            SELECT 1
+            FROM enrolments e
+            WHERE e.student_id = s.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) snapshot
+            WHERE snapshot->>'student_id' = s.id::text
+          )
         )
       )
   `;
@@ -1012,7 +1019,7 @@ export async function submitSummerForm(
   const uniqueSubmittedStudentIds = new Set(submittedStudentIds);
   if (
     uniqueSubmittedStudentIds.size !== submittedStudentIds.length ||
-    !(await validateTokenCurrentStudentIds(token_id, submittedStudentIds))
+    !(await validateTokenCurrentStudentIds(token_id, submittedStudentIds, isStaffEntry))
   ) {
     return { error: 'One or more submitted students are invalid for this link. Please reload and try again.' };
   }
