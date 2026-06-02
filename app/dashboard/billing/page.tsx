@@ -11,9 +11,14 @@ import ActiveFilters from "@/app/ui/billing/active-filters";
 import ExpiringCardsAlert from "@/app/ui/billing/expiring-cards-alert";
 import postgres from 'postgres';
 import Link from 'next/link';
-import { DocumentMagnifyingGlassIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
+import { DocumentMagnifyingGlassIcon, CalendarDaysIcon, CalendarIcon } from '@heroicons/react/24/outline';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+
+type BillingSessionUser = {
+  name?: string | null;
+  user_type?: string;
+};
 
 export default async function Page(props: {
   searchParams?: Promise<{
@@ -56,8 +61,9 @@ export default async function Page(props: {
 
   // Check if user is admin
   const session = await auth();
-  const isAdmin = (session?.user as any)?.user_type === 'admin';
-  const currentUserName = session?.user?.name || 'Unknown';
+  const sessionUser = session?.user as BillingSessionUser | undefined;
+  const isAdmin = sessionUser?.user_type === 'admin';
+  const currentUserName = sessionUser?.name || 'Unknown';
 
   // Fetch all customers for the CSV upload component and unassigned students
   const customers = isAdmin ? await sql<{ id: string; name: string; email: string }[]>`
@@ -89,9 +95,16 @@ export default async function Page(props: {
       
       {/* Customers Section */}
       <div>
-        <div className="flex w-full items-center justify-between">
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-lg md:text-xl font-semibold">Customers</h1>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/dashboard/billing/calendar"
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-amber-600 border border-amber-600 rounded-lg hover:bg-amber-700 transition-colors shadow-sm"
+            >
+              <CalendarIcon className="h-4 w-4" />
+              Billing Calendar
+            </Link>
             <Link
               href="/dashboard/billing/enrollment-report"
               className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-emerald-600 border border-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"

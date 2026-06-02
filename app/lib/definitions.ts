@@ -176,6 +176,21 @@ export type Absence = {
   date: Date;
 }
 
+export type BillingCalendarWeekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+
+export type BillingCalendarCell = {
+  classes: string;
+  notes: string[];
+};
+
+export type BillingCalendarMonth = {
+  id: string;
+  year: number;
+  month: string;
+  convergeMessage?: string;
+  days: Record<BillingCalendarWeekday, BillingCalendarCell>;
+};
+
 
 export type StudentNote = {
   id: string;
@@ -309,12 +324,8 @@ export type RecurringInvoiceListData = {
   description: string;
 }
 
-export type StudentSpecificData = {
-
-}
-export type CustomerSpecificData = {
-
-}
+export type StudentSpecificData = Record<string, never>
+export type CustomerSpecificData = Record<string, never>
 
 export type PickupListDisplay = {
   id: string;
