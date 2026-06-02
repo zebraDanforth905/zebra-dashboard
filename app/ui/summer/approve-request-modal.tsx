@@ -6,9 +6,11 @@ import { approveSummerRequest } from '@/app/lib/summer-actions';
 import { SessionChoiceSummary, SummerResponseRow } from '@/app/lib/definitions';
 
 const FALL_STATUS_LABEL: Record<string, string> = {
-  same:   'Same as current',
-  change: 'Requesting change',
-  pause:  'Pausing fall',
+  same:          'Same as current',
+  change:        'Requesting change',
+  pause:         'Not sure yet',
+  unsure:        'Returning, day TBD',
+  not_returning: 'Definitely not returning',
 };
 
 const REQUEST_STATUS_STYLE: Record<string, string> = {
@@ -173,15 +175,22 @@ function formatTime(t: string | null): string {
   return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-function formatCurrentSession(weekday: string | null, startTime: string | null): string | null {
-  if (!weekday) return null;
-  return `${weekday} ${formatTime(startTime)}`;
+function formatCurrentSessions(row: SummerResponseRow): string {
+  if (row.current_sessions_snapshot.length > 0) {
+    return row.current_sessions_snapshot
+      .map(session => {
+        const slot = `${session.weekday} ${formatTime(session.start_time)}`;
+        return session.course_name ? `${slot} (${session.course_name})` : slot;
+      })
+      .join(', ');
+  }
+  return row.current_weekday ? `${row.current_weekday} ${formatTime(row.current_start_time)}` : '—';
 }
 
 function formatFallChoice(row: SummerResponseRow): string {
   if (row.fall_status !== 'same') return formatFallStatus(row.fall_status);
 
-  const currentSession = formatCurrentSession(row.current_weekday, row.current_start_time);
+  const currentSession = formatCurrentSessions(row);
   return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
 }
 
@@ -299,9 +308,7 @@ export default function ApproveRequestModal({
               <FamilyValue row={row} />
             </Field>
             <Field label="Current Schedule">
-              {row.current_weekday
-                ? `${row.current_weekday} ${formatTime(row.current_start_time)}`
-                : '—'}
+              {formatCurrentSessions(row)}
             </Field>
             <Field label="Submitted">{formatDate(row.submitted_at)}</Field>
             <Field label="Status"><StatusBadge status={row.status} /></Field>

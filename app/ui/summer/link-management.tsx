@@ -24,20 +24,27 @@ function formatDate(d: Date | null): string {
   return new Date(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-type FilterValue = 'all' | 'not_responded' | 'not_exported' | 'exported' | 'responded' | 'internal_responded';
+type FilterValue =
+  | 'all'
+  | 'not_responded'
+  | 'not_exported'
+  | 'exported'
+  | 'responded'
+  | 'internal_responded';
 
 const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'all',           label: 'All families' },
-  { value: 'not_responded', label: 'Not responded' },
+  { value: 'not_responded', label: 'Needs email (not responded)' },
   { value: 'not_exported',  label: 'Not exported' },
   { value: 'exported',      label: 'Exported' },
   { value: 'responded',     label: 'Responded' },
   { value: 'internal_responded', label: 'Internal response' },
 ];
+const DEFAULT_FILTER: FilterValue = 'not_responded';
 
 function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[] {
   switch (filter) {
-    case 'not_responded': return rows.filter(r => !r.has_responded);
+    case 'not_responded': return rows.filter(r => !r.has_responded && !r.has_internal_response);
     case 'responded':     return rows.filter(r => r.has_responded);
     case 'not_exported':  return rows.filter(r => r.export_count === 0);
     case 'exported':      return rows.filter(r => r.export_count > 0);
@@ -60,19 +67,33 @@ function matchesSearch(row: ParentLinkRow, search: string): boolean {
   return searchableText.includes(search);
 }
 
-export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
+function tokenAlertText(count: number): string {
+  if (count === 1) return '1 family needs token';
+  return `${count} families need tokens`;
+}
+
+export default function LinkManagement({
+  rows,
+  untokenizedActiveFamilyCount = 0,
+}: {
+  rows: ParentLinkRow[];
+  untokenizedActiveFamilyCount?: number;
+}) {
   const router = useRouter();
-  const [filter, setFilter] = useState<FilterValue>('all');
+  const [filter, setFilter] = useState<FilterValue>(DEFAULT_FILTER);
   const [search, setSearch] = useState('');
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = useMemo(
     () => applyFilter(rows, filter).filter(row => matchesSearch(row, normalizedSearch)),
     [filter, normalizedSearch, rows],
   );
+  const exportRows = filtered;
+  const exportLabel = filter === 'not_responded' ? 'Export email CSV' : 'Export CSV';
 
   const total = rows.length;
   const responded = rows.filter(r => r.has_responded).length;
   const internalResponded = rows.filter(r => r.has_internal_response).length;
+  const needsEmail = rows.filter(r => !r.has_responded && !r.has_internal_response).length;
   const missingEmail = rows.filter(r => !r.email).length;
 
   const [isRefreshing, startRefresh] = useTransition();
@@ -84,7 +105,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       try {
         const res = await refreshEmailsFromPortal();
         setRefreshResult(
-          `Synced ${res.updated}/${res.scanned} from portal` +
+          `Checked ${res.scanned} from portal · updated ${res.updated}` +
             (res.fetchFailed > 0 ? ` · ${res.fetchFailed} fetch failed` : ''),
         );
         router.refresh();
@@ -96,6 +117,12 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
 
   return (
     <div className="space-y-4">
+      {untokenizedActiveFamilyCount > 0 && (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">
+          {tokenAlertText(untokenizedActiveFamilyCount)}. Generate All Tokens before exporting emails.
+        </div>
+      )}
+
       {/* Action bar */}
       <div className="flex flex-wrap items-center gap-2 2xl:flex-nowrap">
         <GenerateTokensButton />
@@ -114,37 +141,39 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
           onChange={e => setSearch(e.target.value)}
           className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 sm:w-56 2xl:w-48"
         />
-        {(filter !== 'all' || search) && (
+        {(filter !== DEFAULT_FILTER || search) && (
           <button
-            onClick={() => { setFilter('all'); setSearch(''); }}
+            onClick={() => { setFilter(DEFAULT_FILTER); setSearch(''); }}
             className="text-xs text-slate-500 underline"
           >
             Clear
           </button>
         )}
-        <ExportCsvButton rows={filtered} label="Export CSV" />
+        <ExportCsvButton rows={exportRows} label={exportLabel} />
         <ClearExportButton rows={filtered} />
         <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
         <RefreshLinksButton />
-        <button
-          onClick={handleRefreshEmails}
-          disabled={isRefreshing}
-          className="shrink-0 whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 transition disabled:opacity-40"
-          title="Pull primary + alternate emails from portal family-view for every family (skips locked fields)"
-        >
-          {isRefreshing ? 'Syncing emails…' : 'Sync Emails from Portal'}
-        </button>
-        {refreshResult && (
-          <span className="text-xs text-slate-500">{refreshResult}</span>
-        )}
+        <div className="flex min-w-[11rem] shrink-0 flex-col items-start gap-1">
+          {refreshResult && (
+            <span className="max-w-48 text-xs leading-tight text-slate-500">{refreshResult}</span>
+          )}
+          <button
+            onClick={handleRefreshEmails}
+            disabled={isRefreshing}
+            className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 transition disabled:opacity-40"
+            title="Pull primary + alternate emails from portal family-view for every family (skips locked fields)"
+          >
+            {isRefreshing ? 'Syncing emails…' : 'Sync Emails from Portal'}
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{total}</span> families</span>
+        <span><span className="font-semibold text-sky-700">{needsEmail}</span> need email</span>
         <span><span className="font-semibold text-emerald-700">{responded}</span> responded</span>
         <span><span className="font-semibold text-amber-700">{internalResponded}</span> internal response</span>
-        <span><span className="font-semibold text-slate-800">{total - responded}</span> not yet responded</span>
         {missingEmail > 0 && (
           <span className="text-amber-700 font-medium">⚠ {missingEmail} missing email</span>
         )}
@@ -156,7 +185,7 @@ export default function LinkManagement({ rows }: { rows: ParentLinkRow[] }) {
       {/* Table */}
       {rows.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 text-sm">
-          No tokens generated yet. Use Generate All Tokens to create links for all active families.
+          No family links found. Use Generate All Tokens to create links for families with active students.
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">

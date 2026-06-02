@@ -43,12 +43,24 @@ function formatCurrentSession(weekday: string | null, startTime: string | null):
   return `${weekday} ${formatTime(startTime)}`;
 }
 
+function formatCurrentSessions(row: SummerResponseRow): string {
+  if (row.current_sessions_snapshot.length > 0) {
+    return row.current_sessions_snapshot
+      .map(session => {
+        const slot = `${session.weekday} ${formatTime(session.start_time)}`;
+        return session.course_name ? `${slot} (${session.course_name})` : slot;
+      })
+      .join(', ');
+  }
+  return row.current_weekday ? `${row.current_weekday} ${formatTime(row.current_start_time)}` : '—';
+}
+
 function formatFallStatus(row: SummerResponseRow): string {
   if (row.fall_status !== 'same') {
     return row.fall_status ? (FALL_STATUS_LABEL[row.fall_status] ?? row.fall_status) : '—';
   }
 
-  const currentSession = formatCurrentSession(row.current_weekday, row.current_start_time);
+  const currentSession = formatCurrentSessions(row);
   return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
 }
 
@@ -66,9 +78,11 @@ const SUMMER_STATUS_LABEL: Record<string, string> = {
 };
 
 const FALL_STATUS_LABEL: Record<string, string> = {
-  same:   'Keep current',
-  change: 'Requesting change',
-  pause:  'Pausing fall',
+  same:          'Keep current',
+  change:        'Requesting change',
+  pause:         'Not sure yet',
+  unsure:        'Returning, day TBD',
+  not_returning: 'Definitely not returning',
 };
 
 const REQUEST_STATUS_STYLE: Record<string, string> = {
@@ -867,7 +881,9 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
             { value: 'all',    label: 'All fall plans' },
             { value: 'same',   label: 'Keep current' },
             { value: 'change', label: 'Requesting change' },
-            { value: 'pause',  label: 'Pausing fall' },
+            { value: 'unsure', label: 'Returning, day TBD' },
+            { value: 'not_returning', label: 'Not returning' },
+            { value: 'pause',  label: 'Not sure yet (legacy)' },
           ]}
         />
         <FilterSelect
@@ -960,9 +976,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                     <FamilyCell row={row} />
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
-                    {row.current_weekday
-                      ? `${row.current_weekday} ${formatTime(row.current_start_time)}`
-                      : '—'}
+                    {formatCurrentSessions(row)}
                   </td>
                   <td className="px-4 py-3">
                     <SummerBadge status={row.summer_status} />

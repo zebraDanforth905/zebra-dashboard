@@ -28,7 +28,8 @@ export default function ClearExportButton({ rows }: { rows: ParentLinkRow[] }) {
   }
 
   return (
-    <>
+    <div className="flex min-w-[10rem] shrink-0 flex-col items-start gap-1">
+      {message && <span className="max-w-44 text-xs leading-tight text-slate-500">{message}</span>}
       <button
         onClick={handleClick}
         disabled={eligible.length === 0 || isPending}
@@ -37,7 +38,6 @@ export default function ClearExportButton({ rows }: { rows: ParentLinkRow[] }) {
       >
         Clear Export ({eligible.length})
       </button>
-      {message && <span className="text-xs text-slate-500">{message}</span>}
 
       {confirm && (
         <div
@@ -71,6 +71,6 @@ export default function ClearExportButton({ rows }: { rows: ParentLinkRow[] }) {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

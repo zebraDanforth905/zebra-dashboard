@@ -3,6 +3,7 @@
 import postgres from 'postgres';
 import { cacheTag } from 'next/cache';
 import {
+  Course,
   CurrentSessionSummary,
   ParentFormData,
   ParentFormStudentData,
@@ -18,6 +19,40 @@ import {
 import { normalizeSessionSelection } from './session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+
+type TokenStudentSnapshot = CurrentSessionSummary & {
+  student_id?: string;
+};
+
+function cleanSnapshotString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeTokenStudentSnapshots(value: unknown): Map<string, CurrentSessionSummary[]> {
+  const map = new Map<string, CurrentSessionSummary[]>();
+  if (!Array.isArray(value)) return map;
+
+  for (const rawSession of value) {
+    if (!rawSession || typeof rawSession !== 'object') continue;
+    const session = rawSession as Partial<TokenStudentSnapshot>;
+    const studentId = cleanSnapshotString(session.student_id);
+    const weekday = cleanSnapshotString(session.weekday);
+    const startTime = cleanSnapshotString(session.start_time);
+    if (!studentId || !weekday || !/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) continue;
+
+    const pickupSchool = cleanSnapshotString(session.pickup_school);
+    const courseName = cleanSnapshotString(session.course_name);
+    const currentSession: CurrentSessionSummary = {
+      weekday,
+      start_time: startTime,
+      pickup_school: pickupSchool || null,
+      ...(courseName ? { course_name: courseName } : {}),
+    };
+    map.set(studentId, [...(map.get(studentId) ?? []), currentSession]);
+  }
+
+  return map;
+}
 
 async function fetchCanonicalFallSessionIds(sessionIds: string[]): Promise<Map<string, string>> {
   const ids = Array.from(new Set(sessionIds));
@@ -97,12 +132,14 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
       customer_id: string;
       customer_name: string;
       customer_alternate_name: string | null;
+      last_active_snapshot: unknown;
     }[]>`
       SELECT
         pt.id::text   AS token_id,
         c.id::text    AS customer_id,
         c.name        AS customer_name,
-        c.alternate_name AS customer_alternate_name
+        c.alternate_name AS customer_alternate_name,
+        COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
       FROM parent_tokens pt
       JOIN customers c ON c.id = pt.customer_id
       WHERE pt.token = ${token}
@@ -110,7 +147,9 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
     `;
     if (tokenRows.length === 0) return null;
 
-    const { token_id, customer_id, customer_name, customer_alternate_name } = tokenRows[0];
+    const { token_id, customer_id, customer_name, customer_alternate_name, last_active_snapshot } = tokenRows[0];
+    const tokenSnapshotByStudentId = normalizeTokenStudentSnapshots(last_active_snapshot);
+    const tokenSnapshotStudentIds = Array.from(tokenSnapshotByStudentId.keys());
 
     const studentRows = await sql<{
       student_id: string;
@@ -138,13 +177,14 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
         pr.status AS latest_request_status,
         pr.custom_notes AS latest_custom_notes
       FROM students s
-      JOIN LATERAL (
+      LEFT JOIN LATERAL (
         SELECT
           JSON_AGG(
             JSON_BUILD_OBJECT(
               'weekday', slots.weekday,
               'start_time', slots.start_time,
-              'pickup_school', slots.pickup_school
+              'pickup_school', slots.pickup_school,
+              'course_name', slots.course_name
             )
             ORDER BY slots.weekday_order, slots.start_time
           ) AS current_sessions,
@@ -155,6 +195,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
           SELECT DISTINCT
             se.weekday,
             se.start_time,
+            co.name AS course_name,
             cp.school_name AS pickup_school,
             CASE LOWER(TRIM(se.weekday))
               WHEN 'monday' THEN 1
@@ -168,6 +209,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
             END AS weekday_order
           FROM enrolments e
           JOIN sessions se ON se.id = e.session_id
+          LEFT JOIN courses co ON co.id = e.course_id
           LEFT JOIN LATERAL (
             SELECT p.school_name
             FROM pickups p
@@ -178,7 +220,7 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
           ) cp ON true
           WHERE e.student_id = s.id
         ) slots
-      ) cs ON cs.current_sessions IS NOT NULL
+      ) cs ON true
       LEFT JOIN LATERAL (
         SELECT pr2.id, pr2.request_type, pr2.payload, pr2.status, pr2.custom_notes
         FROM parent_requests pr2
@@ -191,6 +233,14 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
         LIMIT 1
       ) pr ON true
       WHERE s.customer_id = ${customer_id}::uuid
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM enrolments e
+            WHERE e.student_id = s.id
+          )
+          OR s.id::text = ANY(${tokenSnapshotStudentIds}::text[])
+        )
       ORDER BY s.name
     `;
 
@@ -218,6 +268,23 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
         ORDER BY s.weekday, s.start_time
       `,
     ]);
+
+    const courseOptions = await sql<Course[]>`
+      SELECT c.id::text, c.name, c.description
+      FROM courses c
+      LEFT JOIN enrolments e ON e.course_id = c.id
+      WHERE c.name !~* 'day\\s*camp'
+        AND (
+          c.name ~ '\\([A-Za-z]+[0-9]+\\)'
+          OR c.name ~* 'stripe'
+          OR c.name = 'Vex Robotics Competition'
+        )
+      GROUP BY c.id, c.name, c.description
+      ORDER BY
+        COALESCE(substring(c.name from '\\(([A-Za-z]+)[0-9]+\\)'), c.name),
+        COALESCE((substring(c.name from '\\([A-Za-z]+([0-9]+)\\)'))::int, 0),
+        c.name
+    `;
 
     const WEEKDAY_HOURS = new Set([16, 17, 18]); // 4, 5, 6 PM
     const SUMMER_SATURDAY_HOURS = new Set([9, 10, 11, 12]); // Summer: 9 AM through 12 PM
@@ -255,21 +322,43 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
     });
     const canonicalFallIdById = await fetchCanonicalFallSessionIds(latestFallSessionIds);
 
-    const students: ParentFormStudentData[] = studentRows.map(r => ({
-      student_id: r.student_id,
-      student_name: r.student_name,
-      current_sessions: r.current_sessions ?? [],
-      current_weekday: r.current_weekday,
-      current_start_time: r.current_start_time,
-      current_pickup_school: r.current_pickup_school,
-      latest_request: normalizeLatestRequest(r.latest_request, canonicalFallIdById, visibleFallSessionIds),
-      latest_request_type: r.latest_request_type as ParentFormStudentData['latest_request_type'],
-      latest_request_id: r.latest_request_id,
-      latest_request_status: r.latest_request_status as ParentFormStudentData['latest_request_status'],
-      latest_custom_notes: r.latest_custom_notes,
-    }));
+    const students: ParentFormStudentData[] = studentRows.map(r => {
+      const latestRequest = normalizeLatestRequest(r.latest_request, canonicalFallIdById, visibleFallSessionIds);
+      const latestCurrentSessions = latestRequest?.current_sessions_snapshot ?? [];
+      const dbCurrentSessions = r.current_sessions ?? [];
+      const tokenCurrentSessions = tokenSnapshotByStudentId.get(r.student_id) ?? [];
+      const currentSessions = dbCurrentSessions.length > 0
+        ? dbCurrentSessions
+        : tokenCurrentSessions.length > 0
+          ? tokenCurrentSessions
+          : latestCurrentSessions;
+      const firstCurrentSession = currentSessions[0];
 
-    return { token_id, customer_id, customer_name, customer_alternate_name, students, summer_sessions: filteredSummerSessions, fall_sessions: filteredFallSessions };
+      return {
+        student_id: r.student_id,
+        student_name: r.student_name,
+        current_sessions: currentSessions,
+        current_weekday: firstCurrentSession?.weekday ?? r.current_weekday,
+        current_start_time: firstCurrentSession?.start_time ?? r.current_start_time,
+        current_pickup_school: firstCurrentSession?.pickup_school ?? r.current_pickup_school,
+        latest_request: latestRequest,
+        latest_request_type: r.latest_request_type as ParentFormStudentData['latest_request_type'],
+        latest_request_id: r.latest_request_id,
+        latest_request_status: r.latest_request_status as ParentFormStudentData['latest_request_status'],
+        latest_custom_notes: r.latest_custom_notes,
+      };
+    });
+
+    return {
+      token_id,
+      customer_id,
+      customer_name,
+      customer_alternate_name,
+      students,
+      summer_sessions: filteredSummerSessions,
+      fall_sessions: filteredFallSessions,
+      course_options: courseOptions,
+    };
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch parent form data.');
@@ -294,9 +383,12 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       alternate_name_locked: boolean;
       token: string;
       last_exported_at: Date | null;
+      last_seen_active_at: Date | null;
       export_count: number;
       student_names: string[];
       student_courses: StudentCourseEntry[];
+      student_count: number;
+      active_student_count: number;
       has_responded: boolean;
       has_internal_response: boolean;
     }[]>`
@@ -313,9 +405,15 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         c.alternate_name_locked,
         pt.token,
         pt.last_exported_at,
+        (to_jsonb(pt)->>'last_seen_active_at')::timestamptz AS last_seen_active_at,
         pt.export_count,
         COALESCE(sn.student_names, '{}') AS student_names,
-        COALESCE(sc.student_courses, '[]'::json) AS student_courses,
+        COALESCE(sn.student_count, 0)::int AS student_count,
+        COALESCE(sn.active_student_count, 0)::int AS active_student_count,
+        CASE
+          WHEN COALESCE(sn.active_student_count, 0) > 0 THEN COALESCE(sc.student_courses, '[]'::jsonb)
+          ELSE COALESCE(NULLIF(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb), sc.student_courses, '[]'::jsonb)
+        END AS student_courses,
         EXISTS (
           SELECT 1
           FROM parent_requests pr
@@ -338,14 +436,22 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       FROM parent_tokens pt
       JOIN customers c ON c.id = pt.customer_id
       LEFT JOIN LATERAL (
-        SELECT ARRAY_AGG(DISTINCT s.name ORDER BY s.name) AS student_names
+        SELECT
+          ARRAY_AGG(DISTINCT s.name ORDER BY s.name) AS student_names,
+          COUNT(*)::int AS student_count,
+          COUNT(*) FILTER (
+            WHERE EXISTS (
+              SELECT 1
+              FROM enrolments e
+              WHERE e.student_id = s.id
+            )
+          )::int AS active_student_count
         FROM students s
         WHERE s.customer_id = c.id
-          AND EXISTS (SELECT 1 FROM enrolments e WHERE e.student_id = s.id)
       ) sn ON true
       LEFT JOIN LATERAL (
-        SELECT json_agg(
-          json_build_object(
+        SELECT jsonb_agg(
+          jsonb_build_object(
             'student_name', student_name,
             'course_name', course_name,
             'weekday', weekday,
@@ -365,13 +471,34 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           WHERE s.customer_id = c.id
         ) distinct_courses
       ) sc ON true
-      WHERE COALESCE(array_length(sn.student_names, 1), 0) > 0
       ORDER BY c.name
     `;
     return rows;
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch parent link rows.');
+  }
+}
+
+export async function fetchUntokenizedActiveFamilyCount(): Promise<number> {
+  'use cache';
+  cacheTag('summer-tokens');
+  try {
+    const rows = await sql<{ count: number }[]>`
+      SELECT COUNT(DISTINCT c.id)::int AS count
+      FROM customers c
+      JOIN students s ON s.customer_id = c.id
+      JOIN enrolments e ON e.student_id = s.id
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM parent_tokens pt
+        WHERE pt.customer_id = c.id
+      )
+    `;
+    return rows[0]?.count ?? 0;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch untokenized active family count.');
   }
 }
 
@@ -452,6 +579,7 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         pr.payload->>'fall_notes'                                             AS fall_notes,
         le.weekday                                                           AS current_weekday,
         le.start_time                                                        AS current_start_time,
+        COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb)       AS current_sessions_snapshot,
         pr.status,
         pr.custom_notes,
         COALESCE(pr.submitted_by, 'parent')                                  AS submitted_by,
@@ -698,6 +826,7 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
       student_name: string;
       current_weekday: string | null;
       current_start_time: string | null;
+      current_sessions_snapshot: CurrentSessionSummary[];
       summer_status: string;
       session_labels: string[];
       waitlist_session_labels: string[];
@@ -715,6 +844,7 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
         s.name AS student_name,
         le.weekday AS current_weekday,
         le.start_time AS current_start_time,
+        COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb) AS current_sessions_snapshot,
         COALESCE(pr.payload->>'summer_status', 'other') AS summer_status,
         COALESCE(sl.session_labels, '{}') AS session_labels,
         COALESCE(wl.waitlist_session_labels, '{}') AS waitlist_session_labels,

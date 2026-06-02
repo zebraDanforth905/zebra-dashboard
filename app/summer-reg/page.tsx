@@ -63,11 +63,11 @@ function PageShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="bg-gradient-to-r from-sky-600 via-sky-600 to-emerald-500 px-6 py-5">
-        <div className="mx-auto max-w-2xl">
+        <div className="mx-auto max-w-3xl">
           <Image src="/zebra-logo.png" alt="Zebra Robotics" width={180} height={60} />
         </div>
       </div>
-      <main className="mx-auto max-w-2xl px-4 py-8">{children}</main>
+      <main className="mx-auto max-w-3xl px-4 py-8">{children}</main>
     </div>
   );
 }

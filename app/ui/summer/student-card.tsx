@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { ParentFormStudentData, Session } from '@/app/lib/definitions';
 import { getStartDateOptions, formatStartDate, WeekdayName } from '@/app/lib/tdsb-calendar';
 
@@ -34,7 +35,11 @@ function formatCurrentSlot(weekday: string | null, startTime: string | null, pic
 function formatCurrentSlots(sessions: ParentFormStudentData['current_sessions']): string | null {
   if (sessions.length === 0) return null;
   return sessions
-    .map(session => formatCurrentSlot(session.weekday, session.start_time, session.pickup_school))
+    .map(session => {
+      const slot = formatCurrentSlot(session.weekday, session.start_time, session.pickup_school);
+      if (!slot) return null;
+      return session.course_name ? `${slot} - ${session.course_name}` : slot;
+    })
     .filter(Boolean)
     .join(', ');
 }
@@ -70,24 +75,38 @@ export type StudentCardState = {
   pickup_requested: boolean;
   pickup_school: 'Jackman' | 'Frankland' | 'other' | null;
   pickup_school_other: string;
-  fall_status: 'same' | 'change' | 'pause' | null;
+  fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning' | null;
   fall_session_ids: string[];
   fall_session_start_dates: Record<string, string>;
   fall_waitlist_session_ids: string[];
   fall_notes: string;
+  manual_current_course_name: string;
+  manual_current_weekday: string;
+  manual_current_start_time: string;
+  manual_current_pickup_school: string;
 };
 
 type Props = {
   student: ParentFormStudentData;
   summerSessions: (Session & { is_summer: boolean })[];
   fallSessions: (Session & { student_count: number; coach_capacity: number })[];
+  courseOptions: { id: string; name: string }[];
+  staffEntry?: boolean;
   state: StudentCardState;
   onChange: (s: StudentCardState) => void;
 };
 
-export default function StudentCard({ student, summerSessions, fallSessions, state, onChange }: Props) {
+const choiceLabelClass = 'flex min-h-11 items-start gap-3 -mx-2 rounded-lg px-2 py-2 cursor-pointer transition hover:bg-slate-50 sm:min-h-0 sm:mx-0 sm:rounded-none sm:px-0 sm:py-0 sm:hover:bg-transparent';
+const optionLabelClass = 'flex min-h-9 flex-1 items-center gap-3 cursor-pointer sm:min-h-0 sm:flex-none';
+const radioClass = 'mt-1 h-4 w-4 shrink-0 sm:h-auto sm:w-auto';
+const checkboxClass = 'h-4 w-4 shrink-0 sm:h-auto sm:w-auto';
+const dateLabelClass = 'flex min-h-9 w-full items-center justify-between gap-2 text-xs text-slate-600 sm:ml-auto sm:min-h-0 sm:w-auto';
+const dateSelectClass = 'min-h-9 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 focus:outline-none sm:min-h-0';
+
+export default function StudentCard({ student, summerSessions, fallSessions, courseOptions = [], staffEntry = false, state, onChange }: Props) {
   const summerByWeekday = groupByWeekday(summerSessions);
   const fallByWeekday = groupByWeekday(fallSessions);
+  const [showStaffCurrentContext, setShowStaffCurrentContext] = useState(false);
 
   const currentSessions = student.current_sessions.length > 0
     ? student.current_sessions
@@ -175,14 +194,14 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
     };
   }
 
-  function setFallStatus(fs: 'same' | 'change' | 'pause') {
+  function setFallStatus(fs: NonNullable<StudentCardState['fall_status']>) {
     onChange(clearPickupIfHidden({
       ...state,
       fall_status: fs,
       fall_session_ids: fs === 'change' ? state.fall_session_ids : [],
       fall_session_start_dates: fs === 'change' ? state.fall_session_start_dates : {},
       fall_waitlist_session_ids: fs === 'change' ? state.fall_waitlist_session_ids : [],
-      fall_notes: fs === 'pause' ? state.fall_notes : '',
+      fall_notes: ['pause', 'unsure', 'not_returning'].includes(fs) ? state.fall_notes : '',
       ...(fs === 'same' ? defaultCurrentPickupState() : {}),
     }));
   }
@@ -241,29 +260,128 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
     });
   }
 
+  const changingFallPickupEligible =
+    state.fall_status === 'change' &&
+    fallSessions.some(s => state.fall_session_ids.includes(s.id) && isPickupSession(s.weekday, s.start_time));
+  const pickupVisible = (state.fall_status === 'same' && currentPickupEligible) || changingFallPickupEligible;
+  const manualCurrentFields = [
+    state.manual_current_course_name,
+    state.manual_current_weekday,
+    state.manual_current_start_time,
+    state.manual_current_pickup_school,
+  ].some(value => value.trim());
+  const requiredMessages = [
+    !state.summer_status ? 'Choose a summer plan.' : null,
+    state.summer_status === 'enrolling' && state.session_ids.length === 0 ? 'Select at least one summer session.' : null,
+    state.summer_status === 'other' && !state.custom_notes.trim() ? 'Add custom summer plan notes.' : null,
+    state.fall_status === 'change' && state.fall_session_ids.length === 0 ? 'Select at least one September session.' : null,
+    pickupVisible && state.pickup_requested && !state.pickup_school ? 'Choose a pickup school.' : null,
+    pickupVisible && state.pickup_requested && state.pickup_school === 'other' && !state.pickup_school_other.trim()
+      ? 'Enter the pickup school name.'
+      : null,
+    staffEntry && manualCurrentFields && (!state.manual_current_course_name.trim() || !state.manual_current_weekday || !state.manual_current_start_time)
+      ? 'Complete the staff-only previous class fields.'
+      : null,
+  ].filter(Boolean);
+
+  function renderStaffCurrentContext() {
+    if (!staffEntry || state.fall_status !== 'same' || !showStaffCurrentContext) return null;
+
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+              Staff-only previous class context
+            </p>
+            <p className="mt-0.5 text-xs text-amber-700">
+              Use this when the student is already paused and the current class no longer appears.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowStaffCurrentContext(false)}
+            className="rounded-full px-2 py-0.5 text-lg leading-none text-amber-700 transition hover:bg-amber-100"
+            aria-label="Close previous class context"
+          >
+            ×
+          </button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Course</span>
+            <select
+              value={state.manual_current_course_name}
+              onChange={e => onChange({ ...state, manual_current_course_name: e.target.value })}
+              className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            >
+              <option value="">Select course</option>
+              {courseOptions.map(course => (
+                <option key={course.id} value={course.name}>{course.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Weekday</span>
+            <select
+              value={state.manual_current_weekday}
+              onChange={e => onChange({ ...state, manual_current_weekday: e.target.value })}
+              className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            >
+              <option value="">Select day</option>
+              {WEEKDAY_ORDER.map(day => <option key={day} value={day}>{day}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Start time</span>
+            <input
+              type="time"
+              value={state.manual_current_start_time}
+              onChange={e => onChange({ ...state, manual_current_start_time: e.target.value })}
+              className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Pickup school</span>
+            <select
+              value={state.manual_current_pickup_school}
+              onChange={e => onChange({ ...state, manual_current_pickup_school: e.target.value })}
+              className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            >
+              <option value="">No pickup</option>
+              <option value="Jackman">Jackman</option>
+              <option value="Frankland">Frankland</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    );
+  }
+
   function renderPickupControls() {
     return (
       <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 space-y-2">
-        <label className="flex items-center gap-2.5 cursor-pointer">
+        <label className="flex min-h-10 items-center gap-2.5 cursor-pointer sm:min-h-0">
           <input
             type="checkbox"
             checked={state.pickup_requested}
             onChange={e => setPickupRequested(e.target.checked)}
-            className="accent-emerald-600"
+            className={`${checkboxClass} accent-emerald-600`}
           />
           <span className="text-sm font-medium text-slate-700">With school pickup</span>
         </label>
 
         {state.pickup_requested && (
-          <div className="ml-6 space-y-2">
+          <div className="ml-4 space-y-2 sm:ml-6">
             {(['Jackman', 'Frankland', 'other'] as const).map(school => (
-              <label key={school} className="flex items-center gap-2 cursor-pointer">
+              <label key={school} className="flex min-h-10 items-center gap-2 cursor-pointer sm:min-h-0">
                 <input
                   type="radio"
                   name={`pickup_school_${student.student_id}`}
                   checked={state.pickup_school === school}
                   onChange={() => setPickupSchool(school)}
-                  className="accent-emerald-600"
+                  className={`${checkboxClass} accent-emerald-600`}
                 />
                 <span className="text-sm text-slate-700">
                   {school === 'other' ? 'Other school' : school}
@@ -291,7 +409,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
   }
 
   return (
-    <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm p-6 space-y-5">
+    <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm p-4 space-y-5 sm:p-6">
       {/* Header */}
       <div>
         <h2 className="text-lg font-semibold text-slate-800">{student.student_name}</h2>
@@ -300,6 +418,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
         </p>
       </div>
 
+      {requiredMessages.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+          {requiredMessages[0]}
+        </div>
+      )}
+
       {/* ── Summer section ──────────────────────────────────────────────── */}
       <div className="space-y-3">
         <p className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Summer Schedule</p>
@@ -307,19 +431,19 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
         <fieldset className="space-y-3">
           <legend className="sr-only">Summer schedule choice for {student.student_name}</legend>
 
-          <label className="flex items-start gap-3 cursor-pointer">
+          <label className={choiceLabelClass}>
             <input
               type="radio"
               name={`summer_${student.student_id}`}
               checked={state.summer_status === 'enrolling'}
               onChange={() => setSummerStatus('enrolling')}
-              className="mt-0.5 accent-sky-600"
+              className={`${radioClass} accent-sky-600`}
             />
-            <span className="text-slate-700">Continue weekly classes in July and August</span>
+            <span className="min-w-0 flex-1 text-slate-700">Continue weekly classes in July and August</span>
           </label>
 
           {state.summer_status === 'enrolling' && (
-            <div className="ml-6 space-y-4 pt-1">
+            <div className="ml-3 space-y-4 pt-1 sm:ml-6">
               <p className="text-xs text-slate-500">
                 Please select your preferred session(s):
               </p>
@@ -337,7 +461,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                         return (
                           <div
                             key={s.id}
-                            className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${
+                            className={`flex min-h-11 flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5 sm:min-h-0 sm:py-2 ${
                               full
                                 ? waitlisted
                                   ? 'border-amber-300 bg-amber-50'
@@ -349,7 +473,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                           >
                             {full ? (
                               <>
-                                <div className="flex min-w-[9rem] items-center gap-3">
+                                <div className="flex min-h-8 min-w-[9rem] items-center gap-3 sm:min-h-0">
                                   <span className="text-sm text-slate-700">
                                     {formatTime(s.start_time)}
                                   </span>
@@ -357,12 +481,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                                     Full
                                   </span>
                                 </div>
-                                <label className="flex items-center gap-2 cursor-pointer sm:ml-auto">
+                                <label className="flex min-h-9 items-center gap-2 cursor-pointer sm:ml-auto sm:min-h-0">
                                   <input
                                     type="checkbox"
                                     checked={waitlisted}
                                     onChange={() => toggleSummerWaitlistSession(s.id)}
-                                    className="accent-amber-600"
+                                    className={`${checkboxClass} accent-amber-600`}
                                   />
                                   <span className="text-sm font-medium text-amber-800">
                                     Add to waitlist
@@ -375,12 +499,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                                 )}
                               </>
                             ) : (
-                              <label className="flex items-center gap-3 cursor-pointer">
+                              <label className={optionLabelClass}>
                                 <input
                                   type="checkbox"
                                   checked={checked}
                                   onChange={() => toggleSummerSession(s.id, day)}
-                                  className="accent-sky-600"
+                                  className={`${checkboxClass} accent-sky-600`}
                                 />
                                 <span className="text-sm text-slate-700">
                                   {formatTime(s.start_time)}
@@ -388,12 +512,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                               </label>
                             )}
                             {!full && checked && dateOptions.length > 0 && (
-                              <label className="flex items-center gap-1.5 text-xs text-slate-600 ml-auto">
+                              <label className={dateLabelClass}>
                                 Start:
                                 <select
                                   value={selectedDate}
                                   onChange={e => setSummerSessionDate(s.id, e.target.value)}
-                                  className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
+                                  className={`${dateSelectClass} focus:border-sky-500 focus:ring-2 focus:ring-sky-200`}
                                 >
                                   {dateOptions.map(d => (
                                     <option key={d} value={d}>{formatStartDate(d)}</option>
@@ -415,32 +539,32 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
             </div>
           )}
 
-          <label className="flex items-start gap-3 cursor-pointer">
+          <label className={choiceLabelClass}>
             <input
               type="radio"
               name={`summer_${student.student_id}`}
               checked={state.summer_status === 'pausing'}
               onChange={() => setSummerStatus('pausing')}
-              className="mt-0.5 accent-sky-600"
+              className={`${radioClass} accent-sky-600`}
             />
-            <span className="text-slate-700">Not attending this summer in July and August</span>
+            <span className="min-w-0 flex-1 text-slate-700">Not attending this summer in July and August</span>
           </label>
 
-          <label className="flex items-start gap-3 cursor-pointer">
+          <label className={choiceLabelClass}>
             <input
               type="radio"
               name={`summer_${student.student_id}`}
               checked={state.summer_status === 'other'}
               onChange={() => setSummerStatus('other')}
-              className="mt-0.5 accent-sky-600"
+              className={`${radioClass} accent-sky-600`}
             />
-            <span className="text-slate-700">
+            <span className="min-w-0 flex-1 text-slate-700">
               Custom plan: choose the weeks/days that fit your family&apos;s summer plans
             </span>
           </label>
 
           {state.summer_status === 'other' && (
-            <div className="ml-6 space-y-1">
+            <div className="ml-3 space-y-1 sm:ml-6">
               <p className="text-xs text-slate-500">
                 Tell us the weeks or days that work for you, and we&apos;ll follow up to confirm the plan.
               </p>
@@ -460,9 +584,6 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
       <div className="border-t border-slate-100 pt-5 space-y-3">
         <div>
           <p className="text-sm font-semibold text-slate-700 uppercase tracking-wide">September (Fall) Schedule</p>
-          {currentSlot && (
-            <p className="text-xs text-slate-500 mt-0.5">Current session{currentSessions.length > 1 ? 's' : ''}: {currentSlot}</p>
-          )}
           <p className="text-xs text-slate-400 mt-1">
             We&apos;ll reach out in August to re-confirm your fall schedule before classes begin in September.
           </p>
@@ -471,38 +592,53 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
         <fieldset className="space-y-3">
           <legend className="sr-only">Fall schedule choice for {student.student_name}</legend>
 
-          <label className="flex items-start gap-3 cursor-pointer">
+          <label className={choiceLabelClass}>
             <input
               type="radio"
               name={`fall_${student.student_id}`}
               checked={state.fall_status === 'same'}
               onChange={() => setFallStatus('same')}
-              className="mt-0.5 accent-emerald-600"
+              className={`${radioClass} accent-emerald-600`}
             />
-            <span className="text-slate-700">
+            <span className="min-w-0 flex-1 text-slate-700">
               {currentSlot ? `Keep current session${currentSessions.length > 1 ? 's' : ''} - ${currentSlot}` : 'Keep current session'}
             </span>
           </label>
 
           {state.fall_status === 'same' && currentPickupEligible && (
-            <div className="ml-6">
+            <div className="ml-3 sm:ml-6">
               {renderPickupControls()}
             </div>
           )}
 
-          <label className="flex items-start gap-3 cursor-pointer">
+          {staffEntry && state.fall_status === 'same' && (
+            <div className="ml-3 space-y-3 sm:ml-6">
+              {!showStaffCurrentContext && (
+                <button
+                  type="button"
+                  onClick={() => setShowStaffCurrentContext(true)}
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+                >
+                  Update previous/current class
+                </button>
+              )}
+              {renderStaffCurrentContext()}
+            </div>
+          )}
+
+          <label className={choiceLabelClass}>
             <input
               type="radio"
               name={`fall_${student.student_id}`}
               checked={state.fall_status === 'change'}
               onChange={() => setFallStatus('change')}
-              className="mt-0.5 accent-emerald-600"
+              className={`${radioClass} accent-emerald-600`}
             />
-            <span className="text-slate-700">Request a different class time starting in September</span>
+            <span className="min-w-0 flex-1 text-slate-700">Request a different class time starting in September</span>
           </label>
 
           {state.fall_status === 'change' && (
-            <div className="ml-6 space-y-4 pt-1">
+            <div className="ml-3 space-y-4 pt-1 sm:ml-6">
               <p className="text-xs text-slate-400">
                 If there&apos;s any issue with availability for this time, we&apos;ll let you know.
               </p>
@@ -524,7 +660,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                           return (
                             <div
                               key={s.id}
-                              className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${
+                              className={`flex min-h-11 flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5 sm:min-h-0 sm:py-2 ${
                                 full
                                   ? waitlisted
                                     ? 'border-amber-300 bg-amber-50'
@@ -536,7 +672,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                             >
                               {full ? (
                                 <>
-                                  <div className="flex min-w-[9rem] items-center gap-3">
+                                  <div className="flex min-h-8 min-w-[9rem] items-center gap-3 sm:min-h-0">
                                     <span className="text-sm text-slate-700">
                                       {formatTime(s.start_time)}
                                     </span>
@@ -544,12 +680,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                                       Full
                                     </span>
                                   </div>
-                                  <label className="flex items-center gap-2 cursor-pointer sm:ml-auto">
+                                  <label className="flex min-h-9 items-center gap-2 cursor-pointer sm:ml-auto sm:min-h-0">
                                     <input
                                       type="checkbox"
                                       checked={waitlisted}
                                       onChange={() => toggleFallWaitlistSession(s.id)}
-                                      className="accent-amber-600"
+                                      className={`${checkboxClass} accent-amber-600`}
                                     />
                                     <span className="text-sm font-medium text-amber-800">
                                       Add to waitlist
@@ -562,12 +698,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                                   )}
                                 </>
                               ) : (
-                                <label className="flex items-center gap-3 cursor-pointer">
+                                <label className={optionLabelClass}>
                                   <input
                                     type="checkbox"
                                     checked={checked}
                                     onChange={() => toggleFallSession(s.id, day)}
-                                    className="accent-emerald-600"
+                                    className={`${checkboxClass} accent-emerald-600`}
                                   />
                                   <span className="text-sm text-slate-700">
                                     {formatTime(s.start_time)}
@@ -575,12 +711,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                                 </label>
                               )}
                               {!full && checked && dateOptions.length > 0 && (
-                                <label className="flex items-center gap-1.5 text-xs text-slate-600 ml-auto">
+                                <label className={dateLabelClass}>
                                   Start:
                                   <select
                                     value={selectedDate}
                                     onChange={e => setFallSessionDate(s.id, e.target.value)}
-                                    className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none"
+                                    className={`${dateSelectClass} focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200`}
                                   >
                                     {dateOptions.map(d => (
                                       <option key={d} value={d}>{formatStartDate(d)}</option>
@@ -589,7 +725,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
                                 </label>
                               )}
                               {checked && !full && pickupEligible && (
-                                <div className="basis-full pl-7">
+                                <div className="basis-full pl-3 sm:pl-7">
                                   {renderPickupControls()}
                                 </div>
                               )}
@@ -607,21 +743,37 @@ export default function StudentCard({ student, summerSessions, fallSessions, sta
             </div>
           )}
 
-          <label className="flex items-start gap-3 cursor-pointer">
+          <label className={choiceLabelClass}>
             <input
               type="radio"
               name={`fall_${student.student_id}`}
-              checked={state.fall_status === 'pause'}
+              checked={state.fall_status === 'unsure' || state.fall_status === 'pause'}
               onChange={() => setFallStatus('pause')}
-              className="mt-0.5 accent-emerald-600"
+              className={`${radioClass} accent-emerald-600`}
             />
-            <span className="text-slate-700">
+            <span className="min-w-0 flex-1 text-slate-700">
               Not sure yet — we won&apos;t hold a September spot
             </span>
           </label>
 
-          {state.fall_status === 'pause' && (
-            <div className="ml-6">
+          {staffEntry && (
+            <label className="flex min-h-11 items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 cursor-pointer sm:min-h-0">
+              <input
+                type="radio"
+                name={`fall_${student.student_id}`}
+                checked={state.fall_status === 'not_returning'}
+                onChange={() => setFallStatus('not_returning')}
+                className={`${radioClass} accent-amber-600`}
+              />
+              <span className="min-w-0 flex-1 text-slate-700">
+                Definitely not returning in September
+                <span className="block text-xs text-amber-700">Internal staff marking only.</span>
+              </span>
+            </label>
+          )}
+
+          {['pause', 'unsure', 'not_returning'].includes(state.fall_status ?? '') && (
+            <div className="ml-3 sm:ml-6">
               <textarea
                 rows={3}
                 placeholder="Any additional notes for us? (optional)"
