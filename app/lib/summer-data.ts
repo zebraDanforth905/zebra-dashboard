@@ -513,9 +513,27 @@ export async function fetchSummerStats(): Promise<SummerStats> {
     const rows = await sql<SummerStats[]>`
       WITH token_stats AS (
         SELECT
-          COUNT(*)::int AS total_families,
-          COUNT(*) FILTER (WHERE export_count > 0)::int AS exported
+          COUNT(DISTINCT parent_tokens.id)::int AS total_families,
+          COUNT(DISTINCT expected_students.student_id)::int AS total_students,
+          COUNT(DISTINCT parent_tokens.id) FILTER (WHERE export_count > 0)::int AS exported
         FROM parent_tokens
+        LEFT JOIN LATERAL (
+          SELECT s.id::text AS student_id
+          FROM students s
+          WHERE s.customer_id = parent_tokens.customer_id
+            AND EXISTS (
+              SELECT 1
+              FROM enrolments e
+              WHERE e.student_id = s.id
+            )
+          UNION
+          SELECT snapshot.student_id
+          FROM jsonb_array_elements(COALESCE(to_jsonb(parent_tokens)->'last_active_snapshot', '[]'::jsonb)) AS raw_snapshot(value)
+          CROSS JOIN LATERAL (
+            SELECT NULLIF(raw_snapshot.value->>'student_id', '') AS student_id
+          ) snapshot
+          WHERE snapshot.student_id IS NOT NULL
+        ) expected_students ON true
       ),
       active_requests AS (
         SELECT s.customer_id, pr.request_type, pr.status, pr.payload, pr.submitted_by
@@ -527,19 +545,65 @@ export async function fetchSummerStats(): Promise<SummerStats> {
       )
       SELECT
         token_stats.total_families,
-        COUNT(DISTINCT active_requests.customer_id)::int AS responded,
+        token_stats.total_students,
+        COUNT(DISTINCT active_requests.customer_id)::int AS responded_families,
+        COUNT(active_requests.customer_id)::int AS responded_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.request_type = 'summer_scheduling'
+            AND active_requests.payload->>'summer_status' = 'enrolling'
+        )::int AS summer_attending_families,
         COUNT(*) FILTER (
           WHERE active_requests.request_type = 'summer_scheduling'
             AND active_requests.payload->>'summer_status' = 'enrolling'
-        )::int AS enrolling,
+        )::int AS summer_attending_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.request_type = 'summer_scheduling'
+            AND active_requests.payload->>'summer_status' = 'pausing'
+        )::int AS summer_pausing_families,
         COUNT(*) FILTER (
           WHERE active_requests.request_type = 'summer_scheduling'
             AND active_requests.payload->>'summer_status' = 'pausing'
-        )::int AS pausing,
+        )::int AS summer_pausing_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.request_type = 'other'
+            OR active_requests.payload->>'summer_status' = 'other'
+        )::int AS summer_custom_families,
+        COUNT(*) FILTER (
+          WHERE active_requests.request_type = 'other'
+            OR active_requests.payload->>'summer_status' = 'other'
+        )::int AS summer_custom_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.request_type = 'summer_scheduling'
+            AND active_requests.payload->>'summer_status' = 'no_change'
+        )::int AS summer_no_change_families,
         COUNT(*) FILTER (
           WHERE active_requests.request_type = 'summer_scheduling'
             AND active_requests.payload->>'summer_status' = 'no_change'
-        )::int AS no_change,
+        )::int AS summer_no_change_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.payload->>'fall_status' = 'same'
+        )::int AS fall_keep_current_families,
+        COUNT(*) FILTER (
+          WHERE active_requests.payload->>'fall_status' = 'same'
+        )::int AS fall_keep_current_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.payload->>'fall_status' = 'change'
+        )::int AS fall_change_families,
+        COUNT(*) FILTER (
+          WHERE active_requests.payload->>'fall_status' = 'change'
+        )::int AS fall_change_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.payload->>'fall_status' IN ('unsure', 'pause')
+        )::int AS fall_unsure_or_pause_families,
+        COUNT(*) FILTER (
+          WHERE active_requests.payload->>'fall_status' IN ('unsure', 'pause')
+        )::int AS fall_unsure_or_pause_students,
+        COUNT(DISTINCT active_requests.customer_id) FILTER (
+          WHERE active_requests.payload->>'fall_status' = 'not_returning'
+        )::int AS fall_not_returning_families,
+        COUNT(*) FILTER (
+          WHERE active_requests.payload->>'fall_status' = 'not_returning'
+        )::int AS fall_not_returning_students,
         COUNT(*) FILTER (WHERE active_requests.status = 'pending')::int AS pending,
         COUNT(*) FILTER (WHERE active_requests.status = 'needs_manual_followup')::int AS needs_followup,
         token_stats.exported,
@@ -547,7 +611,7 @@ export async function fetchSummerStats(): Promise<SummerStats> {
         COUNT(DISTINCT active_requests.customer_id) FILTER (WHERE active_requests.submitted_by = 'staff')::int AS staff_submitted
       FROM token_stats
       LEFT JOIN active_requests ON TRUE
-      GROUP BY token_stats.total_families, token_stats.exported
+      GROUP BY token_stats.total_families, token_stats.total_students, token_stats.exported
     `;
     return rows[0];
   } catch (error) {
@@ -563,6 +627,7 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
     return await sql<SummerResponseRow[]>`
       SELECT
         pr.id::text                                                          AS request_id,
+        c.id::text                                                           AS customer_id,
         s.id::text                                                           AS student_id,
         s.name                                                               AS student_name,
         c.name                                                               AS parent_name,

@@ -567,10 +567,25 @@ export type SessionChoiceSummary = {
 
 export type SummerStats = {
   total_families: number;
-  responded: number;
-  enrolling: number;
-  pausing: number;
-  no_change: number;
+  total_students: number;
+  responded_families: number;
+  responded_students: number;
+  summer_attending_families: number;
+  summer_attending_students: number;
+  summer_pausing_families: number;
+  summer_pausing_students: number;
+  summer_custom_families: number;
+  summer_custom_students: number;
+  summer_no_change_families: number;
+  summer_no_change_students: number;
+  fall_keep_current_families: number;
+  fall_keep_current_students: number;
+  fall_change_families: number;
+  fall_change_students: number;
+  fall_unsure_or_pause_families: number;
+  fall_unsure_or_pause_students: number;
+  fall_not_returning_families: number;
+  fall_not_returning_students: number;
   pending: number;
   needs_followup: number;
   exported: number;
@@ -602,6 +617,7 @@ export type SummerResponseHistoryItem = {
 
 export type SummerResponseRow = {
   request_id: string;
+  customer_id: string;
   student_id: string;
   student_name: string;
   parent_name: string;

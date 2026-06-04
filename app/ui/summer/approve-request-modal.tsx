@@ -1,8 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
-import { approveSummerRequest } from '@/app/lib/summer-actions';
 import { SessionChoiceSummary, SummerResponseRow } from '@/app/lib/definitions';
 
 const FALL_STATUS_LABEL: Record<string, string> = {
@@ -24,13 +22,13 @@ const REQUEST_STATUS_STYLE: Record<string, string> = {
 const REQUEST_STATUS_LABEL: Record<string, string> = {
   pending:               'Pending',
   reviewed:              'Reviewed',
-  completed:             'Approved',
+  completed:             'Completed',
   needs_manual_followup: 'Needs Followup',
   superseded:            'Superseded',
 };
 
 const SUMMER_LABEL: Record<string, string> = {
-  enrolling: 'Enrolling for summer',
+  enrolling: 'Attending for summer',
   pausing:   'Not attending summer',
   no_change: 'No change — keeping current schedule',
   other:     'Custom plan',
@@ -247,37 +245,10 @@ function LabelList({ labels, emptyLabel }: { labels: string[]; emptyLabel: strin
 export default function ApproveRequestModal({
   row,
   onClose,
-  onApproved,
 }: {
   row: SummerResponseRow;
   onClose: () => void;
-  onApproved: (requestId: string) => void;
 }) {
-  const isEnrolling = row.summer_status === 'enrolling';
-  const firstRequestedStartDate = row.session_choices.find(choice => choice.start_date)?.start_date ?? '';
-  const needsFallbackStartDate = isEnrolling && (
-    row.session_choices.length === 0 || row.session_choices.some(choice => !choice.start_date)
-  );
-  const [isPending, startTransition] = useTransition();
-  const [startDate, setStartDate] = useState(firstRequestedStartDate);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
-
-  function handleApprove() {
-    if (needsFallbackStartDate && !startDate) {
-      setApprovalError('Start date is required because one or more requested sessions are missing it.');
-      return;
-    }
-    setApprovalError(null);
-    startTransition(async () => {
-      const result = await approveSummerRequest(row.request_id, needsFallbackStartDate ? startDate : undefined);
-      if (result?.error) {
-        setApprovalError(result.error);
-      } else {
-        onApproved(row.request_id);
-      }
-    });
-  }
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -437,31 +408,6 @@ export default function ApproveRequestModal({
             </Section>
           )}
 
-          {isEnrolling && (
-            <Section title="Approval">
-              {needsFallbackStartDate ? (
-                <div>
-                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-1">
-                    Fallback Start Date <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
-                  />
-                </div>
-              ) : (
-                <Field label="Enrolment Start Dates">
-                  Uses requested start dates listed above.
-                </Field>
-              )}
-            </Section>
-          )}
-
-          {approvalError && (
-            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{approvalError}</p>
-          )}
         </div>
 
         <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
@@ -469,14 +415,7 @@ export default function ApproveRequestModal({
             onClick={onClose}
             className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition"
           >
-            Cancel
-          </button>
-          <button
-            onClick={handleApprove}
-            disabled={isPending || row.status === 'completed'}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
-          >
-            {isPending ? 'Approving…' : row.status === 'completed' ? 'Already Approved' : 'Approve Request'}
+            Close
           </button>
         </div>
       </div>
