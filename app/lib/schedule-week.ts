@@ -1,0 +1,80 @@
+export const SCHEDULE_DAYS = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+] as const;
+
+export type ScheduleWeekday = (typeof SCHEDULE_DAYS)[number];
+
+export function ymdLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function parseYmdLocal(value?: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
+}
+
+export function startOfScheduleWeek(input?: string | Date | null): Date {
+  const date =
+    typeof input === 'string'
+      ? parseYmdLocal(input) ?? new Date()
+      : input
+        ? new Date(input)
+        : new Date();
+  date.setHours(0, 0, 0, 0);
+  const day = date.getDay();
+  const daysSinceMonday = (day + 6) % 7;
+  date.setDate(date.getDate() - daysSinceMonday);
+  return date;
+}
+
+export function endOfScheduleWeek(input?: string | Date | null): Date {
+  const end = startOfScheduleWeek(input);
+  end.setDate(end.getDate() + 6);
+  return end;
+}
+
+export function dateForScheduleWeekday(weekStart: string | Date, weekday: ScheduleWeekday): Date {
+  const date = startOfScheduleWeek(weekStart);
+  date.setDate(date.getDate() + SCHEDULE_DAYS.indexOf(weekday));
+  return date;
+}
+
+export function isSummerScheduleWeek(weekStart: string | Date): boolean {
+  const start = startOfScheduleWeek(weekStart);
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = new Date(start);
+    date.setDate(start.getDate() + offset);
+    const month = date.getMonth();
+    if (month === 6 || month === 7) return true;
+  }
+  return false;
+}
+
+export function formatScheduleWeekRange(weekStart: string | Date): string {
+  const start = startOfScheduleWeek(weekStart);
+  const end = endOfScheduleWeek(start);
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return `${formatter.format(start)} - ${formatter.format(end)}`;
+}

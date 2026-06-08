@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 import { Session } from "@/app/lib/definitions";
 import { formatTime12Hour } from "@/app/lib/utils";
@@ -14,13 +14,16 @@ export default function SessionNav({
   sessions: Session[];
 }) {
   const pathname = usePathname(); // e.g. /dashboard/schedule/Monday/abc-uuid
+  const searchParams = useSearchParams();
   const active = pathname.split("/")[4] || ""; // [0]'',1'dashboard',2'schedule',3'days',4'sessionId?'
 
   return (
     <nav aria-label={`${day} sessions`} className="overflow-x-auto">
       <ul className="flex gap-2 min-w-max">
         {sessions.map((s) => {
-          const href = `/dashboard/schedule/${day}/${s.id}`;
+          const params = new URLSearchParams(searchParams.toString());
+          const query = params.toString();
+          const href = `/dashboard/schedule/${day}/${s.id}${query ? `?${query}` : ""}`;
           const isActive = active === s.id;
           return (
             <li key={s.id}>

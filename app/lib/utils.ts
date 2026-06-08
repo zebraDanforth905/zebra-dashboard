@@ -126,7 +126,7 @@ type Weekday = typeof WEEKDAYS[number];
 export function nextOccurrenceOf(weekday: Weekday, from = new Date()): Date {
   const targetIdx = WEEKDAYS.indexOf(weekday);
   const fromIdx = from.getDay();
-  let delta = (targetIdx - fromIdx + 7) % 7;
+  const delta = (targetIdx - fromIdx + 7) % 7;
   const dt = new Date(from);  // clone
   dt.setHours(0,0,0,0);
   dt.setDate(dt.getDate() + delta);

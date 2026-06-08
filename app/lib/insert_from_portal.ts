@@ -13,13 +13,28 @@ import { fetchFamilyView } from "./scraper_helpers";
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: "require" });
 
+type PortalTx = postgres.TransactionSql<Record<string, never>>;
+
+type NormalizedPortalEnrolmentRow = {
+  day: string;
+  start_date: string;
+  end_date: string | null;
+  start_time: string;
+  end_time: string | null;
+  student_id: number;
+  name: string;
+  course_code: string;
+  trial_date: string;
+  makeup_date: string;
+};
+
 
 function splitName(full: string): { first: string; last: string } {
   const parts = full.trim().split(/\s+/);
   return { first: parts[0] || "", last: parts.slice(1).join(" ") || "" };
 }
 
-async function getSessionId(tx: any, weekday: string, start: string, end: string): Promise<string> {
+async function getSessionId(tx: PortalTx, weekday: string, start: string, end: string | null): Promise<string> {
   const [{ id }] = await tx<{ id: string }[]>`
     INSERT INTO sessions (weekday, start_time, end_time, is_summer)
     VALUES (${weekday}, ${start}, ${end}, FALSE)
@@ -30,7 +45,227 @@ async function getSessionId(tx: any, weekday: string, start: string, end: string
   return id;
 }
 
-export async function upsertEnrolmentFromNormalized(rows: any[]) {
+async function getExistingSummerSessionId(tx: PortalTx, weekday: string, start: string, end: string | null): Promise<string | null> {
+  const rows = await tx<{ id: string }[]>`
+    SELECT id::text
+    FROM sessions
+    WHERE weekday = ${weekday}
+      AND start_time = ${start}::time
+      AND end_time = ${end}::time
+      AND is_summer = TRUE
+    LIMIT 1;
+  `;
+  return rows[0]?.id ?? null;
+}
+
+export async function upsertSummerEnrolmentWeekFromNormalized(
+  rows: NormalizedPortalEnrolmentRow[],
+  range: { startDate: string; endDate: string },
+) {
+  if (!rows.length) return { inserted: 0, updated: 0, seen: 0, skipped_non_summer: 0 };
+
+  let seenRegular = false;
+  let skippedNonSummer = 0;
+  const seenEnroll = new Set<string>();
+  const seenTrials = new Set<string>();
+  const seenMakeup = new Set<string>();
+
+  await sql.begin(async (tx) => {
+    for (const r of rows) {
+      const sessionId = await getExistingSummerSessionId(tx, r.day, r.start_time, r.end_time);
+      if (!sessionId) {
+        skippedNonSummer += 1;
+        continue;
+      }
+
+      const trial = (r.trial_date || '').toString().trim();
+      const makeup = (r.makeup_date || '').toString().trim();
+      const defaultLoad = trial ? 2 : 1;
+
+      await tx`
+        INSERT INTO students (id, name, load)
+        VALUES (${r.student_id}, ${r.name}, ${defaultLoad})
+        ON CONFLICT (id) DO UPDATE
+          SET name = EXCLUDED.name,
+              load = CASE
+                WHEN students.load IS NULL THEN EXCLUDED.load
+                WHEN ${trial !== ''} AND students.load = 1 THEN 2
+                ELSE students.load
+              END;
+      `;
+
+      if (r.course_code) {
+        await tx`
+          INSERT INTO courses (id, name)
+          VALUES (${r.course_code}, 'Unknown Course')
+          ON CONFLICT (id) DO NOTHING;
+        `;
+      }
+
+      if (trial) {
+        seenTrials.add(`${sessionId}|${r.name}|${r.course_code}|${trial}`);
+        await tx`
+          INSERT INTO trials (session_id, name, course_id, date)
+          VALUES (${sessionId}, ${r.name}, ${r.course_code}, ${trial}::date)
+          ON CONFLICT DO NOTHING;
+        `;
+      } else if (makeup) {
+        seenMakeup.add(`${r.student_id}|${sessionId}|${makeup}`);
+        await tx`
+          INSERT INTO makeups (student_id, session_id, course_id, date)
+          VALUES (${r.student_id}, ${sessionId}, ${r.course_code}, ${makeup}::date)
+          ON CONFLICT DO NOTHING;
+        `;
+      } else {
+        seenRegular = true;
+        seenEnroll.add(`${r.student_id}|${sessionId}`);
+        await tx`
+          INSERT INTO enrolments (student_id, course_id, session_id, start_date, end_date)
+          VALUES (${r.student_id}, ${r.course_code}, ${sessionId}, ${r.start_date}::date, ${r.end_date}::date)
+          ON CONFLICT (student_id, session_id) DO UPDATE
+            SET course_id = EXCLUDED.course_id, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date;
+        `;
+      }
+    }
+
+    if (seenRegular) {
+      const keys = Array.from(seenEnroll).map((k) => k.split("|"));
+      const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));
+      const keepSessions: string[] = keys.map(([, sessionId]) => sessionId);
+
+      await tx`
+        WITH keep AS (
+          SELECT *
+          FROM UNNEST(${keepStudents}::int[], ${keepSessions}::uuid[])
+          AS t(student_id, session_id)
+        ),
+        enrolments_to_delete AS (
+          SELECT e.id
+          FROM enrolments e
+          JOIN sessions s ON s.id = e.session_id
+          WHERE s.is_summer = TRUE
+            AND (e.start_date IS NULL OR e.start_date <= ${range.endDate}::date)
+            AND (e.end_date IS NULL OR e.end_date >= ${range.startDate}::date)
+            AND NOT EXISTS (
+              SELECT 1
+              FROM keep k
+              WHERE k.student_id = e.student_id
+                AND k.session_id = e.session_id
+            )
+        )
+        DELETE FROM absences
+        WHERE enrolment_id IN (SELECT id FROM enrolments_to_delete);
+      `;
+
+      await tx`
+        WITH keep AS (
+          SELECT *
+          FROM UNNEST(${keepStudents}::int[], ${keepSessions}::uuid[])
+          AS t(student_id, session_id)
+        )
+        DELETE FROM enrolments e
+        USING sessions s
+        WHERE s.id = e.session_id
+          AND s.is_summer = TRUE
+          AND (e.start_date IS NULL OR e.start_date <= ${range.endDate}::date)
+          AND (e.end_date IS NULL OR e.end_date >= ${range.startDate}::date)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM keep k
+            WHERE k.student_id = e.student_id
+              AND k.session_id = e.session_id
+          );
+      `;
+    }
+
+    if (seenTrials.size) {
+      const keys = Array.from(seenTrials).map((k) => k.split("|"));
+      const keepSessions: string[] = keys.map(([sessionId]) => sessionId);
+      const keepNames: string[] = keys.map(([, studentName]) => studentName);
+      const keepDate: string[] = keys.map(([, , , trialDate]) => trialDate);
+
+      await tx`
+        WITH keep AS (
+          SELECT *
+          FROM UNNEST(${keepSessions}::uuid[], ${keepNames}::text[], ${keepDate}::date[])
+          AS t(session_id, name, date)
+        ),
+        trials_to_delete AS (
+          SELECT t.id
+          FROM trials t
+          JOIN sessions s ON s.id = t.session_id
+          WHERE s.is_summer = TRUE
+            AND t.date BETWEEN ${range.startDate}::date AND ${range.endDate}::date
+            AND NOT EXISTS (
+              SELECT 1
+              FROM keep k
+              WHERE k.name = t.name
+                AND k.session_id = t.session_id
+                AND k.date = t.date
+            )
+        )
+        DELETE FROM trial_notes
+        WHERE trial_id IN (SELECT id FROM trials_to_delete);
+      `;
+
+      await tx`
+        WITH keep AS (
+          SELECT *
+          FROM UNNEST(${keepSessions}::uuid[], ${keepNames}::text[], ${keepDate}::date[])
+          AS t(session_id, name, date)
+        )
+        DELETE FROM trials t
+        USING sessions s
+        WHERE s.id = t.session_id
+          AND s.is_summer = TRUE
+          AND t.date BETWEEN ${range.startDate}::date AND ${range.endDate}::date
+          AND NOT EXISTS (
+            SELECT 1
+            FROM keep k
+            WHERE k.name = t.name
+              AND k.session_id = t.session_id
+              AND k.date = t.date
+          );
+      `;
+    }
+
+    if (seenMakeup.size) {
+      const keys = Array.from(seenMakeup).map((k) => k.split("|"));
+      const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));
+      const keepSessions: string[] = keys.map(([, sessionId]) => sessionId);
+      const keepDate: string[] = keys.map(([, , makeupDate]) => makeupDate);
+
+      await tx`
+        WITH keep AS (
+          SELECT *
+          FROM UNNEST(${keepSessions}::uuid[], ${keepStudents}::int[], ${keepDate}::date[])
+          AS t(session_id, student_id, date)
+        )
+        DELETE FROM makeups m
+        USING sessions s
+        WHERE s.id = m.session_id
+          AND s.is_summer = TRUE
+          AND m.date BETWEEN ${range.startDate}::date AND ${range.endDate}::date
+          AND NOT EXISTS (
+            SELECT 1
+            FROM keep k
+            WHERE k.student_id = m.student_id
+              AND k.session_id = m.session_id
+              AND k.date = m.date
+          );
+      `;
+    }
+  });
+
+  return {
+    inserted: rows.length - skippedNonSummer,
+    updated: 0,
+    seen: rows.length,
+    skipped_non_summer: skippedNonSummer,
+  };
+}
+
+export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolmentRow[]) {
   
   if (!rows.length) return { inserted: 0, updated: 0, seen: 0 };
 

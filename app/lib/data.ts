@@ -2,6 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
+import { isSummerScheduleWeek } from './schedule-week';
 import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote, CampSessionWithEnrolments } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 
@@ -847,6 +848,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
       LEFT JOIN latest_note ln ON ln.student_id = s.id
       WHERE e.session_id = ${sessionId}
         AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+        AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
       ORDER BY s.name;
     `;
 
@@ -966,7 +968,11 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
   }
 }
 
-export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday', date?: Date) {
+export async function fetchSessionsForDay(
+  day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday',
+  date?: Date,
+  options?: { isSummer?: boolean },
+) {
   'use cache'
   
   try {
@@ -976,6 +982,7 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
           targetDate = nextOccurrenceOf(day);
         }
         const target = Y(targetDate);
+        const isSummer = options?.isSummer ?? isSummerScheduleWeek(targetDate);
 
         const sessions = await sql<Session[]>
         `
@@ -993,6 +1000,8 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             SELECT COUNT(*) AS student_count
             FROM enrolments e
             WHERE e.session_id = s.id
+              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
           ) ec ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS makeup_count
@@ -1012,9 +1021,11 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             JOIN enrolments e ON e.id = a.enrolment_id
             WHERE e.session_id = s.id
               AND a.date = ${target}
+              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
           ) ac ON true
           WHERE s.weekday = ${day}
-            AND s.is_summer = FALSE
+            AND s.is_summer = ${isSummer}
             AND (
               COALESCE(ec.student_count, 0) > 0
               OR COALESCE(mc.makeup_count, 0) > 0
@@ -1083,12 +1094,13 @@ export async function fetchRecurringInvoiceById(invoiceId: string){
 
 export async function fetchPickupsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday', school?: string, date?: Date){
   try {
-    let weekday = day.toLowerCase()
-    let school_name = school?.toLowerCase();
+    const weekday = day.toLowerCase()
+    const school_name = school?.toLowerCase();
 
     let targetDate = date;
-
-    targetDate = nextOccurrenceOf(day);
+    if (!targetDate) {
+      targetDate = nextOccurrenceOf(day);
+    }
 
 
     const target = Y(targetDate);

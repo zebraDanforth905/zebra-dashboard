@@ -8,7 +8,7 @@ import postgres from 'postgres';
 import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
-import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
+import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized, upsertSummerEnrolmentWeekFromNormalized } from './insert_from_portal';
 import { CampEnrolmentWithStudent, RecurringInvoice } from './definitions';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
@@ -16,6 +16,7 @@ import { formatDate } from './utils';
 import { localMidnightFromISODate } from './utils';
 
 import { ymd } from './utils';
+import { endOfScheduleWeek, isSummerScheduleWeek, startOfScheduleWeek, ymdLocal } from './schedule-week';
 import bcrypt from 'bcrypt';
 import { auth } from '@/auth';
 import { userAgent } from 'next/server';
@@ -200,6 +201,45 @@ export async function scrapeEnrolmentNow(opts?: {
   revalidatePath("/dashboard", 'layout');
   revalidatePath("/students", 'layout');
   revalidatePath("/billing", 'layout');
+  revalidateTag('summer-tokens', 'max');
+
+  return { ok: true, rows: normalized.length, customers: customerRes, emails: emailRes, ...res };
+}
+
+export async function scrapeSummerEnrolmentWeek(opts?: {
+  weekStart?: string;
+  branchId?: number;
+  activeId?: number;
+  day?: string;
+}) {
+  const weekStart = ymdLocal(startOfScheduleWeek(opts?.weekStart));
+  const weekEnd = ymdLocal(endOfScheduleWeek(weekStart));
+  const branchId = opts?.branchId ?? Number(process.env.ZEBRA_BRANCH_ID ?? 20);
+  const activeId = opts?.activeId ?? Number(process.env.ZEBRA_DATE_RANGE_ACTIVE_ID ?? process.env.ZEBRA_ACTIVE_ID ?? 2);
+  const day = opts?.day ?? "All";
+
+  const raw = await fetchEnrolmentReportJSON({
+    endpoint: "class-makeup",
+    branchId,
+    activeId,
+    day,
+    fromDate: weekStart,
+    toDate: weekEnd,
+  });
+
+  const normalized = normalizeEnrolmentRows(raw);
+  const res = await upsertSummerEnrolmentWeekFromNormalized(normalized, {
+    startDate: weekStart,
+    endDate: weekEnd,
+  });
+
+  const customerRows = extractCustomerRows(raw);
+  const customerRes = await syncCustomers(customerRows);
+  const emailRes = await syncEmailsFromFamilyView();
+
+  revalidatePath("/dashboard", 'layout');
+  revalidatePath("/students", 'layout');
+  revalidateTag('schedule', 'max');
   revalidateTag('summer-tokens', 'max');
 
   return { ok: true, rows: normalized.length, customers: customerRes, emails: emailRes, ...res };
@@ -595,9 +635,14 @@ export async function generateInvoiceFromRecurring(formData: FormData) {
 
 
 export async function forceScheduleRefresh(formData: FormData){
-  
-  await scrapeEnrolmentNow()
-  await syncAbsencesForCurrentWeek()
+  const weekStart = formData.get('weekStart')?.toString();
+
+  if (weekStart && isSummerScheduleWeek(weekStart)) {
+    await scrapeSummerEnrolmentWeek({ weekStart });
+  } else {
+    await scrapeEnrolmentNow()
+    await syncAbsencesForCurrentWeek()
+  }
 
   revalidateTag('schedule', 'max')
   
@@ -1045,7 +1090,7 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
       let currentValue = '';
       let insideQuotes = false;
       
-      for (let char of lines[i]) {
+      for (const char of lines[i]) {
         if (char === '"') {
           insideQuotes = !insideQuotes;
         } else if (char === ',' && !insideQuotes) {
