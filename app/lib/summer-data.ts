@@ -19,6 +19,7 @@ import {
 import { normalizeSessionSelection } from './session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+const RECENT_ACTIVE_CUTOFF = '2026-05-01';
 
 type TokenStudentSnapshot = CurrentSessionSummary & {
   student_id?: string;
@@ -132,6 +133,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
       customer_id: string;
       customer_name: string;
       customer_alternate_name: string | null;
+      last_seen_active_at: Date | null;
       last_active_snapshot: unknown;
     }[]>`
       SELECT
@@ -139,6 +141,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
         c.id::text    AS customer_id,
         c.name        AS customer_name,
         c.alternate_name AS customer_alternate_name,
+        (to_jsonb(pt)->>'last_seen_active_at')::timestamptz AS last_seen_active_at,
         COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
       FROM parent_tokens pt
       JOIN customers c ON c.id = pt.customer_id
@@ -147,8 +150,13 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
     `;
     if (tokenRows.length === 0) return null;
 
-    const { token_id, customer_id, customer_name, customer_alternate_name, last_active_snapshot } = tokenRows[0];
-    const tokenSnapshotByStudentId = normalizeTokenStudentSnapshots(last_active_snapshot);
+    const { token_id, customer_id, customer_name, customer_alternate_name, last_seen_active_at, last_active_snapshot } = tokenRows[0];
+    const snapshotIsRecent = last_seen_active_at
+      ? new Date(last_seen_active_at) >= new Date(`${RECENT_ACTIVE_CUTOFF}T00:00:00`)
+      : false;
+    const tokenSnapshotByStudentId = snapshotIsRecent
+      ? normalizeTokenStudentSnapshots(last_active_snapshot)
+      : new Map<string, CurrentSessionSummary[]>();
     const tokenSnapshotStudentIds = Array.from(tokenSnapshotByStudentId.keys());
 
     const studentRows = await sql<{
@@ -392,89 +400,174 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       student_courses: StudentCourseEntry[];
       student_count: number;
       active_student_count: number;
+      fall_confirmation_eligible: boolean;
       has_responded: boolean;
       has_internal_response: boolean;
     }[]>`
-      SELECT
-        pt.id::text AS token_id,
-        c.id::text AS customer_id,
-        c.name AS customer_name,
-        c.alternate_name,
-        c.email,
-        c.alternate_email,
-        c.name_locked,
-        c.email_locked,
-        c.alternate_email_locked,
-        c.alternate_name_locked,
-        pt.token,
-        pt.last_exported_at,
-        (to_jsonb(pt)->>'last_seen_active_at')::timestamptz AS last_seen_active_at,
-        pt.export_count,
-        COALESCE(sn.student_names, '{}') AS student_names,
-        COALESCE(sn.student_count, 0)::int AS student_count,
-        COALESCE(sn.active_student_count, 0)::int AS active_student_count,
-        CASE
-          WHEN COALESCE(sn.active_student_count, 0) > 0 THEN COALESCE(sc.student_courses, '[]'::jsonb)
-          ELSE COALESCE(NULLIF(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb), sc.student_courses, '[]'::jsonb)
-        END AS student_courses,
-        EXISTS (
-          SELECT 1
-          FROM parent_requests pr
-          JOIN students prs ON prs.id = pr.student_id
-          WHERE prs.customer_id = c.id
-            AND pr.is_latest = TRUE
-            AND pr.removed_at IS NULL
-            AND pr.request_type IN ('summer_scheduling', 'other')
-        ) AS has_responded,
-        EXISTS (
-          SELECT 1
-          FROM parent_requests pr
-          JOIN students prs ON prs.id = pr.student_id
-          WHERE prs.customer_id = c.id
-            AND pr.is_latest = TRUE
-            AND pr.removed_at IS NULL
-            AND pr.request_type IN ('summer_scheduling', 'other')
-            AND pr.submitted_by = 'staff'
-        ) AS has_internal_response
-      FROM parent_tokens pt
-      JOIN customers c ON c.id = pt.customer_id
-      LEFT JOIN LATERAL (
+      WITH token_base AS (
         SELECT
-          ARRAY_AGG(DISTINCT s.name ORDER BY s.name) AS student_names,
+          pt.id::text AS token_id,
+          pt.customer_id AS customer_uuid,
+          c.id::text AS customer_id,
+          c.name AS customer_name,
+          c.alternate_name,
+          c.email,
+          c.alternate_email,
+          c.name_locked,
+          c.email_locked,
+          c.alternate_email_locked,
+          c.alternate_name_locked,
+          pt.token,
+          pt.last_exported_at,
+          (to_jsonb(pt)->>'last_seen_active_at')::timestamptz AS last_seen_active_at,
+          COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot,
+          pt.export_count
+        FROM parent_tokens pt
+        JOIN customers c ON c.id = pt.customer_id
+      ),
+      active_slots AS (
+        SELECT DISTINCT
+          tb.token_id,
+          tb.customer_uuid,
+          s.id::text AS student_id,
+          s.name AS student_name,
+          co.name AS course_name,
+          se.weekday,
+          se.start_time::text AS start_time,
+          cp.school_name AS pickup_school,
+          TRUE AS is_active
+        FROM token_base tb
+        JOIN students s ON s.customer_id = tb.customer_uuid
+        JOIN enrolments e ON e.student_id = s.id
+        JOIN sessions se ON se.id = e.session_id
+        LEFT JOIN courses co ON co.id = e.course_id
+        LEFT JOIN LATERAL (
+          SELECT p.school_name
+          FROM pickups p
+          WHERE p.student_id = s.id
+            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+          ORDER BY p.id
+          LIMIT 1
+        ) cp ON true
+      ),
+      recent_snapshot_slots AS (
+        SELECT
+          tb.token_id,
+          tb.customer_uuid,
+          snapshot.student_id,
+          COALESCE(NULLIF(snapshot.student_name, ''), s.name, 'Unknown student') AS student_name,
+          NULLIF(snapshot.course_name, '') AS course_name,
+          NULLIF(snapshot.weekday, '') AS weekday,
+          NULLIF(snapshot.start_time, '') AS start_time,
+          NULLIF(snapshot.pickup_school, '') AS pickup_school,
+          FALSE AS is_active
+        FROM token_base tb
+        CROSS JOIN LATERAL jsonb_to_recordset(
+          CASE
+            WHEN tb.last_seen_active_at >= ${RECENT_ACTIVE_CUTOFF}::date THEN tb.last_active_snapshot
+            ELSE '[]'::jsonb
+          END
+        ) AS snapshot(
+          student_id TEXT,
+          student_name TEXT,
+          course_name TEXT,
+          weekday TEXT,
+          start_time TEXT,
+          pickup_school TEXT
+        )
+        LEFT JOIN students s
+          ON s.id::text = snapshot.student_id
+          AND s.customer_id = tb.customer_uuid
+        WHERE NULLIF(snapshot.student_id, '') IS NOT NULL
+      ),
+      expected_slots AS (
+        SELECT * FROM active_slots
+        UNION ALL
+        SELECT * FROM recent_snapshot_slots
+      ),
+      expected_students AS (
+        SELECT
+          token_id,
+          customer_uuid,
+          student_id,
+          MAX(student_name) AS student_name,
+          BOOL_OR(is_active) AS is_active
+        FROM expected_slots
+        GROUP BY token_id, customer_uuid, student_id
+      ),
+      student_summary AS (
+        SELECT
+          token_id,
+          ARRAY_AGG(student_name ORDER BY student_name) AS student_names,
           COUNT(*)::int AS student_count,
-          COUNT(*) FILTER (
-            WHERE EXISTS (
-              SELECT 1
-              FROM enrolments e
-              WHERE e.student_id = s.id
+          COUNT(*) FILTER (WHERE is_active)::int AS active_student_count
+        FROM expected_students
+        GROUP BY token_id
+      ),
+      student_course_summary AS (
+        SELECT
+          token_id,
+          JSONB_AGG(
+            DISTINCT JSONB_BUILD_OBJECT(
+              'student_id', student_id,
+              'student_name', student_name,
+              'course_name', course_name,
+              'weekday', weekday,
+              'start_time', start_time,
+              'pickup_school', pickup_school
             )
-          )::int AS active_student_count
-        FROM students s
-        WHERE s.customer_id = c.id
-      ) sn ON true
-      LEFT JOIN LATERAL (
-        SELECT jsonb_agg(
-          jsonb_build_object(
-            'student_name', student_name,
-            'course_name', course_name,
-            'weekday', weekday,
-            'start_time', start_time
-          ) ORDER BY student_name, weekday, start_time
-        ) AS student_courses
-        FROM (
-          SELECT DISTINCT
-            s.name AS student_name,
-            co.name AS course_name,
-            se.weekday,
-            se.start_time
-          FROM students s
-          JOIN enrolments e ON e.student_id = s.id
-          JOIN sessions se ON se.id = e.session_id
-          JOIN courses co ON co.id = e.course_id
-          WHERE s.customer_id = c.id
-        ) distinct_courses
-      ) sc ON true
-      ORDER BY c.name
+          ) FILTER (WHERE student_id IS NOT NULL) AS student_courses
+        FROM expected_slots
+        GROUP BY token_id
+      ),
+      response_summary AS (
+        SELECT
+          es.token_id,
+          COUNT(*)::int AS expected_student_count,
+          COUNT(pr.id)::int AS latest_response_count,
+          COUNT(pr.id) FILTER (WHERE pr.submitted_by = 'staff')::int AS latest_staff_response_count,
+          COUNT(pr.id) FILTER (WHERE pr.payload->>'fall_status' = 'not_returning')::int AS fall_not_returning_count
+        FROM expected_students es
+        LEFT JOIN parent_requests pr
+          ON pr.student_id::text = es.student_id
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        GROUP BY es.token_id
+      )
+      SELECT
+        tb.token_id,
+        tb.customer_id,
+        tb.customer_name,
+        tb.alternate_name,
+        tb.email,
+        tb.alternate_email,
+        tb.name_locked,
+        tb.email_locked,
+        tb.alternate_email_locked,
+        tb.alternate_name_locked,
+        tb.token,
+        tb.last_exported_at,
+        tb.last_seen_active_at,
+        tb.export_count,
+        COALESCE(ss.student_names, '{}') AS student_names,
+        COALESCE(ss.student_count, 0)::int AS student_count,
+        COALESCE(ss.active_student_count, 0)::int AS active_student_count,
+        COALESCE(scs.student_courses, '[]'::jsonb) AS student_courses,
+        (
+          COALESCE(rs.expected_student_count, 0) > 0
+          AND NOT (
+            COALESCE(rs.latest_response_count, 0) = COALESCE(rs.expected_student_count, 0)
+            AND COALESCE(rs.fall_not_returning_count, 0) = COALESCE(rs.expected_student_count, 0)
+          )
+        ) AS fall_confirmation_eligible,
+        COALESCE(rs.latest_response_count, 0) > 0 AS has_responded,
+        COALESCE(rs.latest_staff_response_count, 0) > 0 AS has_internal_response
+      FROM token_base tb
+      LEFT JOIN student_summary ss ON ss.token_id = tb.token_id
+      LEFT JOIN student_course_summary scs ON scs.token_id = tb.token_id
+      LEFT JOIN response_summary rs ON rs.token_id = tb.token_id
+      ORDER BY tb.customer_name
     `;
     return rows;
   } catch (error) {
@@ -513,9 +606,12 @@ export async function fetchSummerStats(): Promise<SummerStats> {
     const rows = await sql<SummerStats[]>`
       WITH token_stats AS (
         SELECT
-          COUNT(DISTINCT parent_tokens.id)::int AS total_families,
+          COUNT(DISTINCT parent_tokens.id) FILTER (WHERE expected_students.student_id IS NOT NULL)::int AS total_families,
           COUNT(DISTINCT expected_students.student_id)::int AS total_students,
-          COUNT(DISTINCT parent_tokens.id) FILTER (WHERE export_count > 0)::int AS exported
+          COUNT(DISTINCT parent_tokens.id) FILTER (
+            WHERE expected_students.student_id IS NOT NULL
+              AND export_count > 0
+          )::int AS exported
         FROM parent_tokens
         LEFT JOIN LATERAL (
           SELECT s.id::text AS student_id
@@ -528,7 +624,13 @@ export async function fetchSummerStats(): Promise<SummerStats> {
             )
           UNION
           SELECT snapshot.student_id
-          FROM jsonb_array_elements(COALESCE(to_jsonb(parent_tokens)->'last_active_snapshot', '[]'::jsonb)) AS raw_snapshot(value)
+          FROM jsonb_array_elements(
+            CASE
+              WHEN (to_jsonb(parent_tokens)->>'last_seen_active_at')::timestamptz >= ${RECENT_ACTIVE_CUTOFF}::date
+                THEN COALESCE(to_jsonb(parent_tokens)->'last_active_snapshot', '[]'::jsonb)
+              ELSE '[]'::jsonb
+            END
+          ) AS raw_snapshot(value)
           CROSS JOIN LATERAL (
             SELECT NULLIF(raw_snapshot.value->>'student_id', '') AS student_id
           ) snapshot
@@ -548,6 +650,10 @@ export async function fetchSummerStats(): Promise<SummerStats> {
         token_stats.total_students,
         COUNT(DISTINCT active_requests.customer_id)::int AS responded_families,
         COUNT(active_requests.customer_id)::int AS responded_students,
+        COUNT(*) FILTER (
+          WHERE jsonb_array_length(COALESCE(active_requests.payload->'waitlist_session_ids', '[]'::jsonb)) > 0
+             OR jsonb_array_length(COALESCE(active_requests.payload->'fall_waitlist_session_ids', '[]'::jsonb)) > 0
+        )::int AS waitlisted_students,
         COUNT(DISTINCT active_requests.customer_id) FILTER (
           WHERE active_requests.request_type = 'summer_scheduling'
             AND active_requests.payload->>'summer_status' = 'enrolling'
@@ -641,6 +747,7 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         pr.payload->>'pickup_school'                                         AS pickup_school,
         pr.payload->>'pickup_school_other'                                   AS pickup_school_other,
         pr.payload->>'fall_status'                                           AS fall_status,
+        pr.payload->>'fall_start_date'                                       AS fall_start_date,
         COALESCE(fsl.fall_session_labels, '{}')                              AS fall_session_labels,
         COALESCE(fsl.fall_session_choices, '[]'::json)                       AS fall_session_choices,
         COALESCE(fwl.fall_waitlist_session_labels, '{}')                     AS fall_waitlist_session_labels,
@@ -650,11 +757,16 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb)       AS current_sessions_snapshot,
         pr.status,
         pr.custom_notes,
+        COALESCE(to_jsonb(pr)->'staff_notes', '[]'::jsonb)                  AS staff_notes,
         COALESCE(pr.submitted_by, 'parent')                                  AS submitted_by,
         pr.submitted_by_name,
         pr.submitted_at,
         pt.last_exported_at                                                   AS token_last_exported_at,
         COALESCE(pt.export_count, 0)::int                                     AS token_export_count,
+        (to_jsonb(pr)->>'adjusted_for_summer_at')::timestamptz                AS adjusted_for_summer_at,
+        to_jsonb(pr)->>'adjusted_for_summer_by'                               AS adjusted_for_summer_by,
+        (to_jsonb(pr)->>'adjusted_for_fall_at')::timestamptz                  AS adjusted_for_fall_at,
+        to_jsonb(pr)->>'adjusted_for_fall_by'                                 AS adjusted_for_fall_by,
         pr.added_to_portal_at,
         pr.added_to_portal_by,
         COALESCE(history.previous_submission_count, 0)::int                 AS previous_submission_count,
@@ -770,14 +882,20 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
                 'pickup_school', h.payload->>'pickup_school',
                 'pickup_school_other', h.payload->>'pickup_school_other',
                 'fall_status', h.payload->>'fall_status',
+                'fall_start_date', h.payload->>'fall_start_date',
                 'fall_session_labels', COALESCE(hfsl.fall_session_labels, '{}'),
                 'fall_waitlist_session_labels', COALESCE(hfwl.fall_waitlist_session_labels, '{}'),
                 'fall_notes', h.payload->>'fall_notes',
                 'status', h.status,
                 'custom_notes', h.custom_notes,
+                'staff_notes', COALESCE(to_jsonb(h)->'staff_notes', '[]'::jsonb),
                 'submitted_by', COALESCE(h.submitted_by, 'parent'),
                 'submitted_by_name', h.submitted_by_name,
                 'submitted_at', h.submitted_at,
+                'adjusted_for_summer_at', (to_jsonb(h)->>'adjusted_for_summer_at')::timestamptz,
+                'adjusted_for_summer_by', to_jsonb(h)->>'adjusted_for_summer_by',
+                'adjusted_for_fall_at', (to_jsonb(h)->>'adjusted_for_fall_at')::timestamptz,
+                'adjusted_for_fall_by', to_jsonb(h)->>'adjusted_for_fall_by',
                 'added_to_portal_at', h.added_to_portal_at,
                 'added_to_portal_by', h.added_to_portal_by
               )
@@ -902,6 +1020,7 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
       pickup_school: string | null;
       pickup_school_other: string | null;
       fall_status: string | null;
+      fall_start_date: string | null;
       fall_session_labels: string[];
       fall_waitlist_session_labels: string[];
       fall_notes: string | null;
@@ -920,6 +1039,7 @@ export async function fetchSubmittedChoices(token: string): Promise<SubmittedCho
         pr.payload->>'pickup_school' AS pickup_school,
         pr.payload->>'pickup_school_other' AS pickup_school_other,
         pr.payload->>'fall_status' AS fall_status,
+        pr.payload->>'fall_start_date' AS fall_start_date,
         COALESCE(fsl.fall_session_labels, '{}') AS fall_session_labels,
         COALESCE(fwl.fall_waitlist_session_labels, '{}') AS fall_waitlist_session_labels,
         pr.payload->>'fall_notes' AS fall_notes,

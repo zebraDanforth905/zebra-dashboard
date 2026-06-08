@@ -416,6 +416,8 @@ export type SummerSchedulingPayload = {
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
   pickup_school_other?: string;
   fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
+  // ISO 'YYYY-MM-DD'; populated for fall_status='same'.
+  fall_start_date?: string;
   fall_session_ids: string[];
   fall_waitlist_session_ids?: string[];
   // ISO 'YYYY-MM-DD' per fall session id; populated for fall_status='change'.
@@ -430,6 +432,7 @@ export type RestartPayload = {
 export type OtherPayload = {
   current_sessions_snapshot?: CurrentSessionSummary[];
   fall_status?: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
+  fall_start_date?: string;
   fall_session_ids?: string[];
   fall_waitlist_session_ids?: string[];
   fall_session_start_dates?: Record<string, string>;
@@ -545,6 +548,7 @@ export type SubmittedStudentSummary = {
   pickup_school: string | null;
   pickup_school_other: string | null;
   fall_status: string | null;
+  fall_start_date: string | null;
   fall_session_labels: string[];
   fall_waitlist_session_labels: string[];
   fall_notes: string | null;
@@ -570,6 +574,7 @@ export type SummerStats = {
   total_students: number;
   responded_families: number;
   responded_students: number;
+  waitlisted_students: number;
   summer_attending_families: number;
   summer_attending_students: number;
   summer_pausing_families: number;
@@ -603,16 +608,29 @@ export type SummerResponseHistoryItem = {
   pickup_school: string | null;
   pickup_school_other: string | null;
   fall_status: SummerSchedulingPayload['fall_status'] | null;
+  fall_start_date: string | null;
   fall_session_labels: string[];
   fall_waitlist_session_labels: string[];
   fall_notes: string | null;
   status: ParentRequestStatus;
   custom_notes: string | null;
+  staff_notes: StaffNote[];
   submitted_by: ParentRequestSubmittedBy;
   submitted_by_name: string | null;
   submitted_at: Date | string;
+  adjusted_for_summer_at: Date | string | null;
+  adjusted_for_summer_by: string | null;
+  adjusted_for_fall_at: Date | string | null;
+  adjusted_for_fall_by: string | null;
   added_to_portal_at: Date | string | null;
   added_to_portal_by: string | null;
+};
+
+export type StaffNote = {
+  id: string;
+  body: string;
+  created_at: Date | string;
+  created_by: string;
 };
 
 export type SummerResponseRow = {
@@ -631,6 +649,7 @@ export type SummerResponseRow = {
   pickup_school: string | null;
   pickup_school_other: string | null;
   fall_status: SummerSchedulingPayload['fall_status'] | null;
+  fall_start_date: string | null;
   fall_session_labels: string[];
   fall_session_choices: SessionChoiceSummary[];
   fall_waitlist_session_labels: string[];
@@ -640,11 +659,16 @@ export type SummerResponseRow = {
   current_sessions_snapshot: CurrentSessionSummary[];
   status: ParentRequestStatus;
   custom_notes: string | null;
+  staff_notes: StaffNote[];
   submitted_by: ParentRequestSubmittedBy;
   submitted_by_name: string | null;
   submitted_at: Date;
   token_last_exported_at: Date | null;
   token_export_count: number;
+  adjusted_for_summer_at: Date | null;
+  adjusted_for_summer_by: string | null;
+  adjusted_for_fall_at: Date | null;
+  adjusted_for_fall_by: string | null;
   added_to_portal_at: Date | null;
   added_to_portal_by: string | null;
   previous_submission_count: number;
@@ -695,6 +719,7 @@ export type ParentLinkRow = {
   last_exported_at: Date | null;
   last_seen_active_at: Date | null;
   export_count: number;
+  fall_confirmation_eligible: boolean;
   has_responded: boolean;
   has_internal_response: boolean;
 };

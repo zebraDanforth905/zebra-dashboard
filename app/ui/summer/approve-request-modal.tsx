@@ -125,6 +125,11 @@ function formatShortDate(date: string | null): string | null {
   return SHORT_DATE_FORMATTER.format(new Date(`${date}T00:00:00`));
 }
 
+function formatStartSuffix(date: string | null): string {
+  const startDate = formatShortDate(date);
+  return startDate ? ` (start ${startDate})` : '';
+}
+
 function formatDate(d: Date | string): string {
   return DATE_TIME_FORMATTER.format(new Date(d));
 }
@@ -143,6 +148,12 @@ function formatPortalStatus(row: Pick<SummerResponseRow, 'added_to_portal_at' | 
   if (!row.added_to_portal_at) return 'Not marked';
   const date = formatPortalDate(row.added_to_portal_at);
   return row.added_to_portal_by ? `${date} by ${row.added_to_portal_by}` : date;
+}
+
+function formatMarkedStatus(at: Date | string | null, by: string | null): string {
+  if (!at) return 'Not marked';
+  const date = formatPortalDate(at);
+  return by ? `${date} by ${by}` : date;
 }
 
 function formatFallStatus(status: SummerResponseRow['fall_status']): string {
@@ -189,7 +200,8 @@ function formatFallChoice(row: SummerResponseRow): string {
   if (row.fall_status !== 'same') return formatFallStatus(row.fall_status);
 
   const currentSession = formatCurrentSessions(row);
-  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
+  const startSuffix = formatStartSuffix(row.fall_start_date);
+  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}${startSuffix}` : `${FALL_STATUS_LABEL.same}${startSuffix}`;
 }
 
 function SessionChoicesList({
@@ -242,6 +254,22 @@ function LabelList({ labels, emptyLabel }: { labels: string[]; emptyLabel: strin
   return <span>{labels.join(', ')}</span>;
 }
 
+function StaffNotesList({ notes }: { notes: SummerResponseRow['staff_notes'] }) {
+  if (notes.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {notes.map(note => (
+        <div key={note.id} className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+          <div className="whitespace-pre-wrap break-words text-sm leading-5 text-slate-700">{note.body}</div>
+          <div className="mt-1 text-xs text-amber-700/70">
+            {note.created_by} · {formatDate(note.created_at)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ApproveRequestModal({
   row,
   onClose,
@@ -285,7 +313,9 @@ export default function ApproveRequestModal({
             <Field label="Status"><StatusBadge status={row.status} /></Field>
             <Field label="Submitted By"><SourceBadge source={row.submitted_by} name={row.submitted_by_name} /></Field>
             <Field label="Email CSV">{formatCsvExport(row)}</Field>
-            <Field label="Added to Portal">{formatPortalStatus(row)}</Field>
+            <Field label="Adjusted for Summer">{formatMarkedStatus(row.adjusted_for_summer_at, row.adjusted_for_summer_by)}</Field>
+            <Field label="Adjusted for Fall">{formatMarkedStatus(row.adjusted_for_fall_at, row.adjusted_for_fall_by)}</Field>
+            <Field label="Legacy Portal">{formatPortalStatus(row)}</Field>
           </dl>
 
           <Section title="Summer">
@@ -339,6 +369,12 @@ export default function ApproveRequestModal({
             </dl>
           </Section>
 
+          {row.staff_notes.length > 0 && (
+            <Section title="Staff Notes">
+              <StaffNotesList notes={row.staff_notes} />
+            </Section>
+          )}
+
           {row.submission_history.length > 0 && (
             <Section title="Submission History">
               <div className="space-y-3">
@@ -374,7 +410,9 @@ export default function ApproveRequestModal({
                       <div>
                         <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Fall</dt>
                         <dd className="mt-1 text-slate-700">
-                          {item.fall_status ? (FALL_STATUS_LABEL[item.fall_status] ?? item.fall_status) : 'Not provided'}
+                          {item.fall_status
+                            ? `${FALL_STATUS_LABEL[item.fall_status] ?? item.fall_status}${item.fall_status === 'same' ? formatStartSuffix(item.fall_start_date) : ''}`
+                            : 'Not provided'}
                           <div className="mt-1 text-xs text-slate-500">
                             <LabelList
                               labels={item.fall_session_labels}
@@ -392,12 +430,17 @@ export default function ApproveRequestModal({
                         <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Pickup</dt>
                         <dd className="mt-1 text-slate-700">{formatHistoryPickup(item)}</dd>
                       </div>
-                      {(item.custom_notes || item.fall_notes) && (
+                      {(item.custom_notes || item.fall_notes || item.staff_notes.length > 0) && (
                         <div>
                           <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Notes</dt>
                           <dd className="mt-1 space-y-1 text-slate-700">
                             {item.custom_notes && <div>Summer: <span className="italic">{item.custom_notes}</span></div>}
                             {item.fall_notes && <div>Fall: <span className="italic">{item.fall_notes}</span></div>}
+                            {item.staff_notes.length > 0 && (
+                              <div className="pt-1">
+                                <StaffNotesList notes={item.staff_notes} />
+                              </div>
+                            )}
                           </dd>
                         </div>
                       )}

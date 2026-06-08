@@ -4,17 +4,27 @@ import { Fragment, useMemo, useState, useTransition } from 'react';
 import { SessionChoiceSummary, SummerResponseRow, SummerStats } from '@/app/lib/definitions';
 import {
   deleteSummerResponse,
-  markAddedToPortal,
-  clearAddedToPortal,
+  markAdjustedForSummer,
+  clearAdjustedForSummer,
+  markAdjustedForFall,
+  clearAdjustedForFall,
   markNeedsFollowup,
   clearFollowup,
   updateSummerResponseSource,
+  addStaffNoteToSummerResponse,
 } from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
 
 type ResponsePatch = Partial<Pick<
   SummerResponseRow,
-  'status' | 'added_to_portal_at' | 'added_to_portal_by' | 'submitted_by' | 'submitted_by_name'
+  | 'status'
+  | 'adjusted_for_summer_at'
+  | 'adjusted_for_summer_by'
+  | 'adjusted_for_fall_at'
+  | 'adjusted_for_fall_by'
+  | 'submitted_by'
+  | 'submitted_by_name'
+  | 'staff_notes'
 >>;
 
 function formatTime(t: string | null): string {
@@ -34,6 +44,11 @@ function formatDate(d: Date | string): string {
 function formatStartDate(date: string | null): string | null {
   if (!date) return null;
   return SHORT_DATE_FORMATTER.format(new Date(`${date}T00:00:00`));
+}
+
+function formatStartSuffix(date: string | null): string {
+  const startDate = formatStartDate(date);
+  return startDate ? ` (start ${startDate})` : '';
 }
 
 function formatCurrentSession(weekday: string | null, startTime: string | null): string | null {
@@ -59,7 +74,8 @@ function formatFallStatus(row: SummerResponseRow): string {
   }
 
   const currentSession = formatCurrentSessions(row);
-  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
+  const startSuffix = formatStartSuffix(row.fall_start_date);
+  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}${startSuffix}` : `${FALL_STATUS_LABEL.same}${startSuffix}`;
 }
 
 const SUMMER_STATUS_STYLE: Record<string, string> = {
@@ -104,6 +120,15 @@ const SUBMISSION_SOURCE_LABEL: Record<string, string> = {
   parent: 'Parent',
   staff:  'Internal',
 };
+
+const PERCENT_FORMATTER = new Intl.NumberFormat('en-CA', {
+  style: 'percent',
+  maximumFractionDigits: 0,
+});
+
+function formatPercent(part: number, total: number): string {
+  return total > 0 ? PERCENT_FORMATTER.format(part / total) : '0%';
+}
 
 function SummerBadge({ status }: { status: string }) {
   return (
@@ -175,28 +200,6 @@ function StatCard({
   );
 }
 
-function CompactStatCard({
-  label,
-  value,
-  color,
-  detail,
-}: {
-  label: string;
-  value: number;
-  color?: string;
-  detail?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
-      <div className="flex items-baseline gap-2">
-        <div className={`text-lg font-bold ${color ?? 'text-slate-800'}`}>{value}</div>
-        <div className="text-xs font-medium text-slate-600">{label}</div>
-      </div>
-      {detail && <div className="mt-0.5 text-[11px] leading-4 text-slate-400">{detail}</div>}
-    </div>
-  );
-}
-
 function familyKey(row: SummerResponseRow): string {
   return row.customer_id || `${row.parent_email}:${row.parent_name}`;
 }
@@ -217,6 +220,10 @@ function deriveStats(baseStats: SummerStats, rows: SummerResponseRow[]): SummerS
     ...baseStats,
     responded_families: respondedFamilies.size,
     responded_students: rows.length,
+    waitlisted_students: rows.filter(row => (
+      row.waitlist_session_labels.length > 0
+      || row.fall_waitlist_session_labels.length > 0
+    )).length,
     summer_attending_families: countFamilies(rows, row => row.summer_status === 'enrolling'),
     summer_attending_students: rows.filter(row => row.summer_status === 'enrolling').length,
     summer_pausing_families: countFamilies(rows, row => row.summer_status === 'pausing'),
@@ -364,12 +371,40 @@ function NoteBlock({ label, note }: { label: string; note: string }) {
   );
 }
 
-function NotesCell({ summerNotes, fallNotes }: { summerNotes: string | null; fallNotes: string | null }) {
-  if (!summerNotes && !fallNotes) return <span className="text-slate-400">—</span>;
+function StaffNotesBlock({ notes }: { notes: SummerResponseRow['staff_notes'] }) {
+  if (notes.length === 0) return null;
+  return (
+    <div className="rounded-md border border-amber-100 bg-amber-50 px-2 py-1.5">
+      <div className="font-medium text-amber-700">Staff</div>
+      <div className="mt-1 space-y-2">
+        {notes.map(note => (
+          <div key={note.id} className="text-slate-700">
+            <div className="whitespace-pre-wrap break-words leading-5">{note.body}</div>
+            <div className="mt-0.5 text-[11px] text-amber-700/70">
+              {note.created_by} · {formatDate(note.created_at)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NotesCell({
+  summerNotes,
+  fallNotes,
+  staffNotes,
+}: {
+  summerNotes: string | null;
+  fallNotes: string | null;
+  staffNotes: SummerResponseRow['staff_notes'];
+}) {
+  if (!summerNotes && !fallNotes && staffNotes.length === 0) return <span className="text-slate-400">—</span>;
   return (
     <div className="space-y-2">
       {summerNotes && <NoteBlock label="Summer" note={summerNotes} />}
       {fallNotes && <NoteBlock label="Fall" note={fallNotes} />}
+      <StaffNotesBlock notes={staffNotes} />
     </div>
   );
 }
@@ -468,23 +503,51 @@ function formatHistoryFallChoice(
 ): string {
   if (item.fall_status !== 'same') return formatHistoryFallStatus(item);
   const currentSession = formatCurrentSession(row.current_weekday, row.current_start_time);
-  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
+  const startSuffix = formatStartSuffix(item.fall_start_date);
+  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}${startSuffix}` : `${FALL_STATUS_LABEL.same}${startSuffix}`;
 }
 
-function AddedToPortalCell({
-  addedAt,
-  addedBy,
-}: {
-  addedAt: Date | string | null;
-  addedBy: string | null;
-}) {
-  if (!addedAt) return <span className="text-slate-400">—</span>;
+type WorkflowSnapshot = {
+  adjusted_for_summer_at: Date | string | null;
+  adjusted_for_summer_by: string | null;
+  adjusted_for_fall_at: Date | string | null;
+  adjusted_for_fall_by: string | null;
+  added_to_portal_at: Date | string | null;
+  added_to_portal_by: string | null;
+};
+
+function WorkflowStatusCell({ item }: { item: WorkflowSnapshot }) {
+  const entries = [
+    {
+      label: 'Summer',
+      at: item.adjusted_for_summer_at,
+      by: item.adjusted_for_summer_by,
+      className: 'text-orange-700',
+    },
+    {
+      label: 'Fall',
+      at: item.adjusted_for_fall_at,
+      by: item.adjusted_for_fall_by,
+      className: 'text-emerald-700',
+    },
+    {
+      label: 'Legacy portal',
+      at: item.added_to_portal_at,
+      by: item.added_to_portal_by,
+      className: 'text-slate-600',
+    },
+  ].filter(entry => entry.at);
+
+  if (entries.length === 0) return <span className="text-slate-400">—</span>;
+
   return (
-    <div>
-      <span className="text-emerald-700 font-medium">{formatDate(addedAt)}</span>
-      {addedBy && (
-        <div className="mt-0.5 text-[11px] text-slate-500">by {addedBy}</div>
-      )}
+    <div className="space-y-1">
+      {entries.map(entry => (
+        <div key={entry.label}>
+          <span className={`font-medium ${entry.className}`}>{entry.label}: {formatDate(entry.at!)}</span>
+          {entry.by && <div className="text-[11px] text-slate-500">by {entry.by}</div>}
+        </div>
+      ))}
     </div>
   );
 }
@@ -529,7 +592,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Submitted</th>
                   <th className="px-3 py-2">Source</th>
-                  <th className="px-3 py-2">Added to Portal</th>
+                  <th className="px-3 py-2">Workflow</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -571,7 +634,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                       <WaitlistLabelsCell labels={item.fall_waitlist_session_labels} />
                     </td>
                     <td className="px-3 py-2 min-w-[200px] max-w-[260px] text-slate-500">
-                      <NotesCell summerNotes={item.custom_notes} fallNotes={item.fall_notes} />
+                      <NotesCell summerNotes={item.custom_notes} fallNotes={item.fall_notes} staffNotes={item.staff_notes} />
                     </td>
                     <td className="px-3 py-2">
                       <StatusBadge status={item.status} />
@@ -586,10 +649,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                       <SourceBadge source={item.submitted_by} name={item.submitted_by_name} />
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      <AddedToPortalCell
-                        addedAt={item.added_to_portal_at}
-                        addedBy={item.added_to_portal_by}
-                      />
+                      <WorkflowStatusCell item={item} />
                     </td>
                   </tr>
                 ))}
@@ -602,30 +662,42 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
   );
 }
 
-function AddedToPortalButton({
+function AdjustmentButton({
   requestId,
-  addedAt,
-  addedBy,
+  kind,
+  adjustedAt,
+  adjustedBy,
   onChanged,
 }: {
   requestId: string;
-  addedAt: Date | null;
-  addedBy: string | null;
-  onChanged: (requestId: string, addedAt: Date | null, addedBy: string | null) => void;
+  kind: 'summer' | 'fall';
+  adjustedAt: Date | null;
+  adjustedBy: string | null;
+  onChanged: (requestId: string, patch: ResponsePatch) => void;
 }) {
   const [isPending, startTransition] = useTransition();
-  if (addedAt) {
+  const label = kind === 'summer' ? 'Summer' : 'Fall';
+  const markedClass = kind === 'summer'
+    ? 'border-orange-200 bg-orange-50 hover:bg-orange-100 text-orange-700'
+    : 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700';
+
+  if (adjustedAt) {
     return (
       <button
         disabled={isPending}
         onClick={() => startTransition(async () => {
-          await clearAddedToPortal(requestId);
-          onChanged(requestId, null, null);
+          if (kind === 'summer') {
+            await clearAdjustedForSummer(requestId);
+            onChanged(requestId, { adjusted_for_summer_at: null, adjusted_for_summer_by: null });
+          } else {
+            await clearAdjustedForFall(requestId);
+            onChanged(requestId, { adjusted_for_fall_at: null, adjusted_for_fall_by: null });
+          }
         })}
-        title={`Added to portal ${formatDate(addedAt)}${addedBy ? ` by ${addedBy}` : ''} - click to undo`}
-        className="text-xs px-2 py-1 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition disabled:opacity-50"
+        title={`Adjusted for ${label.toLowerCase()} ${formatDate(adjustedAt)}${adjustedBy ? ` by ${adjustedBy}` : ''} - click to undo`}
+        className={`text-xs px-2 py-1 rounded border transition disabled:opacity-50 ${markedClass}`}
       >
-        {isPending ? '...' : `In Portal (${formatDate(addedAt)})`}
+        {isPending ? '...' : `${label} Done (${formatDate(adjustedAt)})`}
       </button>
     );
   }
@@ -633,12 +705,23 @@ function AddedToPortalButton({
     <button
       disabled={isPending}
       onClick={() => startTransition(async () => {
-        const result = await markAddedToPortal(requestId);
-        onChanged(requestId, result.added_to_portal_at, result.added_to_portal_by);
+        if (kind === 'summer') {
+          const result = await markAdjustedForSummer(requestId);
+          onChanged(requestId, {
+            adjusted_for_summer_at: result.adjusted_for_summer_at,
+            adjusted_for_summer_by: result.adjusted_for_summer_by,
+          });
+        } else {
+          const result = await markAdjustedForFall(requestId);
+          onChanged(requestId, {
+            adjusted_for_fall_at: result.adjusted_for_fall_at,
+            adjusted_for_fall_by: result.adjusted_for_fall_by,
+          });
+        }
       })}
       className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
     >
-      {isPending ? '...' : 'Added to Portal'}
+      {isPending ? '...' : `Adjusted ${label}`}
     </button>
   );
 }
@@ -675,6 +758,80 @@ function FollowupToggleButton({
     >
       {isPending ? '…' : (isFollowup ? 'Clear Followup' : 'Mark Follow up Required')}
     </button>
+  );
+}
+
+function AddStaffNoteButton({
+  requestId,
+  onChanged,
+}: {
+  requestId: string;
+  onChanged: (requestId: string, staffNotes: SummerResponseRow['staff_notes']) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const trimmed = note.trim();
+
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="text-xs px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 transition"
+      >
+        Add Staff Note
+      </button>
+    );
+  }
+
+  return (
+    <div className="w-52 rounded-lg border border-amber-200 bg-amber-50 p-2">
+      <textarea
+        value={note}
+        onChange={e => {
+          setNote(e.target.value);
+          setError(null);
+        }}
+        rows={4}
+        maxLength={2000}
+        placeholder="Follow-up notes..."
+        className="w-full resize-y rounded-md border border-amber-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+      />
+      {error && <div className="mt-1 text-[11px] text-red-600">{error}</div>}
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={isPending || !trimmed}
+          onClick={() => startTransition(async () => {
+            try {
+              setError(null);
+              const result = await addStaffNoteToSummerResponse(requestId, note);
+              onChanged(requestId, result.staff_notes);
+              setNote('');
+              setIsOpen(false);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : 'Could not add note.');
+            }
+          })}
+          className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+        >
+          {isPending ? 'Saving...' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIsOpen(false);
+            setNote('');
+            setError(null);
+          }}
+          className="text-xs text-slate-500"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -757,8 +914,10 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
 
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = useMemo(() => currentRows.filter(r => {
-    if (workflowFilter === 'needs_action' && r.added_to_portal_at) return false;
-    if (workflowFilter === 'added_to_portal' && !r.added_to_portal_at) return false;
+    if (workflowFilter === 'needs_action' && r.adjusted_for_summer_at) return false;
+    if (workflowFilter === 'adjusted_summer' && !r.adjusted_for_summer_at) return false;
+    if (workflowFilter === 'adjusted_fall' && !r.adjusted_for_fall_at) return false;
+    if (workflowFilter === 'legacy_portal' && !r.added_to_portal_at) return false;
     if (submissionFilter === 'updated' && r.previous_submission_count === 0) return false;
     if (sourceFilter === 'parent' && r.submitted_by !== 'parent') return false;
     if (sourceFilter === 'staff' && r.submitted_by !== 'staff') return false;
@@ -774,6 +933,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         r.submitted_by_name,
         r.custom_notes,
         r.fall_notes,
+        ...r.staff_notes.map(note => note.body),
       ]
         .filter(Boolean)
         .join(' ')
@@ -785,6 +945,9 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
 
   const notRespondedFamilies = Math.max(currentStats.total_families - currentStats.responded_families, 0);
   const notRespondedStudents = Math.max(currentStats.total_students - currentStats.responded_students, 0);
+  const familyResponsePercent = formatPercent(currentStats.responded_families, currentStats.total_families);
+  const studentResponsePercent = formatPercent(currentStats.responded_students, currentStats.total_students);
+  const reviewQueue = currentStats.pending + currentStats.needs_followup;
   return (
     <div className="space-y-4">
       {/* Response totals */}
@@ -793,16 +956,25 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           label="Families Responded"
           value={currentStats.responded_families}
           color="text-emerald-700"
-          detail={`${currentStats.total_families} total - ${notRespondedFamilies} not responded`}
+          detail={`${familyResponsePercent} of ${currentStats.total_families} total - ${currentStats.parent_submitted} parent / ${currentStats.staff_submitted} internal - ${notRespondedFamilies} not responded`}
         />
         <StatCard
           label="Students Responded"
           value={currentStats.responded_students}
           color="text-emerald-700"
-          detail={`${currentStats.total_students} expected - ${notRespondedStudents} not responded`}
+          detail={`${studentResponsePercent} of ${currentStats.total_students} expected - ${notRespondedStudents} not responded`}
         />
-        <StatCard label="Pending Review" value={currentStats.pending} color={currentStats.pending > 0 ? 'text-amber-600' : 'text-slate-800'} />
-        <StatCard label="Needs Followup" value={currentStats.needs_followup} color={currentStats.needs_followup > 0 ? 'text-red-600' : 'text-slate-800'} />
+        <StatCard
+          label="Review Queue"
+          value={reviewQueue}
+          color={currentStats.needs_followup > 0 ? 'text-red-600' : reviewQueue > 0 ? 'text-amber-600' : 'text-slate-800'}
+          detail={`${currentStats.pending} pending - ${currentStats.needs_followup} followup`}
+        />
+        <StatCard
+          label="Email Exported"
+          value={currentStats.exported}
+          detail="families whose link was exported"
+        />
       </div>
 
       {/* Summer choices */}
@@ -824,6 +996,12 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           value={currentStats.summer_custom_students}
           color="text-purple-700"
           detail={`${currentStats.summer_custom_families} families selected custom`}
+        />
+        <StatCard
+          label="Waitlisted Students"
+          value={currentStats.waitlisted_students}
+          color={currentStats.waitlisted_students > 0 ? 'text-amber-700' : 'text-slate-800'}
+          detail="summer or fall waitlist requests"
         />
         {currentStats.summer_no_change_students > 0 && (
           <StatCard
@@ -863,13 +1041,6 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         />
       </div>
 
-      {/* Source/export stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <CompactStatCard label="Parent" value={currentStats.parent_submitted} color="text-emerald-700" detail="families submitted" />
-        <CompactStatCard label="Internal" value={currentStats.staff_submitted} color={currentStats.staff_submitted > 0 ? 'text-amber-700' : 'text-slate-800'} detail="families staff-entered" />
-        <CompactStatCard label="Email" value={currentStats.exported} detail="(Exported)" />
-      </div>
-
       {/* Toolbar */}
       <div className="flex flex-wrap gap-2 items-center">
         <input
@@ -883,9 +1054,11 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           value={workflowFilter}
           onChange={setWorkflowFilter}
           options={[
-            { value: 'needs_action',    label: 'Needs action' },
-            { value: 'all',             label: 'All responses' },
-            { value: 'added_to_portal', label: 'Added to portal' },
+            { value: 'needs_action',     label: 'Needs summer adjustment' },
+            { value: 'all',              label: 'All responses' },
+            { value: 'adjusted_summer',  label: 'Adjusted for Summer' },
+            { value: 'adjusted_fall',    label: 'Adjusted for Fall' },
+            { value: 'legacy_portal',    label: 'Legacy portal mark' },
           ]}
         />
         <FilterSelect
@@ -972,7 +1145,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Submitted</th>
                 <th className="px-4 py-3">Source</th>
-                <th className="px-4 py-3">Added to Portal</th>
+                <th className="px-4 py-3">Workflow</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
@@ -1024,7 +1197,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                     <WaitlistLabelsCell labels={row.fall_waitlist_session_labels} />
                   </td>
                   <td className="px-4 py-3 min-w-[220px] max-w-[280px] text-xs text-slate-500">
-                    <NotesCell summerNotes={row.custom_notes} fallNotes={row.fall_notes} />
+                    <NotesCell summerNotes={row.custom_notes} fallNotes={row.fall_notes} staffNotes={row.staff_notes} />
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={row.status} />
@@ -1037,10 +1210,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                     <CsvExportStatus row={row} />
                   </td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap">
-                    <AddedToPortalCell
-                      addedAt={row.added_to_portal_at}
-                      addedBy={row.added_to_portal_by}
-                    />
+                    <WorkflowStatusCell item={row} />
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex flex-col gap-1">
@@ -1058,19 +1228,28 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                           {expandedHistoryIds.has(row.request_id) ? 'Hide History' : 'History'}
                         </button>
                       )}
-                      <AddedToPortalButton
+                      <AdjustmentButton
                         requestId={row.request_id}
-                        addedAt={row.added_to_portal_at}
-                        addedBy={row.added_to_portal_by}
-                        onChanged={(id, addedAt, addedBy) => patchResponse(id, {
-                          added_to_portal_at: addedAt,
-                          added_to_portal_by: addedBy,
-                        })}
+                        kind="summer"
+                        adjustedAt={row.adjusted_for_summer_at}
+                        adjustedBy={row.adjusted_for_summer_by}
+                        onChanged={(id, patch) => patchResponse(id, patch)}
+                      />
+                      <AdjustmentButton
+                        requestId={row.request_id}
+                        kind="fall"
+                        adjustedAt={row.adjusted_for_fall_at}
+                        adjustedBy={row.adjusted_for_fall_by}
+                        onChanged={(id, patch) => patchResponse(id, patch)}
                       />
                       <FollowupToggleButton
                         requestId={row.request_id}
                         status={row.status}
                         onChanged={(id, status) => patchResponse(id, { status })}
+                      />
+                      <AddStaffNoteButton
+                        requestId={row.request_id}
+                        onChanged={(id, staffNotes) => patchResponse(id, { staff_notes: staffNotes })}
                       />
                       <InternalToggleButton
                         requestId={row.request_id}

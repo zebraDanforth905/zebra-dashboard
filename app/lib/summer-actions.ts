@@ -9,11 +9,19 @@ import { normalizeSessionSelection } from '@/app/lib/session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 type PostgresJsonValue = Parameters<typeof sql.json>[0];
+const RECENT_ACTIVE_CUTOFF = '2026-05-01';
 
 type SessionUserWithType = {
   name?: string | null;
   email?: string | null;
   user_type?: string;
+};
+
+type StaffNote = {
+  id: string;
+  body: string;
+  created_at: Date;
+  created_by: string;
 };
 
 async function requireAdmin(): Promise<void> {
@@ -256,9 +264,52 @@ export async function deleteAllParentTokens(): Promise<{ deleted: number }> {
   return { deleted: rows.length };
 }
 
-export async function refreshParentLinkData(): Promise<void> {
+export async function refreshParentLinkData(): Promise<{ updated: number; skipped: boolean }> {
   await requireAdmin();
+  const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
+  if (!canTrackLastSeenActive) {
+    revalidateTag('summer-tokens', 'max');
+    return { updated: 0, skipped: true };
+  }
+  const rows = await sql<{ id: string }[]>`
+    WITH active_family_snapshot AS (
+      SELECT
+        s.customer_id,
+        JSONB_AGG(
+          DISTINCT JSONB_BUILD_OBJECT(
+            'student_id', s.id::text,
+            'student_name', s.name,
+            'course_name', co.name,
+            'weekday', se.weekday,
+            'start_time', se.start_time,
+            'pickup_school', cp.school_name
+          )
+        ) AS snapshot
+      FROM students s
+      JOIN enrolments e ON e.student_id = s.id
+      JOIN sessions se ON se.id = e.session_id
+      LEFT JOIN courses co ON co.id = e.course_id
+      LEFT JOIN LATERAL (
+        SELECT p.school_name
+        FROM pickups p
+        WHERE p.student_id = s.id
+          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+        ORDER BY p.id
+        LIMIT 1
+      ) cp ON true
+      GROUP BY s.customer_id
+    )
+    UPDATE parent_tokens pt
+    SET
+      last_seen_active_at = NOW(),
+      last_active_snapshot = active_family_snapshot.snapshot
+    FROM active_family_snapshot
+    WHERE active_family_snapshot.customer_id = pt.customer_id
+    RETURNING pt.id::text AS id
+  `;
   revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
+  return { updated: rows.length, skipped: false };
 }
 
 // ── Email send tracking ───────────────────────────────────────────────────────
@@ -633,6 +684,66 @@ export async function clearAddedToPortal(requestId: string): Promise<void> {
   revalidateTag('summer-responses', 'max');
 }
 
+export async function markAdjustedForSummer(requestId: string): Promise<{ adjusted_for_summer_at: Date; adjusted_for_summer_by: string }> {
+  await requireAdmin();
+  const adjustedBy = await staffDisplayName();
+  const rows = await sql<{ adjusted_for_summer_at: Date; adjusted_for_summer_by: string }[]>`
+    UPDATE parent_requests
+    SET adjusted_for_summer_at = NOW(), adjusted_for_summer_by = ${adjustedBy}, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+    RETURNING adjusted_for_summer_at, adjusted_for_summer_by
+  `;
+  if (rows.length === 0) {
+    throw new Error('Response not found.');
+  }
+  revalidateTag('summer-responses', 'max');
+  return rows[0];
+}
+
+export async function clearAdjustedForSummer(requestId: string): Promise<void> {
+  await requireAdmin();
+  await sql`
+    UPDATE parent_requests
+    SET adjusted_for_summer_at = NULL, adjusted_for_summer_by = NULL, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+  `;
+  revalidateTag('summer-responses', 'max');
+}
+
+export async function markAdjustedForFall(requestId: string): Promise<{ adjusted_for_fall_at: Date; adjusted_for_fall_by: string }> {
+  await requireAdmin();
+  const adjustedBy = await staffDisplayName();
+  const rows = await sql<{ adjusted_for_fall_at: Date; adjusted_for_fall_by: string }[]>`
+    UPDATE parent_requests
+    SET adjusted_for_fall_at = NOW(), adjusted_for_fall_by = ${adjustedBy}, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+    RETURNING adjusted_for_fall_at, adjusted_for_fall_by
+  `;
+  if (rows.length === 0) {
+    throw new Error('Response not found.');
+  }
+  revalidateTag('summer-responses', 'max');
+  return rows[0];
+}
+
+export async function clearAdjustedForFall(requestId: string): Promise<void> {
+  await requireAdmin();
+  await sql`
+    UPDATE parent_requests
+    SET adjusted_for_fall_at = NULL, adjusted_for_fall_by = NULL, updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+  `;
+  revalidateTag('summer-responses', 'max');
+}
+
 export async function markNeedsFollowup(requestId: string): Promise<void> {
   await requireAdmin();
   await sql`
@@ -701,6 +812,45 @@ export async function updateSummerResponseSource(
   };
 }
 
+export async function addStaffNoteToSummerResponse(
+  requestId: string,
+  note: string,
+): Promise<{ staff_notes: StaffNote[] }> {
+  await requireAdmin();
+  const body = note.trim();
+  if (!body) {
+    throw new Error('Note cannot be empty.');
+  }
+  if (body.length > 2000) {
+    throw new Error('Note must be 2000 characters or fewer.');
+  }
+
+  const createdBy = await staffDisplayName();
+  const noteId = randomBytes(8).toString('hex');
+  const rows = await sql<{ staff_notes: StaffNote[] }[]>`
+    UPDATE parent_requests
+    SET
+      staff_notes = COALESCE(staff_notes, '[]'::jsonb) || JSONB_BUILD_ARRAY(
+        JSONB_BUILD_OBJECT(
+          'id', ${noteId},
+          'body', ${body},
+          'created_at', NOW(),
+          'created_by', ${createdBy}
+        )
+      ),
+      updated_at = NOW()
+    WHERE id = ${requestId}::uuid
+      AND is_latest = TRUE
+      AND removed_at IS NULL
+    RETURNING staff_notes
+  `;
+  if (rows.length === 0) {
+    throw new Error('Response not found.');
+  }
+  revalidateTag('summer-responses', 'max');
+  return { staff_notes: rows[0].staff_notes };
+}
+
 // ── Parent form submission ────────────────────────────────────────────────────
 
 function pickStartDates(
@@ -716,6 +866,10 @@ function pickStartDates(
   return Object.keys(out).length > 0 ? out : null;
 }
 
+function pickSingleStartDate(raw: string | undefined): string | null {
+  return typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
 
 type StudentFormEntry = {
   student_id: string;
@@ -728,6 +882,7 @@ type StudentFormEntry = {
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
   pickup_school_other?: string;
   fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
+  fall_start_date?: string;
   fall_session_ids: string[];
   fall_session_start_dates?: Record<string, string>;
   fall_waitlist_session_ids: string[];
@@ -885,7 +1040,13 @@ async function validateTokenCurrentStudentIds(
           )
           OR EXISTS (
             SELECT 1
-            FROM jsonb_array_elements(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) snapshot
+            FROM jsonb_array_elements(
+              CASE
+                WHEN (to_jsonb(pt)->>'last_seen_active_at')::timestamptz >= ${RECENT_ACTIVE_CUTOFF}::date
+                  THEN COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)
+                ELSE '[]'::jsonb
+              END
+            ) snapshot
             WHERE snapshot->>'student_id' = s.id::text
           )
         )
@@ -991,6 +1152,7 @@ export async function submitSummerForm(
     ...entry,
     session_ids: Array.isArray(entry.session_ids) ? entry.session_ids : [],
     waitlist_session_ids: Array.isArray(entry.waitlist_session_ids) ? entry.waitlist_session_ids : [],
+    fall_start_date: typeof entry.fall_start_date === 'string' ? entry.fall_start_date : undefined,
     fall_session_ids: Array.isArray(entry.fall_session_ids) ? entry.fall_session_ids : [],
     fall_waitlist_session_ids: Array.isArray(entry.fall_waitlist_session_ids) ? entry.fall_waitlist_session_ids : [],
   }));
@@ -1084,6 +1246,9 @@ export async function submitSummerForm(
           ? { pickup_requested: false }
           : {};
       const fallStartDates = pickStartDates(entry.fall_session_start_dates, entry.fall_session_ids);
+      const fallStartDate = entry.fall_status === 'same'
+        ? pickSingleStartDate(entry.fall_start_date)
+        : null;
       const studentId = Number(entry.student_id);
       const dbCurrentSessionsSnapshot = currentSessionSnapshotsByStudentId.get(studentId) ?? [];
       const staffCurrentSessionsSnapshot = normalizeSubmittedCurrentSessionsSnapshot(entry.current_sessions_snapshot);
@@ -1093,6 +1258,7 @@ export async function submitSummerForm(
       const fallFields = {
         current_sessions_snapshot: currentSessionsSnapshot,
         fall_status: entry.fall_status,
+        ...(fallStartDate ? { fall_start_date: fallStartDate } : {}),
         fall_session_ids: entry.fall_session_ids,
         ...(entry.fall_waitlist_session_ids.length > 0 ? { fall_waitlist_session_ids: entry.fall_waitlist_session_ids } : {}),
         ...(fallStartDates ? { fall_session_start_dates: fallStartDates } : {}),

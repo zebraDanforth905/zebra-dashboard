@@ -30,7 +30,8 @@ type FilterValue =
   | 'not_exported'
   | 'exported'
   | 'responded'
-  | 'internal_responded';
+  | 'internal_responded'
+  | 'august_fall_confirmation';
 
 const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'all',           label: 'All families' },
@@ -39,6 +40,7 @@ const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'exported',      label: 'Exported' },
   { value: 'responded',     label: 'Responded' },
   { value: 'internal_responded', label: 'Internal response' },
+  { value: 'august_fall_confirmation', label: 'August fall confirmation' },
 ];
 const DEFAULT_FILTER: FilterValue = 'not_responded';
 
@@ -49,6 +51,7 @@ function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[
     case 'not_exported':  return rows.filter(r => r.export_count === 0);
     case 'exported':      return rows.filter(r => r.export_count > 0);
     case 'internal_responded': return rows.filter(r => r.has_internal_response);
+    case 'august_fall_confirmation': return rows.filter(r => r.fall_confirmation_eligible);
     default:              return rows;
   }
 }
@@ -88,12 +91,16 @@ export default function LinkManagement({
     [filter, normalizedSearch, rows],
   );
   const exportRows = filtered;
-  const exportLabel = filter === 'not_responded' ? 'Export email CSV' : 'Export CSV';
+  const exportLabel =
+    filter === 'not_responded' ? 'Export email CSV'
+    : filter === 'august_fall_confirmation' ? 'Export August CSV'
+    : 'Export CSV';
 
   const total = rows.length;
   const responded = rows.filter(r => r.has_responded).length;
   const internalResponded = rows.filter(r => r.has_internal_response).length;
   const needsEmail = rows.filter(r => !r.has_responded && !r.has_internal_response).length;
+  const augustEligible = rows.filter(r => r.fall_confirmation_eligible).length;
   const missingEmail = rows.filter(r => !r.email).length;
 
   const [isRefreshing, startRefresh] = useTransition();
@@ -172,6 +179,7 @@ export default function LinkManagement({
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{total}</span> families</span>
         <span><span className="font-semibold text-sky-700">{needsEmail}</span> need email</span>
+        <span><span className="font-semibold text-emerald-700">{augustEligible}</span> August fall confirmation</span>
         <span><span className="font-semibold text-emerald-700">{responded}</span> responded</span>
         <span><span className="font-semibold text-amber-700">{internalResponded}</span> internal response</span>
         {missingEmail > 0 && (

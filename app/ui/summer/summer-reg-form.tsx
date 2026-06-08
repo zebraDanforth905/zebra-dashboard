@@ -4,6 +4,7 @@ import { useActionState, useState } from 'react';
 import { submitSummerForm } from '@/app/lib/summer-actions';
 import StudentCard, { StudentCardState } from '@/app/ui/summer/student-card';
 import { ParentFormData } from '@/app/lib/definitions';
+import { getStartDateOptions, WeekdayName } from '@/app/lib/tdsb-calendar';
 
 type StudentFormEntry = {
   student_id: string;
@@ -16,6 +17,7 @@ type StudentFormEntry = {
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
   pickup_school_other?: string;
   fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
+  fall_start_date?: string;
   fall_session_ids: string[];
   fall_session_start_dates: Record<string, string>;
   fall_waitlist_session_ids: string[];
@@ -24,6 +26,7 @@ type StudentFormEntry = {
 };
 
 const PICKUP_WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday']);
+const WEEKDAY_NAMES = new Set<WeekdayName>(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
 
 function isPickupSession(weekday: string | null, startTime: string | null): boolean {
   if (!weekday || !startTime || !PICKUP_WEEKDAYS.has(weekday.trim().toLowerCase())) return false;
@@ -68,6 +71,15 @@ function currentPickupDefaults(student: ParentFormData['students'][number]): Pic
     pickup_school: pickup.pickup_school,
     pickup_school_other: pickup.pickup_school_other,
   };
+}
+
+function fallStartDateOptions(student: ParentFormData['students'][number]): string[] {
+  const session = getCurrentSessions(student).find(s => WEEKDAY_NAMES.has(s.weekday as WeekdayName));
+  return session ? getStartDateOptions(session.weekday as WeekdayName, 'fall') : [];
+}
+
+function defaultFallStartDate(student: ParentFormData['students'][number]): string {
+  return fallStartDateOptions(student)[0] ?? '';
 }
 
 function isPickupVisible(
@@ -138,6 +150,7 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
       pickup_school: req.pickup_school ?? defaultPickup.pickup_school,
       pickup_school_other: req.pickup_school_other ?? defaultPickup.pickup_school_other,
       fall_status: fallStatus,
+      fall_start_date: fallStatus === 'same' ? (req.fall_start_date ?? defaultFallStartDate(student)) : '',
       fall_session_ids: req.fall_session_ids ?? [],
       fall_session_start_dates: req.fall_session_start_dates ?? {},
       fall_waitlist_session_ids: req.fall_waitlist_session_ids ?? [],
@@ -156,6 +169,7 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
     custom_notes: '',
     ...defaultPickup,
     fall_status: 'same',
+    fall_start_date: defaultFallStartDate(student),
     fall_session_ids: [],
     fall_session_start_dates: {},
     fall_waitlist_session_ids: [],
@@ -212,6 +226,7 @@ export default function SummerRegForm({
     const pickupVisible = isPickupVisible(s, sel, data.fall_sessions);
     const pickupRequested = pickupVisible && sel.pickup_requested;
     const enrolling = sel.summer_status === 'enrolling';
+    const keepingSameFall = sel.fall_status === 'same';
     const changingFall = sel.fall_status === 'change';
     return {
       student_id: s.student_id,
@@ -224,6 +239,7 @@ export default function SummerRegForm({
       pickup_school: pickupRequested ? (sel.pickup_school ?? undefined) : undefined,
       pickup_school_other: pickupRequested && sel.pickup_school === 'other' ? sel.pickup_school_other || undefined : undefined,
       fall_status: sel.fall_status as 'same' | 'change' | 'pause' | 'unsure' | 'not_returning',
+      fall_start_date: keepingSameFall ? (sel.fall_start_date || defaultFallStartDate(s) || undefined) : undefined,
       fall_session_ids: changingFall ? sel.fall_session_ids : [],
       fall_session_start_dates: changingFall ? sel.fall_session_start_dates : {},
       fall_waitlist_session_ids: changingFall ? sel.fall_waitlist_session_ids : [],

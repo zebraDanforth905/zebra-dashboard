@@ -76,6 +76,7 @@ export type StudentCardState = {
   pickup_school: 'Jackman' | 'Frankland' | 'other' | null;
   pickup_school_other: string;
   fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning' | null;
+  fall_start_date: string;
   fall_session_ids: string[];
   fall_session_start_dates: Record<string, string>;
   fall_waitlist_session_ids: string[];
@@ -124,6 +125,10 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
   const currentPickupDefaults = currentPickupSession
     ? normalizePickupSchool(currentPickupSession.pickup_school)
     : { pickup_school: null, pickup_school_other: '' };
+  const currentFallDateSession = currentSessions.find(session => WEEKDAY_ORDER.includes(session.weekday));
+  const currentFallDateOptions = currentFallDateSession
+    ? getStartDateOptions(currentFallDateSession.weekday as WeekdayName, 'fall')
+    : [];
 
   function defaultCurrentPickupState(): Pick<StudentCardState, 'pickup_requested' | 'pickup_school' | 'pickup_school_other'> {
     return {
@@ -198,6 +203,7 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
     onChange(clearPickupIfHidden({
       ...state,
       fall_status: fs,
+      fall_start_date: fs === 'same' ? (state.fall_start_date || currentFallDateOptions[0] || '') : '',
       fall_session_ids: fs === 'change' ? state.fall_session_ids : [],
       fall_session_start_dates: fs === 'change' ? state.fall_session_start_dates : {},
       fall_waitlist_session_ids: fs === 'change' ? state.fall_waitlist_session_ids : [],
@@ -241,6 +247,10 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
       ...state,
       fall_session_start_dates: { ...state.fall_session_start_dates, [id]: date },
     });
+  }
+
+  function setFallStartDate(date: string) {
+    onChange({ ...state, fall_start_date: date });
   }
 
   function setPickupRequested(requested: boolean) {
@@ -604,6 +614,23 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
               {currentSlot ? `Keep current session${currentSessions.length > 1 ? 's' : ''} - ${currentSlot}` : 'Keep current session'}
             </span>
           </label>
+
+          {state.fall_status === 'same' && currentFallDateOptions.length > 0 && (
+            <div className="ml-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 sm:ml-6">
+              <label className={dateLabelClass}>
+                Start:
+                <select
+                  value={state.fall_start_date || currentFallDateOptions[0]}
+                  onChange={e => setFallStartDate(e.target.value)}
+                  className={`${dateSelectClass} focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200`}
+                >
+                  {currentFallDateOptions.map(d => (
+                    <option key={d} value={d}>{formatStartDate(d)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
 
           {state.fall_status === 'same' && currentPickupEligible && (
             <div className="ml-3 sm:ml-6">
