@@ -1,5 +1,6 @@
 import {
   BillingCalendarCell,
+  BillingCalendarDateStatus,
   BillingCalendarMonth,
   BillingCalendarWeekday,
 } from '@/app/lib/definitions';
@@ -56,7 +57,470 @@ function month(
   };
 }
 
-export const billingCalendarMonths: BillingCalendarMonth[] = [
+const monthNames = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
+const weekdayIndexes: Record<BillingCalendarWeekday, number> = {
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+  Sun: 0,
+};
+
+type DateRange = {
+  start: Date;
+  end: Date;
+  source: 'official' | 'estimated';
+};
+
+type ClosurePolicy = 'makeup-if-needed' | 'no-makeup';
+
+type Closure = {
+  reason: string;
+  policy: ClosurePolicy;
+  source?: 'official' | 'estimated';
+};
+
+type GeneratedCellPlan = {
+  dates: Date[];
+  notes: string[];
+  statuses: Record<string, BillingCalendarDateStatus>;
+  openDates: Date[];
+  noMakeupClosures: number;
+  needsMakeupClosures: number;
+};
+
+function dateAt(year: number, monthIndex: number, day: number): Date {
+  return new Date(Date.UTC(year, monthIndex, day));
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function dateId(date: Date): string {
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function dateStatusKey(date: Date): string {
+  return `${monthNames[date.getUTCMonth()].toLowerCase()}-${date.getUTCDate()}`;
+}
+
+function formatBillingDate(date: Date): string {
+  return `${monthNames[date.getUTCMonth()]} ${date.getUTCDate()}`;
+}
+
+function compareDates(left: Date, right: Date): number {
+  return left.getTime() - right.getTime();
+}
+
+function sameDate(left: Date, right: Date): boolean {
+  return dateId(left) === dateId(right);
+}
+
+function isInRange(date: Date, range: DateRange): boolean {
+  return compareDates(date, range.start) >= 0 && compareDates(date, range.end) <= 0;
+}
+
+function datesForWeekday(year: number, monthIndex: number, weekday: BillingCalendarWeekday): Date[] {
+  const target = weekdayIndexes[weekday];
+  const dates: Date[] = [];
+
+  for (let day = 1; day <= 31; day += 1) {
+    const date = dateAt(year, monthIndex, day);
+    if (date.getUTCMonth() !== monthIndex) break;
+    if (date.getUTCDay() === target) dates.push(date);
+  }
+
+  return dates;
+}
+
+function nthWeekdayOfMonth(
+  year: number,
+  monthIndex: number,
+  weekdayIndex: number,
+  occurrence: number,
+): Date {
+  const first = dateAt(year, monthIndex, 1);
+  const offset = (weekdayIndex - first.getUTCDay() + 7) % 7;
+  return dateAt(year, monthIndex, 1 + offset + (occurrence - 1) * 7);
+}
+
+function weekdayOnOrBefore(
+  year: number,
+  monthIndex: number,
+  day: number,
+  weekdayIndex: number,
+): Date {
+  const date = dateAt(year, monthIndex, day);
+  const offset = (date.getUTCDay() - weekdayIndex + 7) % 7;
+  return addDays(date, -offset);
+}
+
+function easterSunday(year: number): Date {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const monthIndex = Math.floor((h + l - 7 * m + 114) / 31) - 1;
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+
+  return dateAt(year, monthIndex, day);
+}
+
+function marchBreakRange(year: number): DateRange {
+  const known: Record<number, DateRange> = {
+    2027: { start: dateAt(2027, 2, 15), end: dateAt(2027, 2, 19), source: 'official' },
+    2028: { start: dateAt(2028, 2, 13), end: dateAt(2028, 2, 17), source: 'official' },
+    2029: { start: dateAt(2029, 2, 12), end: dateAt(2029, 2, 16), source: 'official' },
+  };
+
+  if (known[year]) return known[year];
+
+  const start = weekdayOnOrBefore(year, 2, 17, 1);
+  return { start, end: addDays(start, 4), source: 'estimated' };
+}
+
+function winterBreakRange(schoolYearStart: number): DateRange {
+  const known: Record<number, DateRange> = {
+    2026: { start: dateAt(2026, 11, 21), end: dateAt(2027, 0, 3), source: 'official' },
+    2027: { start: dateAt(2027, 11, 20), end: dateAt(2028, 0, 2), source: 'official' },
+    2028: { start: dateAt(2028, 11, 25), end: dateAt(2029, 0, 7), source: 'official' },
+  };
+
+  if (known[schoolYearStart]) return known[schoolYearStart];
+
+  const start = weekdayOnOrBefore(schoolYearStart, 11, 25, 1);
+  return { start, end: addDays(start, 13), source: 'estimated' };
+}
+
+function estimatedFirstSchoolDay(year: number): Date {
+  const labourDay = nthWeekdayOfMonth(year, 8, 1, 1);
+  return addDays(labourDay, 1);
+}
+
+function requiredClosureForDate(date: Date): Closure | null {
+  const year = date.getUTCFullYear();
+  const monthIndex = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const easter = easterSunday(year);
+  const familyDay = nthWeekdayOfMonth(year, 1, 1, 3);
+  const victoriaDay = weekdayOnOrBefore(year, 4, 24, 1);
+  const civicDay = nthWeekdayOfMonth(year, 7, 1, 1);
+  const labourDay = nthWeekdayOfMonth(year, 8, 1, 1);
+  const thanksgiving = nthWeekdayOfMonth(year, 9, 1, 2);
+  const schoolYearStart = monthIndex === 0 ? year - 1 : year;
+  const winterBreak = winterBreakRange(schoolYearStart);
+  const marchBreak = marchBreakRange(year);
+  const firstSchoolDay = estimatedFirstSchoolDay(year);
+
+  if (monthIndex === 0 && day === 1) {
+    return { reason: "New Year's Day closure", policy: 'makeup-if-needed' };
+  }
+
+  if (sameDate(date, familyDay)) {
+    return { reason: 'Family Day closure', policy: 'makeup-if-needed' };
+  }
+
+  if (isInRange(date, marchBreak) && date.getUTCDay() >= 1 && date.getUTCDay() <= 5) {
+    return {
+      reason: `TDSB March Break closure${marchBreak.source === 'estimated' ? ' (estimated)' : ''}`,
+      policy: 'makeup-if-needed',
+      source: marchBreak.source,
+    };
+  }
+
+  if (sameDate(date, addDays(easter, -2))) {
+    return { reason: 'Good Friday closure', policy: 'makeup-if-needed' };
+  }
+
+  if (sameDate(date, easter)) {
+    return { reason: 'Easter Sunday closure', policy: 'makeup-if-needed' };
+  }
+
+  if (sameDate(date, addDays(easter, 1))) {
+    return { reason: 'Easter Monday closure', policy: 'makeup-if-needed' };
+  }
+
+  if (sameDate(date, victoriaDay)) {
+    return { reason: 'Victoria Day closure', policy: 'makeup-if-needed' };
+  }
+
+  if (monthIndex === 6 && day === 1) {
+    return { reason: 'Canada Day closure', policy: 'no-makeup' };
+  }
+
+  if (sameDate(date, civicDay)) {
+    return { reason: 'Civic Day closure', policy: 'no-makeup' };
+  }
+
+  if (monthIndex === 8 && compareDates(date, firstSchoolDay) < 0) {
+    return { reason: 'Summer break before school starts (estimated TDSB start)', policy: 'no-makeup', source: 'estimated' };
+  }
+
+  if (sameDate(date, labourDay)) {
+    return { reason: 'Labour Day closure', policy: 'makeup-if-needed' };
+  }
+
+  if (sameDate(date, thanksgiving)) {
+    return { reason: 'Thanksgiving closure', policy: 'makeup-if-needed' };
+  }
+
+  if (monthIndex === 9 && day === 31 && date.getUTCDay() >= 1 && date.getUTCDay() <= 5) {
+    return { reason: 'Halloween evening closure', policy: 'no-makeup' };
+  }
+
+  if (isInRange(date, winterBreak) && (monthIndex === 0 || day >= 23)) {
+    return {
+      reason: `Winter break closure${winterBreak.source === 'estimated' ? ' (estimated)' : ''}`,
+      policy: 'makeup-if-needed',
+      source: winterBreak.source,
+    };
+  }
+
+  if (monthIndex === 11 && day === 25) {
+    return { reason: 'Christmas Day closure', policy: 'makeup-if-needed' };
+  }
+
+  if (monthIndex === 11 && day === 26) {
+    return { reason: 'Boxing Day closure', policy: 'makeup-if-needed' };
+  }
+
+  return null;
+}
+
+function optionalLongWeekendClosureForDate(date: Date, openCountBeforeOptional: number): Closure | null {
+  const year = date.getUTCFullYear();
+  const easter = easterSunday(year);
+  const victoriaDay = weekdayOnOrBefore(year, 4, 24, 1);
+  const civicDay = nthWeekdayOfMonth(year, 7, 1, 1);
+  const labourDay = nthWeekdayOfMonth(year, 8, 1, 1);
+  const canadaDay = dateAt(year, 6, 1);
+
+  if (sameDate(date, addDays(easter, -1)) && openCountBeforeOptional > 4) {
+    return { reason: 'Easter long weekend closure', policy: 'makeup-if-needed' };
+  }
+
+  if ((sameDate(date, addDays(victoriaDay, -2)) || sameDate(date, addDays(victoriaDay, -1))) && openCountBeforeOptional > 4) {
+    return { reason: 'Victoria Day long weekend closure', policy: 'makeup-if-needed' };
+  }
+
+  if (sameDate(date, addDays(canadaDay, -2)) || sameDate(date, addDays(canadaDay, -1))) {
+    return { reason: 'Canada Day long weekend closure', policy: 'no-makeup' };
+  }
+
+  if (sameDate(date, addDays(civicDay, -2)) || sameDate(date, addDays(civicDay, -1))) {
+    return { reason: 'Civic Day long weekend closure', policy: 'no-makeup' };
+  }
+
+  if (sameDate(date, addDays(labourDay, -2)) || sameDate(date, addDays(labourDay, -1))) {
+    return { reason: 'Labour Day long weekend closure', policy: 'no-makeup' };
+  }
+
+  return null;
+}
+
+function createGeneratedCell(plan: GeneratedCellPlan): BillingCalendarCell {
+  const sortedDates = [...plan.dates].sort(compareDates);
+
+  return {
+    classes: sortedDates.map(formatBillingDate).join(', '),
+    notes: plan.notes,
+    dateStatuses: plan.statuses,
+  };
+}
+
+function annotateMove(
+  from: GeneratedCellPlan,
+  to: GeneratedCellPlan,
+  date: Date,
+  toMonthName: string,
+): void {
+  const key = dateStatusKey(date);
+
+  from.statuses[key] = 'moved-out';
+  to.statuses[key] = 'moved-in';
+
+  from.notes.push(`${formatBillingDate(date)}: Move to ${toMonthName} billing to keep four billed classes.`);
+  to.notes.push(`${formatBillingDate(date)}: Pulled in from ${monthNames[date.getUTCMonth()]} billing to keep four billed classes.`);
+  to.dates.push(date);
+}
+
+function buildWeekdayPlans(
+  year: number,
+  weekday: BillingCalendarWeekday,
+): Record<number, GeneratedCellPlan> {
+  const plans: Record<number, GeneratedCellPlan> = {};
+
+  for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+    const dates = datesForWeekday(year, monthIndex, weekday);
+    const closureMap = new Map<string, Closure>();
+
+    for (const date of dates) {
+      const closure = requiredClosureForDate(date);
+      if (closure) closureMap.set(dateId(date), closure);
+    }
+
+    const openBeforeOptional = dates.filter((date) => !closureMap.has(dateId(date))).length;
+
+    for (const date of dates) {
+      if (closureMap.has(dateId(date))) continue;
+      const closure = optionalLongWeekendClosureForDate(date, openBeforeOptional);
+      if (closure) closureMap.set(dateId(date), closure);
+    }
+
+    const notes: string[] = [];
+    const statuses: Record<string, BillingCalendarDateStatus> = {};
+    let noMakeupClosures = 0;
+    let needsMakeupClosures = 0;
+
+    for (const date of dates) {
+      const closure = closureMap.get(dateId(date));
+      if (!closure) continue;
+
+      statuses[dateStatusKey(date)] = 'closed';
+      if (closure.policy === 'no-makeup') noMakeupClosures += 1;
+      if (closure.policy === 'makeup-if-needed') needsMakeupClosures += 1;
+
+      const reviewSuffix = closure.source === 'estimated' ? '; review when TDSB confirms' : '';
+      notes.push(`${formatBillingDate(date)}: ${closure.reason}; ${closure.policy === 'no-makeup' ? 'no makeup planned' : 'makeup only if we cannot balance with an extra date'}${reviewSuffix}.`);
+    }
+
+    plans[monthIndex] = {
+      dates,
+      notes,
+      statuses,
+      openDates: dates.filter((date) => !closureMap.has(dateId(date))),
+      noMakeupClosures,
+      needsMakeupClosures,
+    };
+  }
+
+  for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+    const plan = plans[monthIndex];
+    const billableCount = () =>
+      plan.openDates.filter((date) => plan.statuses[dateStatusKey(date)] !== 'moved-out' && plan.statuses[dateStatusKey(date)] !== 'extra').length +
+      Object.entries(plan.statuses).filter(([, status]) => status === 'moved-in').length;
+
+    while (billableCount() < 4) {
+      const previousPlan = plans[monthIndex - 1];
+      const nextPlan = plans[monthIndex + 1];
+      const previousExtra = previousPlan?.openDates
+        .filter((date) => !previousPlan.statuses[dateStatusKey(date)])
+        .filter(() => previousPlan.openDates.filter((openDate) => previousPlan.statuses[dateStatusKey(openDate)] !== 'moved-out' && previousPlan.statuses[dateStatusKey(openDate)] !== 'extra').length > 4)
+        .at(-1);
+      const nextExtra = nextPlan?.openDates
+        .filter((date) => !nextPlan.statuses[dateStatusKey(date)])
+        .filter(() => nextPlan.openDates.filter((openDate) => nextPlan.statuses[dateStatusKey(openDate)] !== 'moved-out' && nextPlan.statuses[dateStatusKey(openDate)] !== 'extra').length > 4)
+        [0];
+
+      if (previousPlan && previousExtra) {
+        annotateMove(previousPlan, plan, previousExtra, monthNames[monthIndex]);
+        continue;
+      }
+
+      if (nextPlan && nextExtra) {
+        annotateMove(nextPlan, plan, nextExtra, monthNames[monthIndex]);
+        continue;
+      }
+
+      if (plan.noMakeupClosures > 0 && plan.needsMakeupClosures === 0) {
+        plan.notes.push(`${monthNames[monthIndex]} ${weekday}: Generated draft leaves ${billableCount()} billed classes because the closure is treated as a no-makeup summer/seasonal billing adjustment.`);
+        break;
+      }
+
+      plan.notes.push(`${monthNames[monthIndex]} ${weekday}: Generated draft needs ${4 - billableCount()} makeup class${4 - billableCount() === 1 ? '' : 'es'} or a manual billing adjustment.`);
+      break;
+    }
+  }
+
+  for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+    const plan = plans[monthIndex];
+    const billableOpenDates = plan.openDates.filter((date) => !plan.statuses[dateStatusKey(date)]);
+    const extras = billableOpenDates.slice(4);
+
+    for (const date of extras) {
+      const key = dateStatusKey(date);
+      if (plan.statuses[key]) continue;
+      plan.statuses[key] = 'extra';
+      plan.notes.push(`${formatBillingDate(date)}: Extra fifth ${weekday}; no extra billing unless leadership chooses to move it.`);
+    }
+  }
+
+  return plans;
+}
+
+function generateBillingCalendarMonths(startYear: number, endYear: number): BillingCalendarMonth[] {
+  const months: BillingCalendarMonth[] = [];
+
+  for (let year = startYear; year <= endYear; year += 1) {
+    const weekdayPlans: Record<BillingCalendarWeekday, Record<number, GeneratedCellPlan>> = {
+      Mon: buildWeekdayPlans(year, 'Mon'),
+      Tue: buildWeekdayPlans(year, 'Tue'),
+      Wed: buildWeekdayPlans(year, 'Wed'),
+      Thu: buildWeekdayPlans(year, 'Thu'),
+      Fri: buildWeekdayPlans(year, 'Fri'),
+      Sat: buildWeekdayPlans(year, 'Sat'),
+      Sun: buildWeekdayPlans(year, 'Sun'),
+    };
+
+    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+      months.push({
+        id: `${year}-${monthNames[monthIndex].toLowerCase()}`,
+        year,
+        month: monthNames[monthIndex],
+        source: 'generated',
+        summaryNotes: [
+          'Generated from the 2024-2026 billing-calendar pattern: target four billed classes, show closures, pull adjacent extras when that avoids makeup, otherwise mark makeup or billing adjustment.',
+          'PA days are not closed here because the copied billing calendars do not close them; review manually if that operating rule changes.',
+          'TDSB-specific dates after the published calendars are estimated and should be confirmed before parent-facing use.',
+        ],
+        days: {
+          Mon: createGeneratedCell(weekdayPlans.Mon[monthIndex]),
+          Tue: createGeneratedCell(weekdayPlans.Tue[monthIndex]),
+          Wed: createGeneratedCell(weekdayPlans.Wed[monthIndex]),
+          Thu: createGeneratedCell(weekdayPlans.Thu[monthIndex]),
+          Fri: createGeneratedCell(weekdayPlans.Fri[monthIndex]),
+          Sat: createGeneratedCell(weekdayPlans.Sat[monthIndex]),
+          Sun: createGeneratedCell(weekdayPlans.Sun[monthIndex]),
+        },
+      });
+    }
+  }
+
+  return months;
+}
+
+const copiedBillingCalendarMonths: BillingCalendarMonth[] = [
   month(2024, 'Jan', {
     Mon: `Jan 8, 15, 22, 29
 
@@ -472,7 +936,7 @@ Jan 4: Winter break closure; do makeup`,
     Mon: `Feb 2, 9, 16, 23
 
 Feb 16: Family Day closure; do makeup`,
-    Tue: 'Feb 3, 10 17, 24',
+    Tue: 'Feb 3, 10, 17, 24',
     Wed: 'Feb 4, 11, 18, 25',
     Thu: 'Feb 5, 12, 19, 26',
     Fri: 'Feb 6, 13, 20, 27',
@@ -675,6 +1139,13 @@ Dec 26: No class. Closed for Boxing Day and winter break; do makeup`,
 
 Dec 27: Closed for winter break. No class; no makeup bc extra lesson.`,
   }),
+];
+
+const generatedBillingCalendarMonths = generateBillingCalendarMonths(2027, 2031);
+
+export const billingCalendarMonths: BillingCalendarMonth[] = [
+  ...copiedBillingCalendarMonths,
+  ...generatedBillingCalendarMonths,
 ];
 
 export const billingCalendarYears = Array.from(

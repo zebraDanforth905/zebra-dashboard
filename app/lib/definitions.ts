@@ -178,9 +178,12 @@ export type Absence = {
 
 export type BillingCalendarWeekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
+export type BillingCalendarDateStatus = 'closed' | 'moved-in' | 'moved-out' | 'extra';
+
 export type BillingCalendarCell = {
   classes: string;
   notes: string[];
+  dateStatuses?: Record<string, BillingCalendarDateStatus>;
 };
 
 export type BillingCalendarMonth = {
@@ -188,6 +191,8 @@ export type BillingCalendarMonth = {
   year: number;
   month: string;
   convergeMessage?: string;
+  source?: 'copied' | 'generated';
+  summaryNotes?: string[];
   days: Record<BillingCalendarWeekday, BillingCalendarCell>;
 };
 

@@ -23,6 +23,7 @@ export default async function BillingCalendarPage({
     ? requestedYear
     : getDefaultBillingCalendarYear();
   const months = getBillingCalendarMonths(activeYear);
+  const hasGeneratedMonths = months.some((month) => month.source === 'generated');
 
   return (
     <div className="m-2 space-y-4 md:m-4">
@@ -39,7 +40,7 @@ export default async function BillingCalendarPage({
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Billing Calendar</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Four-class billing plan copied from {billingCalendarSource.spreadsheetTitle} / {billingCalendarSource.sheetName}.
+              Four-class billing plan. 2024-2026 is copied from {billingCalendarSource.spreadsheetTitle} / {billingCalendarSource.sheetName}; 2027-2031 is generated as an internal draft.
             </p>
           </div>
 
@@ -72,6 +73,12 @@ export default async function BillingCalendarPage({
           </div>
         </div>
       </div>
+
+      {hasGeneratedMonths && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-950">
+          Generated draft: uses the 2024-2026 pattern, Ontario holiday rules, and known/estimated TDSB break dates. PA days are not closed here because the copied billing calendars do not close them. Review before parent-facing use.
+        </div>
+      )}
 
       <BillingCalendarTable months={months} />
     </div>
