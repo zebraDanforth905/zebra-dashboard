@@ -55,6 +55,19 @@ function formatCurrentSessions(row: SummerResponseRow): string {
   return row.current_weekday ? `${row.current_weekday} ${formatTime(row.current_start_time)}` : '—';
 }
 
+function currentSessionLabels(row: SummerResponseRow): string[] {
+  if (row.current_sessions_snapshot.length > 0) {
+    return row.current_sessions_snapshot.map(session => {
+      const slot = `${session.weekday} ${formatTime(session.start_time)}`;
+      return session.course_name ? `${slot} (${session.course_name})` : slot;
+    });
+  }
+  if (row.current_weekday) {
+    return [`${row.current_weekday} ${formatTime(row.current_start_time)}`];
+  }
+  return [];
+}
+
 function formatFallStatus(row: SummerResponseRow): string {
   if (row.fall_status !== 'same') {
     return row.fall_status ? (FALL_STATUS_LABEL[row.fall_status] ?? row.fall_status) : '—';
@@ -400,30 +413,30 @@ function SessionChoicesCell({
   if (choices.length === 0) {
     if (fallbackLabels.length === 0) return <span className="text-slate-400">—</span>;
     return (
-      <div className="space-y-1">
-        {fallbackLabels.map((label, index) => <div key={index}>{label}</div>)}
+      <div className="flex flex-wrap gap-1.5">
+        {fallbackLabels.map((label, index) => (
+          <span
+            key={index}
+            className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800"
+          >
+            {label}
+          </span>
+        ))}
       </div>
     );
   }
   return (
-    <div className="space-y-2">
+    <div className="flex flex-wrap gap-1.5">
       {choices.map(choice => {
         const startDate = formatStartDate(choice.start_date);
         return (
-          <div key={choice.session_id} className="leading-tight">
-            <div className="font-medium text-slate-700">
-              {choice.weekday} {formatTime(choice.start_time)}
-            </div>
-            {startDate ? (
-              <div className="mt-0.5 text-[11px] text-slate-500">
-                Start: <span className="font-medium text-slate-700">{startDate}</span>
-              </div>
-            ) : (
-              <div className="mt-0.5 text-[11px] font-medium text-amber-700">
-                Start date missing
-              </div>
-            )}
-          </div>
+          <span
+            key={choice.session_id}
+            className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800"
+            title={startDate ? `Starts ${startDate}` : 'Start date missing'}
+          >
+            {choice.weekday} {formatTime(choice.start_time)}
+          </span>
         );
       })}
     </div>
@@ -439,8 +452,15 @@ function LabelListCell({
 }) {
   if (labels.length === 0) return <span className="text-slate-400">{emptyLabel}</span>;
   return (
-    <div className="space-y-1">
-      {labels.map((label, index) => <div key={index}>{label}</div>)}
+    <div className="flex flex-wrap gap-1.5">
+      {labels.map((label, index) => (
+        <span
+          key={index}
+          className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800"
+        >
+          {label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -450,6 +470,68 @@ function WaitlistLabelsCell({ labels }: { labels: string[] }) {
   return (
     <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
       Waitlist: {labels.join(', ')}
+    </div>
+  );
+}
+
+function SummerPlanCell({ row }: { row: SummerResponseRow }) {
+  return (
+    <div className="space-y-2 text-xs text-slate-600">
+      <div>
+        <span className="mr-1 font-medium text-slate-500">Summer:</span>
+        <SummerBadge status={row.summer_status} />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Summer sessions</div>
+        <SessionChoicesCell choices={row.session_choices} fallbackLabels={row.session_labels} />
+        <WaitlistLabelsCell labels={row.waitlist_session_labels} />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Notes</div>
+        {row.custom_notes ? (
+          <div className="italic text-slate-600">{row.custom_notes}</div>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FallPlanCell({ row }: { row: SummerResponseRow }) {
+  const fallbackLabels = row.fall_status === 'same'
+    ? currentSessionLabels(row)
+    : row.fall_session_labels;
+
+  return (
+    <div className="space-y-2 text-xs text-slate-600">
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Fall plan</div>
+        <div className="text-slate-600">
+          {row.fall_status ? formatFallStatus(row) : <span className="text-slate-400">—</span>}
+        </div>
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Fall sessions</div>
+        <SessionChoicesCell choices={row.fall_session_choices} fallbackLabels={fallbackLabels} />
+        <WaitlistLabelsCell labels={row.fall_waitlist_session_labels} />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Pickup</div>
+        <PickupCell
+          pickupRequested={row.pickup_requested}
+          pickupSchool={row.pickup_school}
+          pickupSchoolOther={row.pickup_school_other}
+        />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Fall notes</div>
+        {row.fall_notes ? (
+          <div className="italic text-slate-600">{row.fall_notes}</div>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -505,7 +587,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
   if (row.submission_history.length === 0) return null;
   return (
     <tr className="bg-indigo-50/40">
-      <td colSpan={14} className="px-4 py-4">
+      <td colSpan={9} className="px-3 py-3">
         <div className="rounded-lg border border-indigo-100 bg-white">
           <div className="border-b border-indigo-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-700">
             Previous Submissions
@@ -933,36 +1015,31 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
-                <th className="px-4 py-3">Student</th>
-                <th className="px-4 py-3">Family</th>
-                <th className="px-4 py-3">Current</th>
-                <th className="px-4 py-3">Summer</th>
-                <th className="px-4 py-3">Summer Sessions</th>
-                <th className="px-4 py-3">Pickup</th>
-                <th className="px-4 py-3">Fall Plan</th>
-                <th className="px-4 py-3">Fall Sessions</th>
-                <th className="px-4 py-3">Notes</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Submitted</th>
-                <th className="px-4 py-3">Source</th>
-                <th className="px-4 py-3">Added to Portal</th>
-                <th className="px-4 py-3">Actions</th>
+                <th className="px-3 py-2">Student</th>
+                <th className="px-3 py-2">Family</th>
+                <th className="px-3 py-2">Summer Plan</th>
+                <th className="px-3 py-2">Fall Plan</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Submitted</th>
+                <th className="px-3 py-2">Source</th>
+                <th className="px-3 py-2">Added to Portal</th>
+                <th className="px-3 py-2">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={9} className="px-3 py-6 text-center text-slate-400 text-sm">
                     No matching responses.
                   </td>
                 </tr>
               ) : filtered.map(row => (
                 <Fragment key={row.request_id}>
                 <tr className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">
+                  <td className="px-3 py-2 align-top font-medium text-slate-800 whitespace-nowrap">
                     <div className="space-y-1">
                       <div>{row.student_name}</div>
                       <UpdatedBadge
@@ -972,53 +1049,32 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                       />
                     </div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  <td className="px-3 py-2 align-top whitespace-nowrap">
                     <FamilyCell row={row} />
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">
-                    {formatCurrentSessions(row)}
+                  <td className="px-3 py-2 align-top min-w-[240px]">
+                    <SummerPlanCell row={row} />
                   </td>
-                  <td className="px-4 py-3">
-                    <SummerBadge status={row.summer_status} />
+                  <td className="px-3 py-2 align-top min-w-[240px]">
+                    <FallPlanCell row={row} />
                   </td>
-                  <td className="px-4 py-3 text-slate-600 text-xs">
-                    <SessionChoicesCell choices={row.session_choices} fallbackLabels={row.session_labels} />
-                    <WaitlistLabelsCell labels={row.waitlist_session_labels} />
-                  </td>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
-                    <PickupCell
-                      pickupRequested={row.pickup_requested}
-                      pickupSchool={row.pickup_school}
-                      pickupSchoolOther={row.pickup_school_other}
-                    />
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">
-                    {row.fall_status ? formatFallStatus(row) : <span className="text-slate-400">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 text-xs">
-                    <SessionChoicesCell choices={row.fall_session_choices} fallbackLabels={row.fall_session_labels} />
-                    <WaitlistLabelsCell labels={row.fall_waitlist_session_labels} />
-                  </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[180px]">
-                    <NotesCell summerNotes={row.custom_notes} fallNotes={row.fall_notes} />
-                  </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-2 align-top">
                     <StatusBadge status={row.status} />
                   </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                  <td className="px-3 py-2 align-top text-slate-400 whitespace-nowrap">
                     {formatDate(row.submitted_at)}
                   </td>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                  <td className="px-3 py-2 align-top whitespace-nowrap">
                     <SourceBadge source={row.submitted_by} name={row.submitted_by_name} />
                     <CsvExportStatus row={row} />
                   </td>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                  <td className="px-3 py-2 align-top whitespace-nowrap">
                     <AddedToPortalCell
                       addedAt={row.added_to_portal_at}
                       addedBy={row.added_to_portal_by}
                     />
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  <td className="px-3 py-2 align-top whitespace-nowrap">
                     <div className="flex flex-col gap-1">
                       <button
                         onClick={() => setModalRow(row)}
