@@ -1,7 +1,11 @@
 'use client';
 
 import { Fragment, useMemo, useState, useTransition } from 'react';
-import { SessionChoiceSummary, SummerResponseRow, SummerStats } from '@/app/lib/definitions';
+import {
+  SessionChoiceSummary,
+  SummerResponseRow,
+  SummerStats,
+} from '@/app/lib/definitions';
 import {
   approveAllEnrolling,
   deleteSummerResponse,
@@ -13,6 +17,8 @@ import {
   updateSummerResponseSource,
 } from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
+import StudentNotesModal from '@/app/ui/students/student-notes-modal';
+import CustomerNotesModal from '@/app/ui/billing/customer-notes-modal';
 
 type ResponsePatch = Partial<Pick<
   SummerResponseRow,
@@ -568,22 +574,87 @@ function AddedToPortalCell({
   );
 }
 
-function FamilyCell({ row, emailClassName = 'text-xs' }: { row: SummerResponseRow; emailClassName?: string }) {
+function StudentCell({ row, currentUserName }: { row: SummerResponseRow; currentUserName: string }) {
+  const [showModal, setShowModal] = useState(false);
+
+  return (
+    <div className="space-y-1">
+      <div className="font-medium text-slate-800 whitespace-nowrap">{row.student_name}</div>
+      <div className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+        <div className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Student Notes</div>
+        <button
+          type="button"
+          onClick={() => setShowModal(true)}
+          className="mt-1 w-full rounded-md border border-sky-200 bg-white px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-sky-50"
+        >
+          <div className="font-medium text-sky-700">Open notes</div>
+          <div className="mt-0.5 line-clamp-2 text-slate-600">
+            {row.student_note ?? 'No notes yet. Click to add one.'}
+          </div>
+        </button>
+        {showModal && (
+          <StudentNotesModal
+            studentId={row.student_id}
+            studentName={row.student_name}
+            currentUserName={currentUserName}
+            onClose={() => setShowModal(false)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FamilyCell({
+  row,
+  currentUserName,
+  emailClassName = 'text-xs',
+  showNotes = true,
+}: {
+  row: SummerResponseRow;
+  currentUserName: string;
+  emailClassName?: string;
+  showNotes?: boolean;
+}) {
+  const [showModal, setShowModal] = useState(false);
   const alternateEmail = row.parent_alternate_email?.trim();
   const showAlternate = alternateEmail && alternateEmail.toLowerCase() !== row.parent_email.trim().toLowerCase();
 
   return (
-    <>
+    <div>
       <div className="text-slate-700">{row.parent_name}</div>
       <div className={`${emailClassName} text-slate-400`}>{row.parent_email}</div>
       {showAlternate && (
         <div className={`${emailClassName} text-slate-400`}>{alternateEmail}</div>
       )}
-    </>
+      {showNotes && (
+        <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+          <div className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Family Notes</div>
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="mt-1 w-full rounded-md border border-sky-200 bg-white px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-sky-50"
+          >
+            <div className="font-medium text-sky-700">Open notes</div>
+            <div className="mt-0.5 line-clamp-2 text-slate-600">
+              {row.customer_note ?? 'No notes yet. Click to add one.'}
+            </div>
+          </button>
+          {showModal && (
+            <CustomerNotesModal
+              customerId={row.customer_id}
+              customerName={row.parent_name}
+              currentUserName={currentUserName}
+              onClose={() => setShowModal(false)}
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
-function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
+function ResponseHistoryRows({ row, currentUserName }: { row: SummerResponseRow; currentUserName: string }) {
   if (row.submission_history.length === 0) return null;
   return (
     <tr className="bg-indigo-50/40">
@@ -618,7 +689,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                       {row.student_name}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      <FamilyCell row={row} emailClassName="text-[11px]" />
+                      <FamilyCell row={row} currentUserName={currentUserName} emailClassName="text-[11px]" showNotes={false} />
                     </td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
                       {row.current_weekday
@@ -776,7 +847,15 @@ function NoChangeCompleteButton({ onDone }: { onDone: (msg: string, updatedIds: 
   );
 }
 
-export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[]; stats: SummerStats }) {
+export default function ResponsesTab({
+  rows,
+  stats,
+  currentUserName,
+}: {
+  rows: SummerResponseRow[];
+  stats: SummerStats;
+  currentUserName: string;
+}) {
   const [rowPatches, setRowPatches] = useState<Record<string, ResponsePatch>>({});
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [workflowFilter, setWorkflowFilter] = useState('needs_action');
@@ -1039,9 +1118,9 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
               ) : filtered.map(row => (
                 <Fragment key={row.request_id}>
                 <tr className="hover:bg-slate-50">
-                  <td className="px-3 py-2 align-top font-medium text-slate-800 whitespace-nowrap">
+                  <td className="px-3 py-2 align-top min-w-[220px]">
                     <div className="space-y-1">
-                      <div>{row.student_name}</div>
+                      <StudentCell row={row} currentUserName={currentUserName} />
                       <UpdatedBadge
                         count={row.previous_submission_count}
                         expanded={expandedHistoryIds.has(row.request_id)}
@@ -1049,8 +1128,8 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                       />
                     </div>
                   </td>
-                  <td className="px-3 py-2 align-top whitespace-nowrap">
-                    <FamilyCell row={row} />
+                  <td className="px-3 py-2 align-top min-w-[240px]">
+                    <FamilyCell row={row} currentUserName={currentUserName} />
                   </td>
                   <td className="px-3 py-2 align-top min-w-[240px]">
                     <SummerPlanCell row={row} />
@@ -1116,7 +1195,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                     </div>
                   </td>
                 </tr>
-                {expandedHistoryIds.has(row.request_id) && <ResponseHistoryRows row={row} />}
+                {expandedHistoryIds.has(row.request_id) && <ResponseHistoryRows row={row} currentUserName={currentUserName} />}
                 </Fragment>
               ))}
             </tbody>

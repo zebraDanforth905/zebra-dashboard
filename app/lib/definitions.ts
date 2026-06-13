@@ -603,10 +603,19 @@ export type SummerResponseHistoryItem = {
 export type SummerResponseRow = {
   request_id: string;
   student_id: string;
+  customer_id: string;
   student_name: string;
+  student_note_id: string | null;
+  student_note: string | null;
+  student_note_date: Date | null;
+  student_note_creator: string | null;
   parent_name: string;
   parent_email: string;
   parent_alternate_email: string | null;
+  customer_note_id: string | null;
+  customer_note: string | null;
+  customer_note_date: Date | null;
+  customer_note_creator: string | null;
   summer_status: SummerSchedulingPayload['summer_status'] | 'other';
   session_labels: string[];
   session_choices: SessionChoiceSummary[];

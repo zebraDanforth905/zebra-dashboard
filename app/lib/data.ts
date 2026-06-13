@@ -1372,6 +1372,10 @@ export async function fetchStudentNotes(studentId: string) {
 }
 
 export async function fetchCustomerNotes(customerId: string) {
+  if (!customerId || !customerId.trim()) {
+    return [];
+  }
+
   try {
     const notes = await sql<CustomerNote[]>`
       SELECT 

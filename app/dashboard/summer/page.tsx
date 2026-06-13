@@ -17,6 +17,7 @@ export const metadata: Metadata = { title: 'Summer Registration' };
 
 type SessionUserWithType = {
   user_type?: string;
+  name?: string;
 };
 
 export default async function SummerPage({
@@ -26,6 +27,7 @@ export default async function SummerPage({
 }) {
   const session = await auth();
   const userType = (session?.user as SessionUserWithType | undefined)?.user_type;
+  const currentUserName = (session?.user as SessionUserWithType | undefined)?.name || 'Unknown';
   if (userType !== 'admin') {
     redirect('/dashboard');
   }
@@ -72,7 +74,7 @@ export default async function SummerPage({
       )}
 
       {tab === 'responses' && stats && responseRows && (
-        <ResponsesTab rows={responseRows} stats={stats} />
+        <ResponsesTab rows={responseRows} stats={stats} currentUserName={currentUserName} />
       )}
 
       {tab === 'schedule' && scheduleRows && (

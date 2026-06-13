@@ -554,17 +554,24 @@ export async function fetchSummerStats(): Promise<SummerStats> {
 }
 
 export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
-  'use cache';
-  cacheTag('summer-responses');
   try {
     return await sql<SummerResponseRow[]>`
       SELECT
         pr.id::text                                                          AS request_id,
         s.id::text                                                           AS student_id,
+        c.id::text                                                           AS customer_id,
         s.name                                                               AS student_name,
+        rsn.student_note_id,
+        rsn.student_note,
+        rsn.student_note_date,
+        rsn.student_note_creator,
         c.name                                                               AS parent_name,
         c.email                                                              AS parent_email,
         c.alternate_email                                                    AS parent_alternate_email,
+        rcn.customer_note_id,
+        rcn.customer_note,
+        rcn.customer_note_date,
+        rcn.customer_note_creator,
         COALESCE(pr.payload->>'summer_status', 'other')                      AS summer_status,
         COALESCE(sl.session_labels, '{}')                                    AS session_labels,
         COALESCE(sl.session_choices, '[]'::json)                             AS session_choices,
@@ -596,6 +603,28 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
       JOIN students s  ON s.id  = pr.student_id
       JOIN customers c ON c.id  = s.customer_id
       LEFT JOIN parent_tokens pt ON pt.id = pr.token_id
+      LEFT JOIN LATERAL (
+        SELECT
+          sn.id::text AS student_note_id,
+          sn.content AS student_note,
+          sn.date AS student_note_date,
+          sn.creator AS student_note_creator
+        FROM student_notes sn
+        WHERE sn.student_id = s.id
+        ORDER BY sn.date DESC, sn.id DESC
+        LIMIT 1
+      ) rsn ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          cn.id::text AS customer_note_id,
+          cn.content AS customer_note,
+          cn.date AS customer_note_date,
+          cn.creator AS customer_note_creator
+        FROM customer_notes cn
+        WHERE cn.customer_id = c.id
+        ORDER BY cn.date DESC, cn.id DESC
+        LIMIT 1
+      ) rcn ON true
       LEFT JOIN LATERAL (
         SELECT
           ARRAY_AGG(
