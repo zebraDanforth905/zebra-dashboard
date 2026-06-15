@@ -17,13 +17,6 @@ type SessionUserWithType = {
   user_type?: string;
 };
 
-type StaffNote = {
-  id: string;
-  body: string;
-  created_at: Date;
-  created_by: string;
-};
-
 async function requireAdmin(): Promise<void> {
   const session = await auth();
   const userType = (session?.user as SessionUserWithType | undefined)?.user_type;
@@ -684,66 +677,6 @@ export async function clearAddedToPortal(requestId: string): Promise<void> {
   revalidateTag('summer-responses', 'max');
 }
 
-export async function markAdjustedForSummer(requestId: string): Promise<{ adjusted_for_summer_at: Date; adjusted_for_summer_by: string }> {
-  await requireAdmin();
-  const adjustedBy = await staffDisplayName();
-  const rows = await sql<{ adjusted_for_summer_at: Date; adjusted_for_summer_by: string }[]>`
-    UPDATE parent_requests
-    SET adjusted_for_summer_at = NOW(), adjusted_for_summer_by = ${adjustedBy}, updated_at = NOW()
-    WHERE id = ${requestId}::uuid
-      AND is_latest = TRUE
-      AND removed_at IS NULL
-    RETURNING adjusted_for_summer_at, adjusted_for_summer_by
-  `;
-  if (rows.length === 0) {
-    throw new Error('Response not found.');
-  }
-  revalidateTag('summer-responses', 'max');
-  return rows[0];
-}
-
-export async function clearAdjustedForSummer(requestId: string): Promise<void> {
-  await requireAdmin();
-  await sql`
-    UPDATE parent_requests
-    SET adjusted_for_summer_at = NULL, adjusted_for_summer_by = NULL, updated_at = NOW()
-    WHERE id = ${requestId}::uuid
-      AND is_latest = TRUE
-      AND removed_at IS NULL
-  `;
-  revalidateTag('summer-responses', 'max');
-}
-
-export async function markAdjustedForFall(requestId: string): Promise<{ adjusted_for_fall_at: Date; adjusted_for_fall_by: string }> {
-  await requireAdmin();
-  const adjustedBy = await staffDisplayName();
-  const rows = await sql<{ adjusted_for_fall_at: Date; adjusted_for_fall_by: string }[]>`
-    UPDATE parent_requests
-    SET adjusted_for_fall_at = NOW(), adjusted_for_fall_by = ${adjustedBy}, updated_at = NOW()
-    WHERE id = ${requestId}::uuid
-      AND is_latest = TRUE
-      AND removed_at IS NULL
-    RETURNING adjusted_for_fall_at, adjusted_for_fall_by
-  `;
-  if (rows.length === 0) {
-    throw new Error('Response not found.');
-  }
-  revalidateTag('summer-responses', 'max');
-  return rows[0];
-}
-
-export async function clearAdjustedForFall(requestId: string): Promise<void> {
-  await requireAdmin();
-  await sql`
-    UPDATE parent_requests
-    SET adjusted_for_fall_at = NULL, adjusted_for_fall_by = NULL, updated_at = NOW()
-    WHERE id = ${requestId}::uuid
-      AND is_latest = TRUE
-      AND removed_at IS NULL
-  `;
-  revalidateTag('summer-responses', 'max');
-}
-
 export async function markNeedsFollowup(requestId: string): Promise<void> {
   await requireAdmin();
   await sql`
@@ -810,45 +743,6 @@ export async function updateSummerResponseSource(
     submitted_by: rows[0].submitted_by,
     submitted_by_name: rows[0].submitted_by_name,
   };
-}
-
-export async function addStaffNoteToSummerResponse(
-  requestId: string,
-  note: string,
-): Promise<{ staff_notes: StaffNote[] }> {
-  await requireAdmin();
-  const body = note.trim();
-  if (!body) {
-    throw new Error('Note cannot be empty.');
-  }
-  if (body.length > 2000) {
-    throw new Error('Note must be 2000 characters or fewer.');
-  }
-
-  const createdBy = await staffDisplayName();
-  const noteId = randomBytes(8).toString('hex');
-  const rows = await sql<{ staff_notes: StaffNote[] }[]>`
-    UPDATE parent_requests
-    SET
-      staff_notes = COALESCE(staff_notes, '[]'::jsonb) || JSONB_BUILD_ARRAY(
-        JSONB_BUILD_OBJECT(
-          'id', ${noteId},
-          'body', ${body},
-          'created_at', NOW(),
-          'created_by', ${createdBy}
-        )
-      ),
-      updated_at = NOW()
-    WHERE id = ${requestId}::uuid
-      AND is_latest = TRUE
-      AND removed_at IS NULL
-    RETURNING staff_notes
-  `;
-  if (rows.length === 0) {
-    throw new Error('Response not found.');
-  }
-  revalidateTag('summer-responses', 'max');
-  return { staff_notes: rows[0].staff_notes };
 }
 
 // ── Parent form submission ────────────────────────────────────────────────────

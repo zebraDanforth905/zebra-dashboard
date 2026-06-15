@@ -1,30 +1,28 @@
 'use client';
 
 import { Fragment, useMemo, useState, useTransition } from 'react';
-import { SessionChoiceSummary, SummerResponseRow, SummerStats } from '@/app/lib/definitions';
 import {
+  SessionChoiceSummary,
+  SummerResponseRow,
+  SummerStats,
+} from '@/app/lib/definitions';
+import {
+  approveAllEnrolling,
   deleteSummerResponse,
-  markAdjustedForSummer,
-  clearAdjustedForSummer,
-  markAdjustedForFall,
-  clearAdjustedForFall,
+  markAllNoChangeComplete,
+  markAddedToPortal,
+  clearAddedToPortal,
   markNeedsFollowup,
   clearFollowup,
   updateSummerResponseSource,
-  addStaffNoteToSummerResponse,
 } from '@/app/lib/summer-actions';
 import ApproveRequestModal from './approve-request-modal';
+import StudentNotesModal from '@/app/ui/students/student-notes-modal';
+import CustomerNotesModal from '@/app/ui/billing/customer-notes-modal';
 
 type ResponsePatch = Partial<Pick<
   SummerResponseRow,
-  | 'status'
-  | 'adjusted_for_summer_at'
-  | 'adjusted_for_summer_by'
-  | 'adjusted_for_fall_at'
-  | 'adjusted_for_fall_by'
-  | 'submitted_by'
-  | 'submitted_by_name'
-  | 'staff_notes'
+  'status' | 'added_to_portal_at' | 'added_to_portal_by' | 'submitted_by' | 'submitted_by_name'
 >>;
 
 function formatTime(t: string | null): string {
@@ -68,6 +66,19 @@ function formatCurrentSessions(row: SummerResponseRow): string {
   return row.current_weekday ? `${row.current_weekday} ${formatTime(row.current_start_time)}` : '—';
 }
 
+function currentSessionLabels(row: SummerResponseRow): string[] {
+  if (row.current_sessions_snapshot.length > 0) {
+    return row.current_sessions_snapshot.map(session => {
+      const slot = `${session.weekday} ${formatTime(session.start_time)}`;
+      return session.course_name ? `${slot} (${session.course_name})` : slot;
+    });
+  }
+  if (row.current_weekday) {
+    return [`${row.current_weekday} ${formatTime(row.current_start_time)}`];
+  }
+  return [];
+}
+
 function formatFallStatus(row: SummerResponseRow): string {
   if (row.fall_status !== 'same') {
     return row.fall_status ? (FALL_STATUS_LABEL[row.fall_status] ?? row.fall_status) : '—';
@@ -85,7 +96,7 @@ const SUMMER_STATUS_STYLE: Record<string, string> = {
   other:     'bg-purple-100 text-purple-700',
 };
 const SUMMER_STATUS_LABEL: Record<string, string> = {
-  enrolling: 'Attending',
+  enrolling: 'Enrolling',
   pausing:   'Pausing',
   no_change: 'No Change',
   other:     'Other',
@@ -108,7 +119,7 @@ const REQUEST_STATUS_STYLE: Record<string, string> = {
 const REQUEST_STATUS_LABEL: Record<string, string> = {
   pending:               'Pending',
   reviewed:              'Reviewed',
-  completed:             'Completed',
+  completed:             'Approved',
   needs_manual_followup: 'Needs Followup',
 };
 
@@ -308,6 +319,72 @@ function FilterSelect({ value, onChange, options }: {
   );
 }
 
+function ApproveAllModal({ enrollingCount, onClose, onDone }: {
+  enrollingCount: number;
+  onClose: () => void;
+  onDone: (msg: string, completedIds: string[]) => void;
+}) {
+  const [startDate, setStartDate] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleConfirm() {
+    if (!startDate) { setError('Start date is required.'); return; }
+    setError(null);
+    startTransition(async () => {
+      const { created, skipped, completedIds } = await approveAllEnrolling(startDate);
+      onDone(
+        skipped > 0
+          ? `Approved ${created}, skipped ${skipped} (no course to inherit).`
+          : `Approved ${created} enrolment${created !== 1 ? 's' : ''}.`,
+        completedIds,
+      );
+      onClose();
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6 space-y-4">
+        <h2 className="text-base font-semibold text-slate-900">Approve All Enrolling</h2>
+        <p className="text-sm text-slate-600">
+          This will create enrolments for <span className="font-semibold text-emerald-700">{enrollingCount}</span> pending enrolling student{enrollingCount !== 1 ? 's' : ''}.
+        </p>
+        <div>
+          <label className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-1">
+            Start Date <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={e => setStartDate(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
+          />
+        </div>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="flex justify-end gap-3 pt-1">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={isPending}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
+          >
+            {isPending ? 'Approving…' : 'Confirm & Approve'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onDeleted: (id: string) => void }) {
   const [confirm, setConfirm] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -345,66 +422,22 @@ function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onD
   );
 }
 
-const NOTE_PREVIEW_LENGTH = 120;
-
-function NoteBlock({ label, note }: { label: string; note: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const isLong = note.length > NOTE_PREVIEW_LENGTH;
-  const visibleNote = expanded || !isLong ? note : `${note.slice(0, NOTE_PREVIEW_LENGTH).trimEnd()}...`;
-
+function NotesCell({ summerNotes, fallNotes }: { summerNotes: string | null; fallNotes: string | null }) {
+  if (!summerNotes && !fallNotes) return <span className="text-slate-400">—</span>;
   return (
-    <div className="rounded-md border border-slate-100 bg-slate-50 px-2 py-1.5">
-      <div className="font-medium text-slate-500">{label}</div>
-      <div className="mt-0.5 whitespace-pre-wrap break-words italic leading-5 text-slate-600">
-        {visibleNote}
-      </div>
-      {isLong && (
-        <button
-          type="button"
-          onClick={() => setExpanded(value => !value)}
-          className="mt-1 text-[11px] font-medium text-sky-700 hover:text-sky-900"
-        >
-          {expanded ? 'Show less' : 'More details'}
-        </button>
+    <div className="space-y-1">
+      {summerNotes && (
+        <div>
+          <span className="font-medium text-slate-500">Summer: </span>
+          <span className="italic">{summerNotes}</span>
+        </div>
       )}
-    </div>
-  );
-}
-
-function StaffNotesBlock({ notes }: { notes: SummerResponseRow['staff_notes'] }) {
-  if (notes.length === 0) return null;
-  return (
-    <div className="rounded-md border border-amber-100 bg-amber-50 px-2 py-1.5">
-      <div className="font-medium text-amber-700">Staff</div>
-      <div className="mt-1 space-y-2">
-        {notes.map(note => (
-          <div key={note.id} className="text-slate-700">
-            <div className="whitespace-pre-wrap break-words leading-5">{note.body}</div>
-            <div className="mt-0.5 text-[11px] text-amber-700/70">
-              {note.created_by} · {formatDate(note.created_at)}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function NotesCell({
-  summerNotes,
-  fallNotes,
-  staffNotes,
-}: {
-  summerNotes: string | null;
-  fallNotes: string | null;
-  staffNotes: SummerResponseRow['staff_notes'];
-}) {
-  if (!summerNotes && !fallNotes && staffNotes.length === 0) return <span className="text-slate-400">—</span>;
-  return (
-    <div className="space-y-2">
-      {summerNotes && <NoteBlock label="Summer" note={summerNotes} />}
-      {fallNotes && <NoteBlock label="Fall" note={fallNotes} />}
-      <StaffNotesBlock notes={staffNotes} />
+      {fallNotes && (
+        <div>
+          <span className="font-medium text-slate-500">Fall: </span>
+          <span className="italic">{fallNotes}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -438,30 +471,30 @@ function SessionChoicesCell({
   if (choices.length === 0) {
     if (fallbackLabels.length === 0) return <span className="text-slate-400">—</span>;
     return (
-      <div className="space-y-1">
-        {fallbackLabels.map((label, index) => <div key={index}>{label}</div>)}
+      <div className="flex flex-wrap gap-1.5">
+        {fallbackLabels.map((label, index) => (
+          <span
+            key={index}
+            className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800"
+          >
+            {label}
+          </span>
+        ))}
       </div>
     );
   }
   return (
-    <div className="space-y-2">
+    <div className="flex flex-wrap gap-1.5">
       {choices.map(choice => {
         const startDate = formatStartDate(choice.start_date);
         return (
-          <div key={choice.session_id} className="leading-tight">
-            <div className="font-medium text-slate-700">
-              {choice.weekday} {formatTime(choice.start_time)}
-            </div>
-            {startDate ? (
-              <div className="mt-0.5 text-[11px] text-slate-500">
-                Start: <span className="font-medium text-slate-700">{startDate}</span>
-              </div>
-            ) : (
-              <div className="mt-0.5 text-[11px] font-medium text-amber-700">
-                Start date missing
-              </div>
-            )}
-          </div>
+          <span
+            key={choice.session_id}
+            className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800"
+            title={startDate ? `Starts ${startDate}` : 'Start date missing'}
+          >
+            {choice.weekday} {formatTime(choice.start_time)}
+          </span>
         );
       })}
     </div>
@@ -477,8 +510,15 @@ function LabelListCell({
 }) {
   if (labels.length === 0) return <span className="text-slate-400">{emptyLabel}</span>;
   return (
-    <div className="space-y-1">
-      {labels.map((label, index) => <div key={index}>{label}</div>)}
+    <div className="flex flex-wrap gap-1.5">
+      {labels.map((label, index) => (
+        <span
+          key={index}
+          className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800"
+        >
+          {label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -488,6 +528,68 @@ function WaitlistLabelsCell({ labels }: { labels: string[] }) {
   return (
     <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
       Waitlist: {labels.join(', ')}
+    </div>
+  );
+}
+
+function SummerPlanCell({ row }: { row: SummerResponseRow }) {
+  return (
+    <div className="space-y-2 text-xs text-slate-600">
+      <div>
+        <span className="mr-1 font-medium text-slate-500">Summer:</span>
+        <SummerBadge status={row.summer_status} />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Summer sessions</div>
+        <SessionChoicesCell choices={row.session_choices} fallbackLabels={row.session_labels} />
+        <WaitlistLabelsCell labels={row.waitlist_session_labels} />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Notes</div>
+        {row.custom_notes ? (
+          <div className="italic text-slate-600">{row.custom_notes}</div>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FallPlanCell({ row }: { row: SummerResponseRow }) {
+  const fallbackLabels = row.fall_status === 'same'
+    ? currentSessionLabels(row)
+    : row.fall_session_labels;
+
+  return (
+    <div className="space-y-2 text-xs text-slate-600">
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Fall plan</div>
+        <div className="text-slate-600">
+          {row.fall_status ? formatFallStatus(row) : <span className="text-slate-400">—</span>}
+        </div>
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Fall sessions</div>
+        <SessionChoicesCell choices={row.fall_session_choices} fallbackLabels={fallbackLabels} />
+        <WaitlistLabelsCell labels={row.fall_waitlist_session_labels} />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Pickup</div>
+        <PickupCell
+          pickupRequested={row.pickup_requested}
+          pickupSchool={row.pickup_school}
+          pickupSchoolOther={row.pickup_school_other}
+        />
+      </div>
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Fall notes</div>
+        {row.fall_notes ? (
+          <div className="italic text-slate-600">{row.fall_notes}</div>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -507,71 +609,109 @@ function formatHistoryFallChoice(
   return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}${startSuffix}` : `${FALL_STATUS_LABEL.same}${startSuffix}`;
 }
 
-type WorkflowSnapshot = {
-  adjusted_for_summer_at: Date | string | null;
-  adjusted_for_summer_by: string | null;
-  adjusted_for_fall_at: Date | string | null;
-  adjusted_for_fall_by: string | null;
-  added_to_portal_at: Date | string | null;
-  added_to_portal_by: string | null;
-};
-
-function WorkflowStatusCell({ item }: { item: WorkflowSnapshot }) {
-  const entries = [
-    {
-      label: 'Summer',
-      at: item.adjusted_for_summer_at,
-      by: item.adjusted_for_summer_by,
-      className: 'text-orange-700',
-    },
-    {
-      label: 'Fall',
-      at: item.adjusted_for_fall_at,
-      by: item.adjusted_for_fall_by,
-      className: 'text-emerald-700',
-    },
-    {
-      label: 'Legacy portal',
-      at: item.added_to_portal_at,
-      by: item.added_to_portal_by,
-      className: 'text-slate-600',
-    },
-  ].filter(entry => entry.at);
-
-  if (entries.length === 0) return <span className="text-slate-400">—</span>;
-
+function AddedToPortalCell({
+  addedAt,
+  addedBy,
+}: {
+  addedAt: Date | string | null;
+  addedBy: string | null;
+}) {
+  if (!addedAt) return <span className="text-slate-400">—</span>;
   return (
-    <div className="space-y-1">
-      {entries.map(entry => (
-        <div key={entry.label}>
-          <span className={`font-medium ${entry.className}`}>{entry.label}: {formatDate(entry.at!)}</span>
-          {entry.by && <div className="text-[11px] text-slate-500">by {entry.by}</div>}
-        </div>
-      ))}
+    <div>
+      <span className="text-emerald-700 font-medium">{formatDate(addedAt)}</span>
+      {addedBy && (
+        <div className="mt-0.5 text-[11px] text-slate-500">by {addedBy}</div>
+      )}
     </div>
   );
 }
 
-function FamilyCell({ row, emailClassName = 'text-xs' }: { row: SummerResponseRow; emailClassName?: string }) {
+function StudentCell({ row, currentUserName }: { row: SummerResponseRow; currentUserName: string }) {
+  const [showModal, setShowModal] = useState(false);
+
+  return (
+    <div className="space-y-1">
+      <div className="font-medium text-slate-800 whitespace-nowrap">{row.student_name}</div>
+      <div className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+        <div className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Student Notes</div>
+        <button
+          type="button"
+          onClick={() => setShowModal(true)}
+          className="mt-1 w-full rounded-md border border-sky-200 bg-white px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-sky-50"
+        >
+          <div className="font-medium text-sky-700">Open notes</div>
+          <div className="mt-0.5 line-clamp-2 text-slate-600">
+            {row.student_note ?? 'No notes yet. Click to add one.'}
+          </div>
+        </button>
+        {showModal && (
+          <StudentNotesModal
+            studentId={row.student_id}
+            studentName={row.student_name}
+            currentUserName={currentUserName}
+            onClose={() => setShowModal(false)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FamilyCell({
+  row,
+  currentUserName,
+  emailClassName = 'text-xs',
+  showNotes = true,
+}: {
+  row: SummerResponseRow;
+  currentUserName: string;
+  emailClassName?: string;
+  showNotes?: boolean;
+}) {
+  const [showModal, setShowModal] = useState(false);
   const alternateEmail = row.parent_alternate_email?.trim();
   const showAlternate = alternateEmail && alternateEmail.toLowerCase() !== row.parent_email.trim().toLowerCase();
 
   return (
-    <>
+    <div>
       <div className="text-slate-700">{row.parent_name}</div>
       <div className={`${emailClassName} text-slate-400`}>{row.parent_email}</div>
       {showAlternate && (
         <div className={`${emailClassName} text-slate-400`}>{alternateEmail}</div>
       )}
-    </>
+      {showNotes && (
+        <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+          <div className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Family Notes</div>
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="mt-1 w-full rounded-md border border-sky-200 bg-white px-2 py-1 text-left text-[11px] text-slate-700 hover:bg-sky-50"
+          >
+            <div className="font-medium text-sky-700">Open notes</div>
+            <div className="mt-0.5 line-clamp-2 text-slate-600">
+              {row.customer_note ?? 'No notes yet. Click to add one.'}
+            </div>
+          </button>
+          {showModal && (
+            <CustomerNotesModal
+              customerId={row.customer_id}
+              customerName={row.parent_name}
+              currentUserName={currentUserName}
+              onClose={() => setShowModal(false)}
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
-function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
+function ResponseHistoryRows({ row, currentUserName }: { row: SummerResponseRow; currentUserName: string }) {
   if (row.submission_history.length === 0) return null;
   return (
     <tr className="bg-indigo-50/40">
-      <td colSpan={14} className="px-4 py-4">
+      <td colSpan={9} className="px-3 py-3">
         <div className="rounded-lg border border-indigo-100 bg-white">
           <div className="border-b border-indigo-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-700">
             Previous Submissions
@@ -582,17 +722,17 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                 <tr className="border-b border-slate-100 bg-slate-50 text-left font-semibold text-slate-500">
                   <th className="px-3 py-2">Student</th>
                   <th className="px-3 py-2">Family</th>
-                  <th className="px-3 py-2 min-w-[160px]">Current</th>
+                  <th className="px-3 py-2">Current</th>
                   <th className="px-3 py-2">Summer</th>
                   <th className="px-3 py-2">Summer Sessions</th>
                   <th className="px-3 py-2">Pickup</th>
-                  <th className="px-3 py-2 min-w-[180px]">Fall</th>
+                  <th className="px-3 py-2">Fall</th>
                   <th className="px-3 py-2">Fall Sessions</th>
-                  <th className="px-3 py-2 min-w-[200px]">Notes</th>
+                  <th className="px-3 py-2">Notes</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Submitted</th>
                   <th className="px-3 py-2">Source</th>
-                  <th className="px-3 py-2">Workflow</th>
+                  <th className="px-3 py-2">Added to Portal</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -602,9 +742,9 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                       {row.student_name}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      <FamilyCell row={row} emailClassName="text-[11px]" />
+                      <FamilyCell row={row} currentUserName={currentUserName} emailClassName="text-[11px]" showNotes={false} />
                     </td>
-                    <td className="px-3 py-2 min-w-[160px] max-w-[200px] whitespace-normal break-words text-slate-500 leading-5">
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
                       {row.current_weekday
                         ? `${row.current_weekday} ${formatTime(row.current_start_time)}`
                         : '—'}
@@ -623,7 +763,7 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                         pickupSchoolOther={item.pickup_school_other}
                       />
                     </td>
-                    <td className="px-3 py-2 min-w-[180px] max-w-[240px] whitespace-normal break-words text-slate-600 leading-5">
+                    <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
                       {formatHistoryFallChoice(item, row)}
                     </td>
                     <td className="px-3 py-2 text-slate-600">
@@ -633,8 +773,8 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                       />
                       <WaitlistLabelsCell labels={item.fall_waitlist_session_labels} />
                     </td>
-                    <td className="px-3 py-2 min-w-[200px] max-w-[260px] text-slate-500">
-                      <NotesCell summerNotes={item.custom_notes} fallNotes={item.fall_notes} staffNotes={item.staff_notes} />
+                    <td className="px-3 py-2 text-slate-500 max-w-[220px]">
+                      <NotesCell summerNotes={item.custom_notes} fallNotes={item.fall_notes} />
                     </td>
                     <td className="px-3 py-2">
                       <StatusBadge status={item.status} />
@@ -649,7 +789,10 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
                       <SourceBadge source={item.submitted_by} name={item.submitted_by_name} />
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      <WorkflowStatusCell item={item} />
+                      <AddedToPortalCell
+                        addedAt={item.added_to_portal_at}
+                        addedBy={item.added_to_portal_by}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -662,42 +805,30 @@ function ResponseHistoryRows({ row }: { row: SummerResponseRow }) {
   );
 }
 
-function AdjustmentButton({
+function AddedToPortalButton({
   requestId,
-  kind,
-  adjustedAt,
-  adjustedBy,
+  addedAt,
+  addedBy,
   onChanged,
 }: {
   requestId: string;
-  kind: 'summer' | 'fall';
-  adjustedAt: Date | null;
-  adjustedBy: string | null;
-  onChanged: (requestId: string, patch: ResponsePatch) => void;
+  addedAt: Date | null;
+  addedBy: string | null;
+  onChanged: (requestId: string, addedAt: Date | null, addedBy: string | null) => void;
 }) {
   const [isPending, startTransition] = useTransition();
-  const label = kind === 'summer' ? 'Summer' : 'Fall';
-  const markedClass = kind === 'summer'
-    ? 'border-orange-200 bg-orange-50 hover:bg-orange-100 text-orange-700'
-    : 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700';
-
-  if (adjustedAt) {
+  if (addedAt) {
     return (
       <button
         disabled={isPending}
         onClick={() => startTransition(async () => {
-          if (kind === 'summer') {
-            await clearAdjustedForSummer(requestId);
-            onChanged(requestId, { adjusted_for_summer_at: null, adjusted_for_summer_by: null });
-          } else {
-            await clearAdjustedForFall(requestId);
-            onChanged(requestId, { adjusted_for_fall_at: null, adjusted_for_fall_by: null });
-          }
+          await clearAddedToPortal(requestId);
+          onChanged(requestId, null, null);
         })}
-        title={`Adjusted for ${label.toLowerCase()} ${formatDate(adjustedAt)}${adjustedBy ? ` by ${adjustedBy}` : ''} - click to undo`}
-        className={`text-xs px-2 py-1 rounded border transition disabled:opacity-50 ${markedClass}`}
+        title={`Added to portal ${formatDate(addedAt)}${addedBy ? ` by ${addedBy}` : ''} - click to undo`}
+        className="text-xs px-2 py-1 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition disabled:opacity-50"
       >
-        {isPending ? '...' : `${label} Done (${formatDate(adjustedAt)})`}
+        {isPending ? '...' : `In Portal (${formatDate(addedAt)})`}
       </button>
     );
   }
@@ -705,23 +836,12 @@ function AdjustmentButton({
     <button
       disabled={isPending}
       onClick={() => startTransition(async () => {
-        if (kind === 'summer') {
-          const result = await markAdjustedForSummer(requestId);
-          onChanged(requestId, {
-            adjusted_for_summer_at: result.adjusted_for_summer_at,
-            adjusted_for_summer_by: result.adjusted_for_summer_by,
-          });
-        } else {
-          const result = await markAdjustedForFall(requestId);
-          onChanged(requestId, {
-            adjusted_for_fall_at: result.adjusted_for_fall_at,
-            adjusted_for_fall_by: result.adjusted_for_fall_by,
-          });
-        }
+        const result = await markAddedToPortal(requestId);
+        onChanged(requestId, result.added_to_portal_at, result.added_to_portal_by);
       })}
       className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
     >
-      {isPending ? '...' : `Adjusted ${label}`}
+      {isPending ? '...' : 'Added to Portal'}
     </button>
   );
 }
@@ -761,81 +881,34 @@ function FollowupToggleButton({
   );
 }
 
-function AddStaffNoteButton({
-  requestId,
-  onChanged,
-}: {
-  requestId: string;
-  onChanged: (requestId: string, staffNotes: SummerResponseRow['staff_notes']) => void;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [note, setNote] = useState('');
-  const [error, setError] = useState<string | null>(null);
+function NoChangeCompleteButton({ onDone }: { onDone: (msg: string, updatedIds: string[]) => void }) {
   const [isPending, startTransition] = useTransition();
-  const trimmed = note.trim();
-
-  if (!isOpen) {
-    return (
-      <button
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className="text-xs px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 transition"
-      >
-        Add Staff Note
-      </button>
-    );
-  }
-
   return (
-    <div className="w-52 rounded-lg border border-amber-200 bg-amber-50 p-2">
-      <textarea
-        value={note}
-        onChange={e => {
-          setNote(e.target.value);
-          setError(null);
-        }}
-        rows={4}
-        maxLength={2000}
-        placeholder="Follow-up notes..."
-        className="w-full resize-y rounded-md border border-amber-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
-      />
-      {error && <div className="mt-1 text-[11px] text-red-600">{error}</div>}
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          disabled={isPending || !trimmed}
-          onClick={() => startTransition(async () => {
-            try {
-              setError(null);
-              const result = await addStaffNoteToSummerResponse(requestId, note);
-              onChanged(requestId, result.staff_notes);
-              setNote('');
-              setIsOpen(false);
-            } catch (err) {
-              setError(err instanceof Error ? err.message : 'Could not add note.');
-            }
-          })}
-          className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-500 disabled:opacity-50"
-        >
-          {isPending ? 'Saving...' : 'Save'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setIsOpen(false);
-            setNote('');
-            setError(null);
-          }}
-          className="text-xs text-slate-500"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
+    <button
+      onClick={() => startTransition(async () => {
+        const { updated, updatedIds } = await markAllNoChangeComplete();
+        onDone(
+          updated === 0 ? 'No pending no-change requests.' : `Marked ${updated} no-change as complete.`,
+          updatedIds,
+        );
+      })}
+      disabled={isPending}
+      className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 transition disabled:opacity-50"
+    >
+      {isPending ? 'Updating…' : 'Complete All No Change'}
+    </button>
   );
 }
 
-export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[]; stats: SummerStats }) {
+export default function ResponsesTab({
+  rows,
+  stats,
+  currentUserName,
+}: {
+  rows: SummerResponseRow[];
+  stats: SummerStats;
+  currentUserName: string;
+}) {
   const [rowPatches, setRowPatches] = useState<Record<string, ResponsePatch>>({});
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [workflowFilter, setWorkflowFilter] = useState('needs_action');
@@ -847,6 +920,8 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
   const [search, setSearch] = useState('');
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
   const [modalRow, setModalRow] = useState<SummerResponseRow | null>(null);
+  const [showApproveAllModal, setShowApproveAllModal] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
 
   const currentRows = useMemo(
     () => rows
@@ -914,10 +989,8 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
 
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = useMemo(() => currentRows.filter(r => {
-    if (workflowFilter === 'needs_action' && r.adjusted_for_summer_at) return false;
-    if (workflowFilter === 'adjusted_summer' && !r.adjusted_for_summer_at) return false;
-    if (workflowFilter === 'adjusted_fall' && !r.adjusted_for_fall_at) return false;
-    if (workflowFilter === 'legacy_portal' && !r.added_to_portal_at) return false;
+    if (workflowFilter === 'needs_action' && r.added_to_portal_at) return false;
+    if (workflowFilter === 'added_to_portal' && !r.added_to_portal_at) return false;
     if (submissionFilter === 'updated' && r.previous_submission_count === 0) return false;
     if (sourceFilter === 'parent' && r.submitted_by !== 'parent') return false;
     if (sourceFilter === 'staff' && r.submitted_by !== 'staff') return false;
@@ -933,7 +1006,6 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         r.submitted_by_name,
         r.custom_notes,
         r.fall_notes,
-        ...r.staff_notes.map(note => note.body),
       ]
         .filter(Boolean)
         .join(' ')
@@ -948,6 +1020,10 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
   const familyResponsePercent = formatPercent(currentStats.responded_families, currentStats.total_families);
   const studentResponsePercent = formatPercent(currentStats.responded_students, currentStats.total_students);
   const reviewQueue = currentStats.pending + currentStats.needs_followup;
+  const pendingEnrollingCount = useMemo(() => currentRows.filter(
+    r => r.summer_status === 'enrolling' && r.status === 'pending',
+  ).length, [currentRows]);
+
   return (
     <div className="space-y-4">
       {/* Response totals */}
@@ -1043,6 +1119,21 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
 
       {/* Toolbar */}
       <div className="flex flex-wrap gap-2 items-center">
+        <button
+          onClick={() => { setBulkMessage(null); setShowApproveAllModal(true); }}
+          disabled={pendingEnrollingCount === 0}
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-40"
+        >
+          Approve All Enrolling ({pendingEnrollingCount})
+        </button>
+        <NoChangeCompleteButton
+          onDone={(msg, updatedIds) => {
+            setBulkMessage(msg);
+            patchResponses(updatedIds, { status: 'completed' });
+          }}
+        />
+        {bulkMessage && <span className="text-xs text-slate-500">{bulkMessage}</span>}
+        <div className="h-5 border-l border-slate-200 hidden sm:block" />
         <input
           type="search"
           placeholder="Search by name…"
@@ -1054,11 +1145,9 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           value={workflowFilter}
           onChange={setWorkflowFilter}
           options={[
-            { value: 'needs_action',     label: 'Needs summer adjustment' },
-            { value: 'all',              label: 'All responses' },
-            { value: 'adjusted_summer',  label: 'Adjusted for Summer' },
-            { value: 'adjusted_fall',    label: 'Adjusted for Fall' },
-            { value: 'legacy_portal',    label: 'Legacy portal mark' },
+            { value: 'needs_action',    label: 'Needs action' },
+            { value: 'all',             label: 'All responses' },
+            { value: 'added_to_portal', label: 'Added to portal' },
           ]}
         />
         <FilterSelect
@@ -1066,7 +1155,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           onChange={setSummerFilter}
           options={[
             { value: 'all',       label: 'All summer plans' },
-            { value: 'enrolling', label: 'Attending' },
+            { value: 'enrolling', label: 'Enrolling' },
             { value: 'pausing',   label: 'Pausing' },
             { value: 'other',     label: 'Other' },
           ]}
@@ -1089,7 +1178,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
           options={[
             { value: 'all',                   label: 'All statuses' },
             { value: 'pending',               label: 'Pending' },
-            { value: 'completed',             label: 'Completed' },
+            { value: 'completed',             label: 'Approved' },
             { value: 'needs_manual_followup', label: 'Needs Followup' },
           ]}
         />
@@ -1130,38 +1219,33 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
-                <th className="px-4 py-3">Student</th>
-                <th className="px-4 py-3">Family</th>
-                <th className="px-4 py-3 min-w-[190px]">Current</th>
-                <th className="px-4 py-3">Summer</th>
-                <th className="px-4 py-3">Summer Sessions</th>
-                <th className="px-4 py-3">Pickup</th>
-                <th className="px-4 py-3 min-w-[240px]">Fall Plan</th>
-                <th className="px-4 py-3">Fall Sessions</th>
-                <th className="px-4 py-3 min-w-[240px]">Notes</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Submitted</th>
-                <th className="px-4 py-3">Source</th>
-                <th className="px-4 py-3">Workflow</th>
-                <th className="px-4 py-3">Actions</th>
+                <th className="px-3 py-2">Student</th>
+                <th className="px-3 py-2">Family</th>
+                <th className="px-3 py-2">Summer Plan</th>
+                <th className="px-3 py-2">Fall Plan</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Submitted</th>
+                <th className="px-3 py-2">Source</th>
+                <th className="px-3 py-2">Added to Portal</th>
+                <th className="px-3 py-2">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={9} className="px-3 py-6 text-center text-slate-400 text-sm">
                     No matching responses.
                   </td>
                 </tr>
               ) : filtered.map(row => (
                 <Fragment key={row.request_id}>
                 <tr className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">
+                  <td className="px-3 py-2 align-top min-w-[220px]">
                     <div className="space-y-1">
-                      <div>{row.student_name}</div>
+                      <StudentCell row={row} currentUserName={currentUserName} />
                       <UpdatedBadge
                         count={row.previous_submission_count}
                         expanded={expandedHistoryIds.has(row.request_id)}
@@ -1169,56 +1253,38 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                       />
                     </div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <FamilyCell row={row} />
+                  <td className="px-3 py-2 align-top min-w-[240px]">
+                    <FamilyCell row={row} currentUserName={currentUserName} />
                   </td>
-                  <td className="px-4 py-3 min-w-[190px] max-w-[240px] whitespace-normal break-words text-xs leading-5 text-slate-500">
-                    {formatCurrentSessions(row)}
+                  <td className="px-3 py-2 align-top min-w-[240px]">
+                    <SummerPlanCell row={row} />
                   </td>
-                  <td className="px-4 py-3">
-                    <SummerBadge status={row.summer_status} />
+                  <td className="px-3 py-2 align-top min-w-[240px]">
+                    <FallPlanCell row={row} />
                   </td>
-                  <td className="px-4 py-3 text-slate-600 text-xs">
-                    <SessionChoicesCell choices={row.session_choices} fallbackLabels={row.session_labels} />
-                    <WaitlistLabelsCell labels={row.waitlist_session_labels} />
-                  </td>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
-                    <PickupCell
-                      pickupRequested={row.pickup_requested}
-                      pickupSchool={row.pickup_school}
-                      pickupSchoolOther={row.pickup_school_other}
-                    />
-                  </td>
-                  <td className="px-4 py-3 min-w-[240px] max-w-[320px] whitespace-normal break-words text-xs leading-5 text-slate-600">
-                    {row.fall_status ? formatFallStatus(row) : <span className="text-slate-400">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 text-xs">
-                    <SessionChoicesCell choices={row.fall_session_choices} fallbackLabels={row.fall_session_labels} />
-                    <WaitlistLabelsCell labels={row.fall_waitlist_session_labels} />
-                  </td>
-                  <td className="px-4 py-3 min-w-[220px] max-w-[280px] text-xs text-slate-500">
-                    <NotesCell summerNotes={row.custom_notes} fallNotes={row.fall_notes} staffNotes={row.staff_notes} />
-                  </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-2 align-top">
                     <StatusBadge status={row.status} />
                   </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                  <td className="px-3 py-2 align-top text-slate-400 whitespace-nowrap">
                     {formatDate(row.submitted_at)}
                   </td>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                  <td className="px-3 py-2 align-top whitespace-nowrap">
                     <SourceBadge source={row.submitted_by} name={row.submitted_by_name} />
                     <CsvExportStatus row={row} />
                   </td>
-                  <td className="px-4 py-3 text-xs whitespace-nowrap">
-                    <WorkflowStatusCell item={row} />
+                  <td className="px-3 py-2 align-top whitespace-nowrap">
+                    <AddedToPortalCell
+                      addedAt={row.added_to_portal_at}
+                      addedBy={row.added_to_portal_by}
+                    />
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  <td className="px-3 py-2 align-top whitespace-nowrap">
                     <div className="flex flex-col gap-1">
                       <button
                         onClick={() => setModalRow(row)}
                         className="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition"
                       >
-                        {row.previous_submission_count > 0 ? 'Review Latest' : 'Review'}
+                        {row.previous_submission_count > 0 ? 'Review Latest' : row.status === 'completed' ? 'Approve Again' : 'Review'}
                       </button>
                       {row.previous_submission_count > 0 && (
                         <button
@@ -1228,28 +1294,19 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                           {expandedHistoryIds.has(row.request_id) ? 'Hide History' : 'History'}
                         </button>
                       )}
-                      <AdjustmentButton
+                      <AddedToPortalButton
                         requestId={row.request_id}
-                        kind="summer"
-                        adjustedAt={row.adjusted_for_summer_at}
-                        adjustedBy={row.adjusted_for_summer_by}
-                        onChanged={(id, patch) => patchResponse(id, patch)}
-                      />
-                      <AdjustmentButton
-                        requestId={row.request_id}
-                        kind="fall"
-                        adjustedAt={row.adjusted_for_fall_at}
-                        adjustedBy={row.adjusted_for_fall_by}
-                        onChanged={(id, patch) => patchResponse(id, patch)}
+                        addedAt={row.added_to_portal_at}
+                        addedBy={row.added_to_portal_by}
+                        onChanged={(id, addedAt, addedBy) => patchResponse(id, {
+                          added_to_portal_at: addedAt,
+                          added_to_portal_by: addedBy,
+                        })}
                       />
                       <FollowupToggleButton
                         requestId={row.request_id}
                         status={row.status}
                         onChanged={(id, status) => patchResponse(id, { status })}
-                      />
-                      <AddStaffNoteButton
-                        requestId={row.request_id}
-                        onChanged={(id, staffNotes) => patchResponse(id, { staff_notes: staffNotes })}
                       />
                       <InternalToggleButton
                         requestId={row.request_id}
@@ -1263,7 +1320,7 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
                     </div>
                   </td>
                 </tr>
-                {expandedHistoryIds.has(row.request_id) && <ResponseHistoryRows row={row} />}
+                {expandedHistoryIds.has(row.request_id) && <ResponseHistoryRows row={row} currentUserName={currentUserName} />}
                 </Fragment>
               ))}
             </tbody>
@@ -1275,9 +1332,23 @@ export default function ResponsesTab({ rows, stats }: { rows: SummerResponseRow[
         <ApproveRequestModal
           row={modalRow}
           onClose={() => setModalRow(null)}
+          onApproved={requestId => {
+            patchResponse(requestId, { status: 'completed' });
+            setModalRow(null);
+          }}
         />
       )}
 
+      {showApproveAllModal && (
+        <ApproveAllModal
+          enrollingCount={pendingEnrollingCount}
+          onClose={() => setShowApproveAllModal(false)}
+          onDone={(msg, completedIds) => {
+            setBulkMessage(msg);
+            patchResponses(completedIds, { status: 'completed' });
+          }}
+        />
+      )}
     </div>
   );
 }

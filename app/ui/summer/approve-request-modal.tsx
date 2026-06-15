@@ -1,6 +1,8 @@
 'use client';
 
+import { useState, useTransition } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
+import { approveSummerRequest } from '@/app/lib/summer-actions';
 import { SessionChoiceSummary, SummerResponseRow } from '@/app/lib/definitions';
 
 const FALL_STATUS_LABEL: Record<string, string> = {
@@ -22,13 +24,13 @@ const REQUEST_STATUS_STYLE: Record<string, string> = {
 const REQUEST_STATUS_LABEL: Record<string, string> = {
   pending:               'Pending',
   reviewed:              'Reviewed',
-  completed:             'Completed',
+  completed:             'Approved',
   needs_manual_followup: 'Needs Followup',
   superseded:            'Superseded',
 };
 
 const SUMMER_LABEL: Record<string, string> = {
-  enrolling: 'Attending for summer',
+  enrolling: 'Enrolling for summer',
   pausing:   'Not attending summer',
   no_change: 'No change — keeping current schedule',
   other:     'Custom plan',
@@ -125,17 +127,17 @@ function formatShortDate(date: string | null): string | null {
   return SHORT_DATE_FORMATTER.format(new Date(`${date}T00:00:00`));
 }
 
-function formatStartSuffix(date: string | null): string {
-  const startDate = formatShortDate(date);
-  return startDate ? ` (start ${startDate})` : '';
-}
-
 function formatDate(d: Date | string): string {
   return DATE_TIME_FORMATTER.format(new Date(d));
 }
 
 function formatPortalDate(d: Date | string | null): string {
   return d ? SHORT_DATE_FORMATTER.format(new Date(d)) : 'Not marked';
+}
+
+function formatStartSuffix(date: string | null): string {
+  const startDate = formatShortDate(date);
+  return startDate ? ` (start ${startDate})` : '';
 }
 
 function formatCsvExport(row: Pick<SummerResponseRow, 'token_export_count' | 'token_last_exported_at'>): string {
@@ -148,12 +150,6 @@ function formatPortalStatus(row: Pick<SummerResponseRow, 'added_to_portal_at' | 
   if (!row.added_to_portal_at) return 'Not marked';
   const date = formatPortalDate(row.added_to_portal_at);
   return row.added_to_portal_by ? `${date} by ${row.added_to_portal_by}` : date;
-}
-
-function formatMarkedStatus(at: Date | string | null, by: string | null): string {
-  if (!at) return 'Not marked';
-  const date = formatPortalDate(at);
-  return by ? `${date} by ${by}` : date;
 }
 
 function formatFallStatus(status: SummerResponseRow['fall_status']): string {
@@ -254,29 +250,40 @@ function LabelList({ labels, emptyLabel }: { labels: string[]; emptyLabel: strin
   return <span>{labels.join(', ')}</span>;
 }
 
-function StaffNotesList({ notes }: { notes: SummerResponseRow['staff_notes'] }) {
-  if (notes.length === 0) return null;
-  return (
-    <div className="space-y-2">
-      {notes.map(note => (
-        <div key={note.id} className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
-          <div className="whitespace-pre-wrap break-words text-sm leading-5 text-slate-700">{note.body}</div>
-          <div className="mt-1 text-xs text-amber-700/70">
-            {note.created_by} · {formatDate(note.created_at)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function ApproveRequestModal({
   row,
   onClose,
+  onApproved,
 }: {
   row: SummerResponseRow;
   onClose: () => void;
+  onApproved: (requestId: string) => void;
 }) {
+  const isEnrolling = row.summer_status === 'enrolling';
+  const firstRequestedStartDate = row.session_choices.find(choice => choice.start_date)?.start_date ?? '';
+  const needsFallbackStartDate = isEnrolling && (
+    row.session_choices.length === 0 || row.session_choices.some(choice => !choice.start_date)
+  );
+  const [isPending, startTransition] = useTransition();
+  const [startDate, setStartDate] = useState(firstRequestedStartDate);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  function handleApprove() {
+    if (needsFallbackStartDate && !startDate) {
+      setApprovalError('Start date is required because one or more requested sessions are missing it.');
+      return;
+    }
+    setApprovalError(null);
+    startTransition(async () => {
+      const result = await approveSummerRequest(row.request_id, needsFallbackStartDate ? startDate : undefined);
+      if (result?.error) {
+        setApprovalError(result.error);
+      } else {
+        onApproved(row.request_id);
+      }
+    });
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -313,9 +320,7 @@ export default function ApproveRequestModal({
             <Field label="Status"><StatusBadge status={row.status} /></Field>
             <Field label="Submitted By"><SourceBadge source={row.submitted_by} name={row.submitted_by_name} /></Field>
             <Field label="Email CSV">{formatCsvExport(row)}</Field>
-            <Field label="Adjusted for Summer">{formatMarkedStatus(row.adjusted_for_summer_at, row.adjusted_for_summer_by)}</Field>
-            <Field label="Adjusted for Fall">{formatMarkedStatus(row.adjusted_for_fall_at, row.adjusted_for_fall_by)}</Field>
-            <Field label="Legacy Portal">{formatPortalStatus(row)}</Field>
+            <Field label="Added to Portal">{formatPortalStatus(row)}</Field>
           </dl>
 
           <Section title="Summer">
@@ -368,12 +373,6 @@ export default function ApproveRequestModal({
               )}
             </dl>
           </Section>
-
-          {row.staff_notes.length > 0 && (
-            <Section title="Staff Notes">
-              <StaffNotesList notes={row.staff_notes} />
-            </Section>
-          )}
 
           {row.submission_history.length > 0 && (
             <Section title="Submission History">
@@ -430,17 +429,12 @@ export default function ApproveRequestModal({
                         <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Pickup</dt>
                         <dd className="mt-1 text-slate-700">{formatHistoryPickup(item)}</dd>
                       </div>
-                      {(item.custom_notes || item.fall_notes || item.staff_notes.length > 0) && (
+                      {(item.custom_notes || item.fall_notes) && (
                         <div>
                           <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Notes</dt>
                           <dd className="mt-1 space-y-1 text-slate-700">
                             {item.custom_notes && <div>Summer: <span className="italic">{item.custom_notes}</span></div>}
                             {item.fall_notes && <div>Fall: <span className="italic">{item.fall_notes}</span></div>}
-                            {item.staff_notes.length > 0 && (
-                              <div className="pt-1">
-                                <StaffNotesList notes={item.staff_notes} />
-                              </div>
-                            )}
                           </dd>
                         </div>
                       )}
@@ -451,6 +445,31 @@ export default function ApproveRequestModal({
             </Section>
           )}
 
+          {isEnrolling && (
+            <Section title="Approval">
+              {needsFallbackStartDate ? (
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-1">
+                    Fallback Start Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 focus:outline-none"
+                  />
+                </div>
+              ) : (
+                <Field label="Enrolment Start Dates">
+                  Uses requested start dates listed above.
+                </Field>
+              )}
+            </Section>
+          )}
+
+          {approvalError && (
+            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{approvalError}</p>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
@@ -458,7 +477,14 @@ export default function ApproveRequestModal({
             onClick={onClose}
             className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition"
           >
-            Close
+            Cancel
+          </button>
+          <button
+            onClick={handleApprove}
+            disabled={isPending || row.status === 'completed'}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
+          >
+            {isPending ? 'Approving…' : row.status === 'completed' ? 'Already Approved' : 'Approve Request'}
           </button>
         </div>
       </div>

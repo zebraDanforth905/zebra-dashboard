@@ -6,6 +6,7 @@ import {
   fetchSummerStats,
   fetchUntokenizedActiveFamilyCount,
 } from '@/app/lib/summer-data';
+import { fetchLatestSummerResponseNotes } from '@/app/lib/data';
 import LinkManagement from '@/app/ui/summer/link-management';
 import ResponsesTab from '@/app/ui/summer/responses-tab';
 import SummerScheduleTab from '@/app/ui/summer/summer-schedule-tab';
@@ -17,6 +18,7 @@ export const metadata: Metadata = { title: 'Summer Registration' };
 
 type SessionUserWithType = {
   user_type?: string;
+  name?: string;
 };
 
 export default async function SummerPage({
@@ -26,6 +28,7 @@ export default async function SummerPage({
 }) {
   const session = await auth();
   const userType = (session?.user as SessionUserWithType | undefined)?.user_type;
+  const currentUserName = (session?.user as SessionUserWithType | undefined)?.name || 'Unknown';
   if (userType !== 'admin') {
     redirect('/dashboard');
   }
@@ -40,6 +43,22 @@ export default async function SummerPage({
     tab === 'schedule' ? fetchSummerSchedule() : null,
     tab === 'fall-schedule' ? fetchFallSchedule() : null,
   ]);
+  let enrichedResponseRows = responseRows;
+
+  if (tab === 'responses' && responseRows) {
+    const latestNotes = await fetchLatestSummerResponseNotes(
+      responseRows.map(row => row.student_id),
+      responseRows.map(row => row.customer_id),
+    );
+    const studentNotesById = new Map(latestNotes.studentNotes.map(note => [note.student_id, note]));
+    const customerNotesById = new Map(latestNotes.customerNotes.map(note => [note.customer_id, note]));
+
+    enrichedResponseRows = responseRows.map(row => ({
+      ...row,
+      ...(studentNotesById.get(row.student_id) ?? {}),
+      ...(customerNotesById.get(row.customer_id) ?? {}),
+    }));
+  }
 
   return (
     <div className="m-3 md:m-6">
@@ -71,8 +90,8 @@ export default async function SummerPage({
         />
       )}
 
-      {tab === 'responses' && stats && responseRows && (
-        <ResponsesTab rows={responseRows} stats={stats} />
+      {tab === 'responses' && stats && enrichedResponseRows && (
+        <ResponsesTab rows={enrichedResponseRows} stats={stats} currentUserName={currentUserName} />
       )}
 
       {tab === 'schedule' && scheduleRows && (

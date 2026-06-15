@@ -727,8 +727,6 @@ export async function fetchSummerStats(): Promise<SummerStats> {
 }
 
 export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
-  'use cache';
-  cacheTag('summer-responses');
   try {
     return await sql<SummerResponseRow[]>`
       SELECT
@@ -736,9 +734,17 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         c.id::text                                                           AS customer_id,
         s.id::text                                                           AS student_id,
         s.name                                                               AS student_name,
+        NULL::text                                                           AS student_note_id,
+        NULL::text                                                           AS student_note,
+        NULL::timestamptz                                                    AS student_note_date,
+        NULL::text                                                           AS student_note_creator,
         c.name                                                               AS parent_name,
         c.email                                                              AS parent_email,
         c.alternate_email                                                    AS parent_alternate_email,
+        NULL::text                                                           AS customer_note_id,
+        NULL::text                                                           AS customer_note,
+        NULL::timestamptz                                                    AS customer_note_date,
+        NULL::text                                                           AS customer_note_creator,
         COALESCE(pr.payload->>'summer_status', 'other')                      AS summer_status,
         COALESCE(sl.session_labels, '{}')                                    AS session_labels,
         COALESCE(sl.session_choices, '[]'::json)                             AS session_choices,
@@ -757,16 +763,11 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb)       AS current_sessions_snapshot,
         pr.status,
         pr.custom_notes,
-        COALESCE(to_jsonb(pr)->'staff_notes', '[]'::jsonb)                  AS staff_notes,
         COALESCE(pr.submitted_by, 'parent')                                  AS submitted_by,
         pr.submitted_by_name,
         pr.submitted_at,
         pt.last_exported_at                                                   AS token_last_exported_at,
         COALESCE(pt.export_count, 0)::int                                     AS token_export_count,
-        (to_jsonb(pr)->>'adjusted_for_summer_at')::timestamptz                AS adjusted_for_summer_at,
-        to_jsonb(pr)->>'adjusted_for_summer_by'                               AS adjusted_for_summer_by,
-        (to_jsonb(pr)->>'adjusted_for_fall_at')::timestamptz                  AS adjusted_for_fall_at,
-        to_jsonb(pr)->>'adjusted_for_fall_by'                                 AS adjusted_for_fall_by,
         pr.added_to_portal_at,
         pr.added_to_portal_by,
         COALESCE(history.previous_submission_count, 0)::int                 AS previous_submission_count,
@@ -888,14 +889,9 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
                 'fall_notes', h.payload->>'fall_notes',
                 'status', h.status,
                 'custom_notes', h.custom_notes,
-                'staff_notes', COALESCE(to_jsonb(h)->'staff_notes', '[]'::jsonb),
                 'submitted_by', COALESCE(h.submitted_by, 'parent'),
                 'submitted_by_name', h.submitted_by_name,
                 'submitted_at', h.submitted_at,
-                'adjusted_for_summer_at', (to_jsonb(h)->>'adjusted_for_summer_at')::timestamptz,
-                'adjusted_for_summer_by', to_jsonb(h)->>'adjusted_for_summer_by',
-                'adjusted_for_fall_at', (to_jsonb(h)->>'adjusted_for_fall_at')::timestamptz,
-                'adjusted_for_fall_by', to_jsonb(h)->>'adjusted_for_fall_by',
                 'added_to_portal_at', h.added_to_portal_at,
                 'added_to_portal_by', h.added_to_portal_by
               )

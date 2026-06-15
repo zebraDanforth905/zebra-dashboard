@@ -614,23 +614,11 @@ export type SummerResponseHistoryItem = {
   fall_notes: string | null;
   status: ParentRequestStatus;
   custom_notes: string | null;
-  staff_notes: StaffNote[];
   submitted_by: ParentRequestSubmittedBy;
   submitted_by_name: string | null;
   submitted_at: Date | string;
-  adjusted_for_summer_at: Date | string | null;
-  adjusted_for_summer_by: string | null;
-  adjusted_for_fall_at: Date | string | null;
-  adjusted_for_fall_by: string | null;
   added_to_portal_at: Date | string | null;
   added_to_portal_by: string | null;
-};
-
-export type StaffNote = {
-  id: string;
-  body: string;
-  created_at: Date | string;
-  created_by: string;
 };
 
 export type SummerResponseRow = {
@@ -638,9 +626,17 @@ export type SummerResponseRow = {
   customer_id: string;
   student_id: string;
   student_name: string;
+  student_note_id: string | null;
+  student_note: string | null;
+  student_note_date: Date | null;
+  student_note_creator: string | null;
   parent_name: string;
   parent_email: string;
   parent_alternate_email: string | null;
+  customer_note_id: string | null;
+  customer_note: string | null;
+  customer_note_date: Date | null;
+  customer_note_creator: string | null;
   summer_status: SummerSchedulingPayload['summer_status'] | 'other';
   session_labels: string[];
   session_choices: SessionChoiceSummary[];
@@ -659,16 +655,11 @@ export type SummerResponseRow = {
   current_sessions_snapshot: CurrentSessionSummary[];
   status: ParentRequestStatus;
   custom_notes: string | null;
-  staff_notes: StaffNote[];
   submitted_by: ParentRequestSubmittedBy;
   submitted_by_name: string | null;
   submitted_at: Date;
   token_last_exported_at: Date | null;
   token_export_count: number;
-  adjusted_for_summer_at: Date | null;
-  adjusted_for_summer_by: string | null;
-  adjusted_for_fall_at: Date | null;
-  adjusted_for_fall_by: string | null;
   added_to_portal_at: Date | null;
   added_to_portal_by: string | null;
   previous_submission_count: number;

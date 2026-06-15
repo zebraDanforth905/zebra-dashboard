@@ -1372,6 +1372,10 @@ export async function fetchStudentNotes(studentId: string) {
 }
 
 export async function fetchCustomerNotes(customerId: string) {
+  if (!customerId || !customerId.trim()) {
+    return [];
+  }
+
   try {
     const notes = await sql<CustomerNote[]>`
       SELECT 
@@ -1388,6 +1392,67 @@ export async function fetchCustomerNotes(customerId: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch customer notes.');
+  }
+}
+
+export type SummerResponseLatestNotes = {
+  studentNotes: {
+    student_id: string;
+    student_note_id: string | null;
+    student_note: string | null;
+    student_note_date: Date | null;
+    student_note_creator: string | null;
+  }[];
+  customerNotes: {
+    customer_id: string;
+    customer_note_id: string | null;
+    customer_note: string | null;
+    customer_note_date: Date | null;
+    customer_note_creator: string | null;
+  }[];
+};
+
+export async function fetchLatestSummerResponseNotes(
+  studentIds: string[],
+  customerIds: string[],
+): Promise<SummerResponseLatestNotes> {
+  const uniqueStudentIds = Array.from(new Set(studentIds.filter(Boolean)));
+  const uniqueCustomerIds = Array.from(new Set(customerIds.filter(Boolean)));
+
+  try {
+    const [studentNotes, customerNotes] = await Promise.all([
+      uniqueStudentIds.length > 0
+        ? sql<SummerResponseLatestNotes['studentNotes']>`
+            SELECT DISTINCT ON (sn.student_id)
+              sn.student_id::text AS student_id,
+              sn.id::text AS student_note_id,
+              sn.content AS student_note,
+              sn.date AS student_note_date,
+              sn.creator AS student_note_creator
+            FROM student_notes sn
+            WHERE sn.student_id::text = ANY(${uniqueStudentIds}::text[])
+            ORDER BY sn.student_id, sn.date DESC, sn.id DESC
+          `
+        : Promise.resolve([]),
+      uniqueCustomerIds.length > 0
+        ? sql<SummerResponseLatestNotes['customerNotes']>`
+            SELECT DISTINCT ON (cn.customer_id)
+              cn.customer_id::text AS customer_id,
+              cn.id::text AS customer_note_id,
+              cn.content AS customer_note,
+              cn.date AS customer_note_date,
+              cn.creator AS customer_note_creator
+            FROM customer_notes cn
+            WHERE cn.customer_id::text = ANY(${uniqueCustomerIds}::text[])
+            ORDER BY cn.customer_id, cn.date DESC, cn.id DESC
+          `
+        : Promise.resolve([]),
+    ]);
+
+    return { studentNotes, customerNotes };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch summer response notes.');
   }
 }
 
