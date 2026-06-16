@@ -142,7 +142,8 @@ export default async function PastCampWeeksPage(props: {
       if (e.camp_type === 'FD') entry!.byType.FD += 1;
       else entry!.byType.half += 1;
 
-      entry!.byCourse[e.course_id] = (entry!.byCourse[e.course_id] || 0) + 1;
+      const courseKey = e.course_id ?? 'No course';
+      entry!.byCourse[courseKey] = (entry!.byCourse[courseKey] || 0) + 1;
       entry!.byLength[length] = (entry!.byLength[length] || 0) + 1;
       entry!.uniqueStudents.add(e.student_id);
     });

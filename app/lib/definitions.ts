@@ -309,12 +309,8 @@ export type RecurringInvoiceListData = {
   description: string;
 }
 
-export type StudentSpecificData = {
-
-}
-export type CustomerSpecificData = {
-
-}
+export type StudentSpecificData = Record<string, never>;
+export type CustomerSpecificData = Record<string, never>;
 
 export type PickupListDisplay = {
   id: string;
@@ -348,12 +344,17 @@ export type CampEnrolmentWithStudent = {
   student_id: string;
   student_name: string;
   dob: Date | null;
-  course_id: string;
+  course_id: string | null;
+  course_name: string | null;
   camp_type: 'FD' | 'PM' | 'AM';
   assigned_seat_number: number | null;
   note: string | null;
   special_needs: string | null;
+  allergies: string | null;
   extended_care: boolean;
+  parent_name: string | null;
+  parent_phone: string | null;
+  parent_request_notes: string | null;
 };
 
 export type CampLmsStatus =
@@ -399,11 +400,96 @@ export type CampLmsChecklistData = {
   summary: CampLmsChecklistSummary;
 };
 
+export type CampPrepResourceKind = 'scratch' | 'roblox' | 'laptop';
+
+export type CampPrepStatus =
+  | 'ready'
+  | 'partial'
+  | 'missing'
+  | 'not_needed';
+
+export type CampAccountPrepInventoryItem = {
+  id: string;
+  label: string;
+  password: string | null;
+};
+
+export type CampAccountPrepRow = {
+  camp_enrolment_id: string;
+  student_id: string;
+  student_name: string;
+  course_id: string | null;
+  course_name: string | null;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  start_date: Date;
+  end_date: Date;
+  needs_scratch: boolean;
+  needs_roblox: boolean;
+  needs_unity: boolean;
+  needs_laptop: boolean;
+  scratch_username: string | null;
+  scratch_password: string | null;
+  roblox_username: string | null;
+  roblox_password: string | null;
+  laptop_number: string | null;
+  missing_resources: CampPrepResourceKind[];
+  status: CampPrepStatus;
+};
+
+export type CampAccountPrepSummary = {
+  total: number;
+  setup_needed: number;
+  ready: number;
+  partial: number;
+  missing: number;
+  not_needed: number;
+  needs_unity: number;
+  missing_scratch: number;
+  missing_roblox: number;
+  missing_laptop: number;
+};
+
+export type CampAccountPrepChecklistData = {
+  rows: CampAccountPrepRow[];
+  inventory: {
+    scratch_accounts: CampAccountPrepInventoryItem[];
+    roblox_accounts: CampAccountPrepInventoryItem[];
+    laptops: CampAccountPrepInventoryItem[];
+  };
+  summary: CampAccountPrepSummary;
+};
+
 export type CampSessionWithEnrolments = {
   start_date: Date;
   end_date: Date;
   enrolment_count: number;
   enrolments: CampEnrolmentWithStudent[];
+};
+
+export type CampPrintableScheduleRow = {
+  camp_enrolment_id: string;
+  student_id: string;
+  student_name: string;
+  assigned_seat_number: number | null;
+  course_id: string | null;
+  course_name: string | null;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  start_date: Date;
+  end_date: Date;
+  note: string | null;
+  special_needs: string | null;
+  allergies: string | null;
+  parent_name: string | null;
+  parent_phone: string | null;
+  parent_request_notes: string | null;
+};
+
+export type CampPrintableScheduleData = {
+  start_date: string;
+  end_date: string;
+  rows: CampPrintableScheduleRow[];
 };
 
 export type SeatAssignment = {

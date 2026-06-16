@@ -2,7 +2,7 @@
 
 function pad(n: number) { return n.toString().padStart(2, "0"); }
 
-function toHMS(input: string | undefined | null): string | null {
+function toHMS(input: unknown): string | null {
   if (!input) return null;
   const s = String(input).trim();
 
@@ -24,7 +24,21 @@ function toHMS(input: string | undefined | null): string | null {
   return null;
 }
 
-export function normalizeEnrolmentRows(rows: any[]) {
+type RawEnrolmentRow = {
+  day?: unknown;
+  start_date?: unknown;
+  end_date?: unknown;
+  start_time?: unknown;
+  end_time?: unknown;
+  student_name?: unknown;
+  student_id?: unknown;
+  course_abbr?: unknown;
+  sub_course_code?: unknown;
+  trial_date?: unknown;
+  make_up_date?: unknown;
+};
+
+export function normalizeEnrolmentRows(rows: RawEnrolmentRow[]) {
   // Produce rows like the python inserter expected:
   // { Day, Times ("HH:MM:SS - HH:MM:SS"), Student ID, Student Name, Course (display), Stream (abbr/code), Trial Date?, Make Up Date? }
   return rows.flatMap((r) => {
@@ -34,10 +48,10 @@ export function normalizeEnrolmentRows(rows: any[]) {
     const end_date = (r.end_date ? r.end_date.toString().trim() : null);     // "YYYY-MM-DD"
     const start = toHMS(r.start_time);
     const end   = toHMS(r.end_time);
-    const full  = (r.student_name).toString().trim()
+    const full  = (r.student_name ?? "").toString().trim()
     const sid   = r.student_id;
 
-    if (!day || !start || !sid || !full) return []; // skip un-usable row
+    if (!day || !start || !end || !sid || !full) return []; // skip un-usable row
 
     const courseCode = r.course_abbr || r.sub_course_code;
 
@@ -53,7 +67,7 @@ export function normalizeEnrolmentRows(rows: any[]) {
         end_time: end,
         student_id: Number(sid),
         name: full,
-        course_code: courseCode || "",
+        course_code: courseCode ? String(courseCode) : "",
         trial_date: trial ? String(trial) : "",
         makeup_date: makeup ? String(makeup) : "",
     }];
@@ -119,11 +133,25 @@ function extractAltEmail(raw: string, primaryEmail: string): string | null {
 // Extracts unique parent/customer records from raw portal rows.
 // Works for both class-report rows and camp-report rows.
 // Returns an empty array if the rows have no parent fields.
-export function extractCustomerRows(rawRows: any[]): PortalCustomerRow[] {
+type RawCustomerSourceRow = {
+  parent_id?: number | string | null;
+  customer_id?: number | string | null;
+  parent_name?: unknown;
+  customer_name?: unknown;
+  guardian_name?: unknown;
+  email?: unknown;
+  parent_email?: unknown;
+  student_id?: number | string | null;
+  alternate_emails?: unknown;
+  alternate_email?: unknown;
+};
+
+export function extractCustomerRows(rawRows: RawCustomerSourceRow[]): PortalCustomerRow[] {
   const map = new Map<number, PortalCustomerRow>();
 
   for (const r of rawRows) {
-    const parentId: number | null = r.parent_id ?? r.customer_id ?? null;
+    const rawParentId = r.parent_id ?? r.customer_id ?? null;
+    const parentId: number | null = rawParentId != null ? Number(rawParentId) : null;
     const parentName: string = (r.parent_name ?? r.customer_name ?? r.guardian_name ?? '').toString().trim();
     const email: string = (r.email ?? r.parent_email ?? '').toString().trim().toLowerCase();
     const studentId: number | null = r.student_id != null ? Number(r.student_id) : null;
@@ -180,12 +208,15 @@ export type NormalizedCampEnrolment = {
   student_id: number;
   student_name: string;
   dob: string;              // "YYYY-MM-DD"
+  parent_name: string;
+  parent_phone: string;
   start_date: string;       // "YYYY-MM-DD"
   end_date: string;         // "YYYY-MM-DD"
   start_time: string;       // "HH:MM:SS"
   end_time: string;         // "HH:MM:SS"
   camp_type: 'FD' | 'PM' | 'AM';
   extended_care: boolean;
+  allergies: string;
   special_needs: string;
   course_id: string;        // course_abbr
 };
@@ -260,12 +291,15 @@ export function normalizeCampEnrolments(results: RawCampEnrolment[]): Normalized
         student_id: r.student_id,
         student_name: r.student_name,
         dob: r.dob || '',
+        parent_name: r.parent_name || '',
+        parent_phone: r.phone || '',
         start_date: dates.start,
         end_date: dates.end,
         start_time: times.start,
         end_time: times.end,
         camp_type: parseCampType(r.camp_type) as 'FD' | 'PM' | 'AM',
         extended_care,
+        allergies: r.allergies || '',
         special_needs: r.special_need || '',
         course_id: r.course_abbr || ''
       };
