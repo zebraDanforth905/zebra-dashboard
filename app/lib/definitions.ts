@@ -356,6 +356,49 @@ export type CampEnrolmentWithStudent = {
   extended_care: boolean;
 };
 
+export type CampLmsStatus =
+  | 'verified'
+  | 'missing_user'
+  | 'missing_course'
+  | 'needs_followup'
+  | 'not_applicable';
+
+export type CampLmsChecklistRow = {
+  camp_enrolment_id: string;
+  student_id: string;
+  student_name: string;
+  suggested_lms_login: string;
+  course_id: string | null;
+  course_name: string | null;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  start_date: Date;
+  end_date: Date;
+  lms_course_name: string | null;
+  lms_course_link: string | null;
+  mapping_notes: string | null;
+  status: CampLmsStatus | null;
+  status_note: string | null;
+  checked_at: Date | null;
+  checked_by_name: string | null;
+};
+
+export type CampLmsChecklistSummary = {
+  total: number;
+  verified: number;
+  missing_setup: number;
+  needs_followup: number;
+  unmapped: number;
+  unchecked: number;
+  not_applicable: number;
+};
+
+export type CampLmsChecklistData = {
+  schema_ready: boolean;
+  rows: CampLmsChecklistRow[];
+  summary: CampLmsChecklistSummary;
+};
+
 export type CampSessionWithEnrolments = {
   start_date: Date;
   end_date: Date;

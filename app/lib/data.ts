@@ -2,7 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote, CampSessionWithEnrolments } from './definitions';
+import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote, CampSessionWithEnrolments, CampLmsChecklistData, CampLmsChecklistRow, CampLmsChecklistSummary } from './definitions';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -1748,6 +1748,20 @@ export async function fetchInvoiceDiscrepancies() {
 }
 
 // Camp functions
+async function campEnrolmentsHasNoteColumn() {
+  const [column] = await sql<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'camp_enrolments'
+        AND column_name = 'note'
+    ) AS exists;
+  `;
+
+  return Boolean(column?.exists);
+}
+
 export async function fetchUpcomingCampSessions() {
   'use cache'
   cacheTag('camps');
@@ -1790,6 +1804,8 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
   'use cache'
   cacheTag('camps');
   try {
+    const noteColumn = await campEnrolmentsHasNoteColumn();
+    const noteExpression = noteColumn ? sql`ce.note` : sql`NULL::text`;
     const sessions = await sql<Array<{
       start_date: Date;
       end_date: Date;
@@ -1818,7 +1834,7 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
             'course_id', ce.course_id,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
-            'note', ce.note,
+            'note', ${noteExpression},
             'special_needs', s.special_needs,
             'extended_care', cs.extended_care
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
@@ -1841,6 +1857,8 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
   'use cache'
   cacheTag('camps');
   try {
+    const noteColumn = await campEnrolmentsHasNoteColumn();
+    const noteExpression = noteColumn ? sql`ce.note` : sql`NULL::text`;
     let whereConditions = sql`DATE_TRUNC('week', cs.start_date)::date < DATE_TRUNC('week', CURRENT_DATE)::date`;
 
     if (fromDate) {
@@ -1879,7 +1897,7 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
             'course_id', ce.course_id,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
-            'note', ce.note,
+            'note', ${noteExpression},
             'special_needs', s.special_needs,
             'extended_care', cs.extended_care
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
@@ -1999,6 +2017,126 @@ export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Dat
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch camp sessions by date range.');
+  }
+}
+
+function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSummary {
+  return rows.reduce<CampLmsChecklistSummary>(
+    (summary, row) => {
+      const mapped = Boolean(row.lms_course_name || row.lms_course_link);
+
+      summary.total += 1;
+      if (!mapped) summary.unmapped += 1;
+      if (!row.status) summary.unchecked += 1;
+      if (row.status === 'verified') summary.verified += 1;
+      if (row.status === 'missing_user' || row.status === 'missing_course') {
+        summary.missing_setup += 1;
+      }
+      if (row.status === 'needs_followup') summary.needs_followup += 1;
+      if (row.status === 'not_applicable') summary.not_applicable += 1;
+
+      return summary;
+    },
+    {
+      total: 0,
+      verified: 0,
+      missing_setup: 0,
+      needs_followup: 0,
+      unmapped: 0,
+      unchecked: 0,
+      not_applicable: 0,
+    }
+  );
+}
+
+export async function fetchCampLmsChecklist(startDate: string, endDate: string): Promise<CampLmsChecklistData> {
+  try {
+    const [schema] = await sql<{ schema_ready: boolean }[]>`
+      SELECT (
+        to_regclass('public.camp_lms_course_mappings') IS NOT NULL
+        AND to_regclass('public.camp_lms_status_checks') IS NOT NULL
+      ) AS schema_ready;
+    `;
+
+    const schemaReady = Boolean(schema?.schema_ready);
+
+    if (!schemaReady) {
+      const rows = await sql<CampLmsChecklistRow[]>`
+        SELECT
+          ce.id::text AS camp_enrolment_id,
+          ce.student_id::text AS student_id,
+          s.name AS student_name,
+          ce.student_id::text || '@zebrarobotics.com' AS suggested_lms_login,
+          ce.course_id::text AS course_id,
+          c.name AS course_name,
+          cs.camp_type,
+          cs.extended_care,
+          cs.start_date,
+          cs.end_date,
+          NULL::text AS lms_course_name,
+          NULL::text AS lms_course_link,
+          NULL::text AS mapping_notes,
+          NULL::text AS status,
+          NULL::text AS status_note,
+          NULL::timestamptz AS checked_at,
+          NULL::text AS checked_by_name
+        FROM camp_sessions cs
+        JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+        JOIN students s ON s.id = ce.student_id
+        LEFT JOIN courses c ON c.id = ce.course_id
+        WHERE DATE_TRUNC('week', cs.start_date)::date = ${startDate}::date
+          AND cs.start_date <= ${endDate}::date
+          AND cs.end_date >= ${startDate}::date
+        ORDER BY ce.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
+      `;
+
+      return {
+        schema_ready: false,
+        rows,
+        summary: summarizeCampLmsRows(rows),
+      };
+    }
+
+    const rows = await sql<CampLmsChecklistRow[]>`
+      SELECT
+        ce.id::text AS camp_enrolment_id,
+        ce.student_id::text AS student_id,
+        s.name AS student_name,
+        ce.student_id::text || '@zebrarobotics.com' AS suggested_lms_login,
+        ce.course_id::text AS course_id,
+        c.name AS course_name,
+        cs.camp_type,
+        cs.extended_care,
+        cs.start_date,
+        cs.end_date,
+        m.lms_course_name,
+        m.lms_course_link,
+        m.notes AS mapping_notes,
+        sc.status,
+        sc.note AS status_note,
+        sc.checked_at,
+        u.name AS checked_by_name
+      FROM camp_sessions cs
+      JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      JOIN students s ON s.id = ce.student_id
+      LEFT JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN camp_lms_course_mappings m ON m.course_id = ce.course_id::text
+      LEFT JOIN camp_lms_status_checks sc ON sc.camp_enrolment_id = ce.id
+      LEFT JOIN users u ON u.id::text = sc.checked_by
+      WHERE DATE_TRUNC('week', cs.start_date)::date = ${startDate}::date
+        AND cs.start_date <= ${endDate}::date
+        AND cs.end_date >= ${startDate}::date
+      ORDER BY ce.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
+    `;
+
+    return {
+      schema_ready: true,
+      rows,
+      summary: summarizeCampLmsRows(rows),
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp LMS checklist.');
   }
 }
 

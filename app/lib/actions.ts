@@ -9,7 +9,7 @@ import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
-import { CampEnrolmentWithStudent, RecurringInvoice } from './definitions';
+import { CampEnrolmentWithStudent, CampLmsStatus, RecurringInvoice } from './definitions';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
 import { formatDate } from './utils';
@@ -1785,6 +1785,206 @@ export async function updatePassword(formData: FormData) {
 }
 
 // Camp actions
+const CampLmsDateSchema = z.object({
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+const CampLmsCourseMappingSchema = z.object({
+  courseId: z.string().trim().min(1),
+  lmsCourseName: z.string().trim().min(1),
+  lmsCourseLink: z.string().trim().optional(),
+  notes: z.string().trim().optional(),
+});
+
+const CampLmsStatusSchema = z.enum([
+  'verified',
+  'missing_user',
+  'missing_course',
+  'needs_followup',
+  'not_applicable',
+]);
+
+const CampLmsStatusUpdateSchema = z.object({
+  enrolmentId: z.string().uuid(),
+  status: CampLmsStatusSchema.nullable(),
+  note: z.string().trim().optional(),
+});
+
+async function campLmsChecklistSchemaReady() {
+  const [schema] = await sql<{ ready: boolean }[]>`
+    SELECT (
+      to_regclass('public.camp_lms_course_mappings') IS NOT NULL
+      AND to_regclass('public.camp_lms_status_checks') IS NOT NULL
+    ) AS ready;
+  `;
+
+  return Boolean(schema?.ready);
+}
+
+async function campEnrolmentNoteColumnExists() {
+  const [column] = await sql<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'camp_enrolments'
+        AND column_name = 'note'
+    ) AS exists;
+  `;
+
+  return Boolean(column?.exists);
+}
+
+export async function refreshCampLmsWeek(startDate: string, endDate: string) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampLmsDateSchema.safeParse({ startDate, endDate });
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid camp week dates' };
+  }
+
+  try {
+    const branchId = Number(process.env.ZEBRA_BRANCH_ID ?? 20);
+    const raw = await fetchCampEnrolments({
+      startDate: parsed.data.startDate,
+      endDate: parsed.data.endDate,
+      branchId,
+    });
+    const normalized = normalizeCampEnrolments(raw);
+    const result = await insertCampEnrolments(normalized, parsed.data);
+
+    revalidateTag('camps', 'max');
+    revalidatePath('/dashboard/camp');
+    revalidatePath(`/dashboard/camp/${parsed.data.startDate}/${parsed.data.endDate}`);
+
+    return { ok: true, result };
+  } catch (error) {
+    console.error('Error refreshing camp LMS week:', error);
+    return { ok: false, error: 'Failed to refresh portal camp roster' };
+  }
+}
+
+export async function saveCampLmsCourseMapping(input: {
+  courseId: string;
+  lmsCourseName: string;
+  lmsCourseLink?: string;
+  notes?: string;
+}) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampLmsCourseMappingSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Add an LMS course name before saving' };
+  }
+
+  const { courseId, lmsCourseName, lmsCourseLink, notes } = parsed.data;
+
+  try {
+    if (!(await campLmsChecklistSchemaReady())) {
+      return { ok: false, error: 'Apply migration 024_lms_camp_checklist.sql before saving LMS mappings' };
+    }
+
+    await sql`
+      INSERT INTO camp_lms_course_mappings (
+        course_id,
+        lms_course_name,
+        lms_course_link,
+        notes,
+        updated_at
+      )
+      VALUES (
+        ${courseId},
+        ${lmsCourseName},
+        ${lmsCourseLink || null},
+        ${notes || null},
+        NOW()
+      )
+      ON CONFLICT (course_id) DO UPDATE
+      SET lms_course_name = EXCLUDED.lms_course_name,
+          lms_course_link = EXCLUDED.lms_course_link,
+          notes = EXCLUDED.notes,
+          updated_at = NOW();
+    `;
+
+    revalidatePath('/dashboard/camp');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error saving camp LMS course mapping:', error);
+    return { ok: false, error: 'Failed to save LMS course mapping' };
+  }
+}
+
+export async function updateCampLmsStatus(input: {
+  enrolmentId: string;
+  status: CampLmsStatus | null;
+  note?: string;
+}) {
+  const session = await auth();
+  const userId = session?.user?.id;
+
+  if (!userId) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampLmsStatusUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid LMS status update' };
+  }
+
+  const { enrolmentId, status, note } = parsed.data;
+
+  try {
+    if (!(await campLmsChecklistSchemaReady())) {
+      return { ok: false, error: 'Apply migration 024_lms_camp_checklist.sql before saving LMS statuses' };
+    }
+
+    if (!status) {
+      await sql`
+        DELETE FROM camp_lms_status_checks
+        WHERE camp_enrolment_id = ${enrolmentId}::uuid;
+      `;
+    } else {
+      await sql`
+        INSERT INTO camp_lms_status_checks (
+          camp_enrolment_id,
+          status,
+          note,
+          checked_by,
+          checked_at,
+          updated_at
+        )
+        VALUES (
+          ${enrolmentId}::uuid,
+          ${status},
+          ${note || null},
+          ${userId},
+          NOW(),
+          NOW()
+        )
+        ON CONFLICT (camp_enrolment_id) DO UPDATE
+        SET status = EXCLUDED.status,
+            note = EXCLUDED.note,
+            checked_by = EXCLUDED.checked_by,
+            checked_at = NOW(),
+            updated_at = NOW();
+      `;
+    }
+
+    revalidatePath('/dashboard/camp');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating camp LMS status:', error);
+    return { ok: false, error: 'Failed to update LMS status' };
+  }
+}
+
 export async function updateCampSeatAssignment(
   enrolmentId: string,
   seatNumber: number | null,
@@ -1827,6 +2027,10 @@ export async function updateCampEnrolmentNote(
 ) {
   try {
     const trimmedNote = note.trim();
+
+    if (!(await campEnrolmentNoteColumnExists())) {
+      return { ok: false, error: 'Apply migration 024_lms_camp_checklist.sql before saving camp notes' };
+    }
 
     await sql`
       UPDATE camp_enrolments
