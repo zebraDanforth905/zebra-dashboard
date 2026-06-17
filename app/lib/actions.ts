@@ -939,9 +939,19 @@ const CampPrepResourceAssignmentSchema = z.object({
   studentId: z.string().trim().min(1),
 });
 
+const CampPrepResourceCreateOrAssignSchema = z.object({
+  resourceKind: CampPrepResourceSchema,
+  identifier: z.string().trim().min(1),
+  password: z.string().trim().optional(),
+  studentId: z.string().trim().min(1),
+});
+
+const CAMP_ACCOUNT_DEFAULT_PASSWORD = 'zebra123';
+
 function revalidateAccountPrepViews() {
   revalidatePath('/dashboard/scratch-accounts');
   revalidatePath('/dashboard/camp');
+  revalidatePath('/dashboard/camp/[startDate]/[endDate]', 'page');
   revalidateTag('camps', 'max');
 }
 
@@ -1000,6 +1010,159 @@ export async function assignCampPrepResource(input: {
   } catch (error) {
     console.error('Error assigning camp prep resource:', error);
     return { ok: false, error: 'Failed to assign camp prep resource' };
+  }
+}
+
+export async function createOrAssignCampPrepResource(input: {
+  resourceKind: CampPrepResourceKind;
+  identifier: string;
+  password?: string;
+  studentId: string;
+}) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampPrepResourceCreateOrAssignSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Enter a valid resource and camper' };
+  }
+
+  const { resourceKind, identifier, studentId } = parsed.data;
+  const password = parsed.data.password?.trim() || CAMP_ACCOUNT_DEFAULT_PASSWORD;
+
+  try {
+    if (resourceKind === 'scratch') {
+      const existing = await sql<{
+        resource_id: string;
+        student_id: string | null;
+        student_name: string | null;
+      }[]>`
+        SELECT scr.username AS resource_id, scr.student_id, s.name AS student_name
+        FROM scratch_accounts scr
+        LEFT JOIN students s ON s.id = scr.student_id
+        WHERE scr.username = ${identifier}
+        LIMIT 1;
+      `;
+
+      if (existing.length > 0) {
+        const current = existing[0];
+        if (current.student_id && String(current.student_id) !== studentId) {
+          return {
+            ok: false,
+            error: `Scratch account ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
+          };
+        }
+
+        if (!current.student_id) {
+          const updated = await sql<{ resource_id: string }[]>`
+            UPDATE scratch_accounts
+            SET student_id = ${studentId}
+            WHERE username = ${identifier}
+              AND student_id IS NULL
+            RETURNING username AS resource_id;
+          `;
+
+          if (updated.length === 0) {
+            return { ok: false, error: 'That Scratch account is no longer available' };
+          }
+        }
+      } else {
+        await sql`
+          INSERT INTO scratch_accounts (username, password, student_id)
+          VALUES (${identifier}, ${password}, ${studentId});
+        `;
+      }
+    } else if (resourceKind === 'roblox') {
+      const existing = await sql<{
+        resource_id: string;
+        student_id: string | null;
+        student_name: string | null;
+      }[]>`
+        SELECT rob.username AS resource_id, rob.student_id, s.name AS student_name
+        FROM roblox_accounts rob
+        LEFT JOIN students s ON s.id = rob.student_id
+        WHERE rob.username = ${identifier}
+        LIMIT 1;
+      `;
+
+      if (existing.length > 0) {
+        const current = existing[0];
+        if (current.student_id && String(current.student_id) !== studentId) {
+          return {
+            ok: false,
+            error: `Roblox account ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
+          };
+        }
+
+        if (!current.student_id) {
+          const updated = await sql<{ resource_id: string }[]>`
+            UPDATE roblox_accounts
+            SET student_id = ${studentId}
+            WHERE username = ${identifier}
+              AND student_id IS NULL
+            RETURNING username AS resource_id;
+          `;
+
+          if (updated.length === 0) {
+            return { ok: false, error: 'That Roblox account is no longer available' };
+          }
+        }
+      } else {
+        await sql`
+          INSERT INTO roblox_accounts (username, password, student_id)
+          VALUES (${identifier}, ${password}, ${studentId});
+        `;
+      }
+    } else {
+      const existing = await sql<{
+        resource_id: string;
+        student_id: string | null;
+        student_name: string | null;
+      }[]>`
+        SELECT lap.laptop_number AS resource_id, lap.student_id, s.name AS student_name
+        FROM laptop_assignments lap
+        LEFT JOIN students s ON s.id = lap.student_id
+        WHERE lap.laptop_number = ${identifier}
+        LIMIT 1;
+      `;
+
+      if (existing.length > 0) {
+        const current = existing[0];
+        if (current.student_id && String(current.student_id) !== studentId) {
+          return {
+            ok: false,
+            error: `Laptop ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
+          };
+        }
+
+        if (!current.student_id) {
+          const updated = await sql<{ resource_id: string }[]>`
+            UPDATE laptop_assignments
+            SET student_id = ${studentId}
+            WHERE laptop_number = ${identifier}
+              AND student_id IS NULL
+            RETURNING laptop_number AS resource_id;
+          `;
+
+          if (updated.length === 0) {
+            return { ok: false, error: 'That laptop is no longer available' };
+          }
+        }
+      } else {
+        await sql`
+          INSERT INTO laptop_assignments (laptop_number, student_id)
+          VALUES (${identifier}, ${studentId});
+        `;
+      }
+    }
+
+    revalidateAccountPrepViews();
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating or assigning camp prep resource:', error);
+    return { ok: false, error: 'Failed to save camp prep resource' };
   }
 }
 

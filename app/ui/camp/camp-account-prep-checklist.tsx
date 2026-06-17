@@ -9,6 +9,7 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   assignCampPrepResource,
+  createOrAssignCampPrepResource,
   unassignCampPrepResource,
 } from '@/app/lib/actions';
 import type {
@@ -25,6 +26,13 @@ type Props = {
 };
 
 type StatusFilter = 'all' | CampPrepStatus;
+
+type InlineDraft = {
+  identifier: string;
+  password: string;
+};
+
+const DEFAULT_CAMP_ACCOUNT_PASSWORD = 'zebra123';
 
 const STATUS_LABELS: Record<CampPrepStatus, string> = {
   ready: 'Ready',
@@ -83,6 +91,10 @@ function inventoryForKind(
   return checklist.inventory.laptops;
 }
 
+function defaultPasswordForKind(kind: CampPrepResourceKind) {
+  return kind === 'laptop' ? '' : DEFAULT_CAMP_ACCOUNT_PASSWORD;
+}
+
 export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -91,6 +103,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [message, setMessage] = useState<string | null>(null);
   const [selections, setSelections] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, InlineDraft>>({});
 
   const courseOptions = useMemo(() => {
     const courses = new Map<string, string>();
@@ -136,6 +149,30 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
   const selectionKey = (row: CampAccountPrepRow, kind: CampPrepResourceKind) =>
     `${row.camp_enrolment_id}:${kind}`;
 
+  const draftFor = (row: CampAccountPrepRow, kind: CampPrepResourceKind) =>
+    drafts[selectionKey(row, kind)] ?? {
+      identifier: '',
+      password: defaultPasswordForKind(kind),
+    };
+
+  const updateDraft = (
+    row: CampAccountPrepRow,
+    kind: CampPrepResourceKind,
+    patch: Partial<InlineDraft>
+  ) => {
+    const key = selectionKey(row, kind);
+    setDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] ?? {
+          identifier: '',
+          password: defaultPasswordForKind(kind),
+        }),
+        ...patch,
+      },
+    }));
+  };
+
   const handleAssign = (row: CampAccountPrepRow, kind: CampPrepResourceKind) => {
     const key = selectionKey(row, kind);
     const resourceId = selections[key];
@@ -159,6 +196,45 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
 
       setSelections((current) => ({ ...current, [key]: '' }));
       setMessage(`${RESOURCE_LABELS[kind]} assigned to ${row.student_name}.`);
+      router.refresh();
+    });
+  };
+
+  const handleCreateOrAssign = (
+    row: CampAccountPrepRow,
+    kind: CampPrepResourceKind
+  ) => {
+    const draft = draftFor(row, kind);
+    const identifier = draft.identifier.trim();
+    const label = kind === 'laptop' && row.needs_unity ? 'Unity laptop' : RESOURCE_LABELS[kind];
+
+    if (!identifier) {
+      setMessage(`Enter a ${label} first.`);
+      return;
+    }
+
+    setMessage(null);
+    startTransition(async () => {
+      const result = await createOrAssignCampPrepResource({
+        resourceKind: kind,
+        identifier,
+        password: kind === 'laptop' ? undefined : draft.password,
+        studentId: row.student_id,
+      });
+
+      if (!result.ok) {
+        setMessage(result.error ?? 'Save failed.');
+        return;
+      }
+
+      setDrafts((current) => ({
+        ...current,
+        [selectionKey(row, kind)]: {
+          identifier: '',
+          password: defaultPasswordForKind(kind),
+        },
+      }));
+      setMessage(`${label} saved for ${row.student_name}.`);
       router.refresh();
     });
   };
@@ -258,36 +334,82 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
 
     const key = selectionKey(row, kind);
     const selected = selections[key] ?? '';
+    const draft = draftFor(row, kind);
+    const canSaveDraft = draft.identifier.trim().length > 0;
 
     return (
-      <div key={kind} className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-        <select
-          value={selected}
-          onChange={(event) => setSelections({
-            ...selections,
-            [key]: event.target.value,
-          })}
-          disabled={isPending || inventory.length === 0}
-          className="min-w-36 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:bg-slate-100"
-        >
-          <option value="">
-            {inventory.length > 0 ? `Choose ${label}` : `No ${label} left`}
-          </option>
-          {inventory.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-              {item.password ? ` / ${item.password}` : ''}
+      <div key={kind} className="space-y-1.5 rounded-md border border-slate-200 bg-slate-50 p-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-slate-700">{label}</span>
+          <span className="text-xs text-slate-500">
+            {inventory.length > 0 ? `${inventory.length} available` : 'create new'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+          <select
+            value={selected}
+            onChange={(event) => setSelections((current) => ({
+              ...current,
+              [key]: event.target.value,
+            }))}
+            disabled={isPending || inventory.length === 0}
+            className="min-w-36 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 disabled:bg-slate-100"
+          >
+            <option value="">
+              {inventory.length > 0 ? `Choose ${label}` : `No ${label} left`}
             </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => handleAssign(row, kind)}
-          disabled={isPending || !selected}
-          className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+            {inventory.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+                {item.password ? ` / ${item.password}` : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => handleAssign(row, kind)}
+            disabled={isPending || !selected}
+            className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Assign
+          </button>
+        </div>
+
+        <div
+          className={
+            kind === 'laptop'
+              ? 'grid grid-cols-[minmax(0,1fr)_auto] gap-1.5'
+              : 'grid grid-cols-[minmax(7rem,1fr)_minmax(5rem,0.8fr)_auto] gap-1.5'
+          }
         >
-          Assign
-        </button>
+          <input
+            type="text"
+            value={draft.identifier}
+            onChange={(event) => updateDraft(row, kind, { identifier: event.target.value })}
+            disabled={isPending}
+            placeholder={kind === 'laptop' ? 'Laptop #' : 'Username'}
+            className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 disabled:bg-slate-100"
+          />
+          {kind !== 'laptop' && (
+            <input
+              type="text"
+              value={draft.password}
+              onChange={(event) => updateDraft(row, kind, { password: event.target.value })}
+              disabled={isPending}
+              placeholder="Password"
+              className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 disabled:bg-slate-100"
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => handleCreateOrAssign(row, kind)}
+            disabled={isPending || !canSaveDraft}
+            className="rounded-md border border-sky-300 bg-white px-2 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
       </div>
     );
   };
@@ -406,7 +528,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-md border border-slate-200 bg-white">
-        <table className="min-w-[1050px] w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-[1200px] w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Camper</th>
@@ -470,7 +592,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
                       </div>
                     </td>
                     <td className="px-3 py-3">
-                      <div className="w-80 space-y-2">
+                      <div className="w-[26rem] space-y-2">
                         {resourceKinds.map((kind) =>
                           renderAssignmentControl(row, kind, inventoryForKind(checklist, kind))
                         )}
