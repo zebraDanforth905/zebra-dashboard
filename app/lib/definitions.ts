@@ -363,6 +363,53 @@ export type CampLmsStatus =
   | 'needs_followup'
   | 'not_applicable';
 
+export type CampLmsCanvasSyncStatus = 'not_synced' | 'synced' | 'error';
+
+export type CampLmsCanvasIssue =
+  | 'ok'
+  | 'not_synced'
+  | 'unmapped_course'
+  | 'missing_canvas_user'
+  | 'missing_expected_course'
+  | 'inactive_expected_course'
+  | 'extra_active_course';
+
+export type CampLmsCanvasActionType =
+  | 'add_expected_beginner'
+  | 'inactivate_enrollment';
+
+export type CampLmsCanvasMatch = {
+  id: string;
+  name: string | null;
+  login_id: string | null;
+  email: string | null;
+  sis_user_id: string | null;
+};
+
+export type CampLmsCanvasEnrollment = {
+  enrollment_id: string;
+  course_id: string;
+  course_name: string | null;
+  state: string;
+  role: string | null;
+  type: string | null;
+  updated_at: string | null;
+};
+
+export type CampLmsExpectedCourse = {
+  level: 'beginner' | 'intermediate' | 'advanced';
+  course_id: string;
+  course_name: string | null;
+};
+
+export type CampLmsSuggestedAction = {
+  type: CampLmsCanvasActionType;
+  label: string;
+  canvas_course_id?: string;
+  canvas_course_name?: string | null;
+  canvas_enrollment_id?: string;
+};
+
 export type CampLmsChecklistRow = {
   camp_enrolment_id: string;
   student_id: string;
@@ -377,6 +424,35 @@ export type CampLmsChecklistRow = {
   lms_course_name: string | null;
   lms_course_link: string | null;
   mapping_notes: string | null;
+  canvas_course_family: string | null;
+  canvas_beginner_course_id: string | null;
+  canvas_beginner_course_name: string | null;
+  canvas_intermediate_course_id: string | null;
+  canvas_intermediate_course_name: string | null;
+  canvas_advanced_course_id: string | null;
+  canvas_advanced_course_name: string | null;
+  canvas_user_id: string | null;
+  canvas_user_name: string | null;
+  canvas_user_login: string | null;
+  canvas_user_email: string | null;
+  canvas_user_found: boolean;
+  canvas_user_matches: CampLmsCanvasMatch[];
+  canvas_sync_status: CampLmsCanvasSyncStatus;
+  canvas_sync_error: string | null;
+  canvas_synced_at: Date | null;
+  active_canvas_enrollments: CampLmsCanvasEnrollment[];
+  inactive_canvas_enrollments: CampLmsCanvasEnrollment[];
+  invited_canvas_enrollments: CampLmsCanvasEnrollment[];
+  expected_canvas_courses: CampLmsExpectedCourse[];
+  expected_canvas_course_ids: string[];
+  active_expected_enrollments: CampLmsCanvasEnrollment[];
+  inactive_expected_enrollments: CampLmsCanvasEnrollment[];
+  extra_active_mapped_enrollments: CampLmsCanvasEnrollment[];
+  canvas_issues: CampLmsCanvasIssue[];
+  canvas_status: CampLmsCanvasIssue;
+  canvas_status_label: string;
+  suggested_fix: string;
+  suggested_actions: CampLmsSuggestedAction[];
   status: CampLmsStatus | null;
   status_note: string | null;
   checked_at: Date | null;
@@ -391,10 +467,20 @@ export type CampLmsChecklistSummary = {
   unmapped: number;
   unchecked: number;
   not_applicable: number;
+  canvas_ok: number;
+  canvas_not_synced: number;
+  canvas_missing_user: number;
+  canvas_missing_course: number;
+  canvas_inactive_expected: number;
+  canvas_extra_active: number;
+  canvas_unmapped: number;
 };
 
 export type CampLmsChecklistData = {
   schema_ready: boolean;
+  canvas_configured: boolean;
+  canvas_base_url: string;
+  canvas_last_synced_at: Date | null;
   rows: CampLmsChecklistRow[];
   summary: CampLmsChecklistSummary;
 };

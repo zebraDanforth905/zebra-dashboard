@@ -211,12 +211,6 @@ export default async function CampSessionPage({
 
       <CampMonthlyReport reports={weekReport} heading="Weekly Enrollment Summary" />
 
-      <CampLmsChecklist
-        startDate={startDate}
-        endDate={endDate}
-        checklist={lmsChecklist}
-      />
-
       <div className="mt-4">
         <h2 className="text-lg font-bold text-slate-900 mb-3 pb-2 border-b border-slate-300">
           Camp Days
@@ -288,6 +282,12 @@ export default async function CampSessionPage({
           </div>
         )}
       </div>
+
+      <CampLmsChecklist
+        startDate={startDate}
+        endDate={endDate}
+        checklist={lmsChecklist}
+      />
     </div>
   );
 }

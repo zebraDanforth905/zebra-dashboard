@@ -2,7 +2,31 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote, CampSessionWithEnrolments, CampLmsChecklistData, CampLmsChecklistRow, CampLmsChecklistSummary } from './definitions';
+import {
+  InvoiceTableData,
+  CustomerTableData,
+  ScheduleRow,
+  StudentTableData,
+  Session,
+  RecurringInvoice,
+  RecurringInvoiceListData,
+  TrialRow,
+  MakeupRow,
+  PickupListDisplay,
+  SlipInfo,
+  StudentNote,
+  CustomerNote,
+  TrialNote,
+  CampLmsCanvasEnrollment,
+  CampLmsCanvasIssue,
+  CampLmsCanvasMatch,
+  CampLmsChecklistData,
+  CampLmsChecklistRow,
+  CampLmsChecklistSummary,
+  CampLmsExpectedCourse,
+  CampLmsSuggestedAction,
+} from './definitions';
+import { getCanvasPublicConfig } from './canvas-lms';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -2020,10 +2044,274 @@ export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Dat
   }
 }
 
+type CampLmsChecklistDbRow = Omit<
+  CampLmsChecklistRow,
+  | 'canvas_user_matches'
+  | 'active_canvas_enrollments'
+  | 'inactive_canvas_enrollments'
+  | 'invited_canvas_enrollments'
+  | 'expected_canvas_courses'
+  | 'expected_canvas_course_ids'
+  | 'active_expected_enrollments'
+  | 'inactive_expected_enrollments'
+  | 'extra_active_mapped_enrollments'
+  | 'canvas_issues'
+  | 'canvas_status'
+  | 'canvas_status_label'
+  | 'suggested_fix'
+  | 'suggested_actions'
+> & {
+  canvas_user_matches: unknown;
+  active_canvas_enrollments: unknown;
+  inactive_canvas_enrollments: unknown;
+  invited_canvas_enrollments: unknown;
+};
+
+const EMPTY_LMS_SUMMARY: CampLmsChecklistSummary = {
+  total: 0,
+  verified: 0,
+  missing_setup: 0,
+  needs_followup: 0,
+  unmapped: 0,
+  unchecked: 0,
+  not_applicable: 0,
+  canvas_ok: 0,
+  canvas_not_synced: 0,
+  canvas_missing_user: 0,
+  canvas_missing_course: 0,
+  canvas_inactive_expected: 0,
+  canvas_extra_active: 0,
+  canvas_unmapped: 0,
+};
+
+function asCanvasMatches(value: unknown): CampLmsCanvasMatch[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((match) => {
+      if (!match || typeof match !== 'object') return null;
+      const raw = match as Record<string, unknown>;
+      if (raw.id == null) return null;
+
+      return {
+        id: String(raw.id),
+        name: raw.name == null ? null : String(raw.name),
+        login_id: raw.login_id == null ? null : String(raw.login_id),
+        email: raw.email == null ? null : String(raw.email),
+        sis_user_id: raw.sis_user_id == null ? null : String(raw.sis_user_id),
+      };
+    })
+    .filter((match): match is CampLmsCanvasMatch => Boolean(match));
+}
+
+function asCanvasEnrollments(value: unknown): CampLmsCanvasEnrollment[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((enrollment) => {
+      if (!enrollment || typeof enrollment !== 'object') return null;
+      const raw = enrollment as Record<string, unknown>;
+      if (raw.enrollment_id == null || raw.course_id == null) return null;
+
+      return {
+        enrollment_id: String(raw.enrollment_id),
+        course_id: String(raw.course_id),
+        course_name: raw.course_name == null ? null : String(raw.course_name),
+        state: raw.state == null ? 'unknown' : String(raw.state),
+        role: raw.role == null ? null : String(raw.role),
+        type: raw.type == null ? null : String(raw.type),
+        updated_at: raw.updated_at == null ? null : String(raw.updated_at),
+      };
+    })
+    .filter((enrollment): enrollment is CampLmsCanvasEnrollment => Boolean(enrollment));
+}
+
+function buildExpectedCanvasCourses(row: CampLmsChecklistDbRow): CampLmsExpectedCourse[] {
+  const candidates: CampLmsExpectedCourse[] = [
+    {
+      level: 'beginner',
+      course_id: row.canvas_beginner_course_id ?? '',
+      course_name: row.canvas_beginner_course_name,
+    },
+    {
+      level: 'intermediate',
+      course_id: row.canvas_intermediate_course_id ?? '',
+      course_name: row.canvas_intermediate_course_name,
+    },
+    {
+      level: 'advanced',
+      course_id: row.canvas_advanced_course_id ?? '',
+      course_name: row.canvas_advanced_course_name,
+    },
+  ];
+
+  return candidates.filter((course) => course.course_id.trim().length > 0);
+}
+
+function canvasStatusLabel(status: CampLmsCanvasIssue) {
+  const labels: Record<CampLmsCanvasIssue, string> = {
+    ok: 'OK',
+    not_synced: 'Not synced',
+    unmapped_course: 'Unmapped camp course',
+    missing_canvas_user: 'Missing Canvas user',
+    missing_expected_course: 'Missing expected course',
+    inactive_expected_course: 'Expected course inactive',
+    extra_active_course: 'Extra active course',
+  };
+
+  return labels[status];
+}
+
+function primaryCanvasStatus(issues: CampLmsCanvasIssue[]): CampLmsCanvasIssue {
+  const priority: CampLmsCanvasIssue[] = [
+    'not_synced',
+    'unmapped_course',
+    'missing_canvas_user',
+    'missing_expected_course',
+    'inactive_expected_course',
+    'extra_active_course',
+  ];
+
+  return priority.find((issue) => issues.includes(issue)) ?? 'ok';
+}
+
+function suggestedCanvasFix(params: {
+  status: CampLmsCanvasIssue;
+  login: string;
+  family: string | null;
+  beginnerCourseId: string | null;
+  activeExpected: CampLmsCanvasEnrollment[];
+  inactiveExpected: CampLmsCanvasEnrollment[];
+  extraActive: CampLmsCanvasEnrollment[];
+}) {
+  const { status, login, family, beginnerCourseId, activeExpected, inactiveExpected, extraActive } = params;
+  const familyLabel = family ?? 'the expected Canvas family';
+
+  if (status === 'not_synced') return 'Click Sync LMS to read current Canvas users and enrollments.';
+  if (status === 'unmapped_course') return 'Map this portal camp course to its Canvas course family and beginner/intermediate/advanced course IDs.';
+  if (status === 'missing_canvas_user') return `Create or locate the Canvas user for ${login}, then sync again.`;
+  if (status === 'missing_expected_course') {
+    return beginnerCourseId
+      ? `Test-add this camper to ${familyLabel} beginner course ${beginnerCourseId}.`
+      : `Add this camper to an active course in ${familyLabel}.`;
+  }
+  if (status === 'inactive_expected_course') {
+    const course = inactiveExpected[0];
+    return course
+      ? `Reactivate or re-enroll the camper in ${course.course_name ?? course.course_id}.`
+      : `Reactivate an enrollment in ${familyLabel}.`;
+  }
+  if (status === 'extra_active_course') {
+    const courseNames = extraActive
+      .map((enrollment) => enrollment.course_name ?? enrollment.course_id)
+      .join(', ');
+    const suffix = activeExpected.length > 0
+      ? ''
+      : ` and add ${familyLabel}${beginnerCourseId ? ` beginner course ${beginnerCourseId}` : ''}`;
+    return `Set extra active enrollment(s) inactive: ${courseNames}${suffix}.`;
+  }
+
+  return 'Expected Canvas setup is active.';
+}
+
+function suggestedCanvasActions(params: {
+  row: CampLmsChecklistDbRow;
+  expectedCourses: CampLmsExpectedCourse[];
+  activeExpected: CampLmsCanvasEnrollment[];
+  extraActive: CampLmsCanvasEnrollment[];
+}): CampLmsSuggestedAction[] {
+  const { row, expectedCourses, activeExpected, extraActive } = params;
+
+  if (row.canvas_sync_status !== 'synced' || !row.canvas_user_found) return [];
+
+  const actions: CampLmsSuggestedAction[] = [];
+  const beginner = expectedCourses.find((course) => course.level === 'beginner');
+  if (beginner && activeExpected.length === 0) {
+    actions.push({
+      type: 'add_expected_beginner',
+      label: 'Test add beginner',
+      canvas_course_id: beginner.course_id,
+      canvas_course_name: beginner.course_name,
+    });
+  }
+
+  extraActive.forEach((enrollment) => {
+    actions.push({
+      type: 'inactivate_enrollment',
+      label: 'Test set inactive',
+      canvas_course_id: enrollment.course_id,
+      canvas_course_name: enrollment.course_name,
+      canvas_enrollment_id: enrollment.enrollment_id,
+    });
+  });
+
+  return actions;
+}
+
+function buildCampLmsRows(rows: CampLmsChecklistDbRow[], allMappedCanvasCourseIds: Set<string>): CampLmsChecklistRow[] {
+  return rows.map((row) => {
+    const expectedCourses = buildExpectedCanvasCourses(row);
+    const expectedCourseIds = new Set(expectedCourses.map((course) => course.course_id));
+    const activeEnrollments = asCanvasEnrollments(row.active_canvas_enrollments);
+    const inactiveEnrollments = asCanvasEnrollments(row.inactive_canvas_enrollments);
+    const activeExpected = activeEnrollments.filter((enrollment) => expectedCourseIds.has(enrollment.course_id));
+    const inactiveExpected = inactiveEnrollments.filter((enrollment) => expectedCourseIds.has(enrollment.course_id));
+    const extraActive = activeEnrollments.filter((enrollment) =>
+      allMappedCanvasCourseIds.has(enrollment.course_id) && !expectedCourseIds.has(enrollment.course_id)
+    );
+
+    const issues: CampLmsCanvasIssue[] = [];
+    if (row.canvas_sync_status !== 'synced') issues.push('not_synced');
+    if (expectedCourses.length === 0) issues.push('unmapped_course');
+    if (row.canvas_sync_status === 'synced' && !row.canvas_user_found) issues.push('missing_canvas_user');
+    if (row.canvas_sync_status === 'synced' && row.canvas_user_found && expectedCourses.length > 0 && activeExpected.length === 0) {
+      issues.push(inactiveExpected.length > 0 ? 'inactive_expected_course' : 'missing_expected_course');
+    }
+    if (row.canvas_sync_status === 'synced' && row.canvas_user_found && extraActive.length > 0) {
+      issues.push('extra_active_course');
+    }
+
+    const canvasIssues: CampLmsCanvasIssue[] = issues.length > 0 ? Array.from(new Set(issues)) : ['ok'];
+    const canvasStatus = primaryCanvasStatus(canvasIssues);
+    const suggestedActions = suggestedCanvasActions({
+      row,
+      expectedCourses,
+      activeExpected,
+      extraActive,
+    });
+
+    return {
+      ...row,
+      canvas_user_matches: asCanvasMatches(row.canvas_user_matches),
+      active_canvas_enrollments: activeEnrollments,
+      inactive_canvas_enrollments: inactiveEnrollments,
+      invited_canvas_enrollments: asCanvasEnrollments(row.invited_canvas_enrollments),
+      expected_canvas_courses: expectedCourses,
+      expected_canvas_course_ids: Array.from(expectedCourseIds),
+      active_expected_enrollments: activeExpected,
+      inactive_expected_enrollments: inactiveExpected,
+      extra_active_mapped_enrollments: extraActive,
+      canvas_issues: canvasIssues,
+      canvas_status: canvasStatus,
+      canvas_status_label: canvasStatusLabel(canvasStatus),
+      suggested_fix: suggestedCanvasFix({
+        status: canvasStatus,
+        login: row.suggested_lms_login,
+        family: row.canvas_course_family,
+        beginnerCourseId: row.canvas_beginner_course_id,
+        activeExpected,
+        inactiveExpected,
+        extraActive,
+      }),
+      suggested_actions: suggestedActions,
+    };
+  });
+}
+
 function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSummary {
   return rows.reduce<CampLmsChecklistSummary>(
     (summary, row) => {
-      const mapped = Boolean(row.lms_course_name || row.lms_course_link);
+      const mapped = row.expected_canvas_course_ids.length > 0;
 
       summary.total += 1;
       if (!mapped) summary.unmapped += 1;
@@ -2034,39 +2322,48 @@ function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSumm
       }
       if (row.status === 'needs_followup') summary.needs_followup += 1;
       if (row.status === 'not_applicable') summary.not_applicable += 1;
+      if (row.canvas_issues.includes('ok')) summary.canvas_ok += 1;
+      if (row.canvas_issues.includes('not_synced')) summary.canvas_not_synced += 1;
+      if (row.canvas_issues.includes('missing_canvas_user')) summary.canvas_missing_user += 1;
+      if (row.canvas_issues.includes('missing_expected_course')) summary.canvas_missing_course += 1;
+      if (row.canvas_issues.includes('inactive_expected_course')) summary.canvas_inactive_expected += 1;
+      if (row.canvas_issues.includes('extra_active_course')) summary.canvas_extra_active += 1;
+      if (row.canvas_issues.includes('unmapped_course')) summary.canvas_unmapped += 1;
 
       return summary;
     },
-    {
-      total: 0,
-      verified: 0,
-      missing_setup: 0,
-      needs_followup: 0,
-      unmapped: 0,
-      unchecked: 0,
-      not_applicable: 0,
-    }
+    { ...EMPTY_LMS_SUMMARY }
   );
 }
 
 export async function fetchCampLmsChecklist(startDate: string, endDate: string): Promise<CampLmsChecklistData> {
   try {
+    const canvasConfig = getCanvasPublicConfig();
     const [schema] = await sql<{ schema_ready: boolean }[]>`
       SELECT (
         to_regclass('public.camp_lms_course_mappings') IS NOT NULL
         AND to_regclass('public.camp_lms_status_checks') IS NOT NULL
+        AND to_regclass('public.camp_lms_canvas_snapshots') IS NOT NULL
+        AND to_regclass('public.camp_lms_canvas_action_audit') IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_course_mappings'
+            AND column_name = 'canvas_beginner_course_id'
+        )
       ) AS schema_ready;
     `;
 
     const schemaReady = Boolean(schema?.schema_ready);
 
     if (!schemaReady) {
-      const rows = await sql<CampLmsChecklistRow[]>`
+      const dbRows = await sql<CampLmsChecklistDbRow[]>`
         SELECT
           ce.id::text AS camp_enrolment_id,
-          ce.student_id::text AS student_id,
+          TRUNC(ce.student_id)::text AS student_id,
           s.name AS student_name,
-          ce.student_id::text || '@zebrarobotics.com' AS suggested_lms_login,
+          TRUNC(ce.student_id)::text || '@zebrarobotics.com' AS suggested_lms_login,
           ce.course_id::text AS course_id,
           c.name AS course_name,
           cs.camp_type,
@@ -2076,6 +2373,25 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           NULL::text AS lms_course_name,
           NULL::text AS lms_course_link,
           NULL::text AS mapping_notes,
+          NULL::text AS canvas_course_family,
+          NULL::text AS canvas_beginner_course_id,
+          NULL::text AS canvas_beginner_course_name,
+          NULL::text AS canvas_intermediate_course_id,
+          NULL::text AS canvas_intermediate_course_name,
+          NULL::text AS canvas_advanced_course_id,
+          NULL::text AS canvas_advanced_course_name,
+          NULL::text AS canvas_user_id,
+          NULL::text AS canvas_user_name,
+          NULL::text AS canvas_user_login,
+          NULL::text AS canvas_user_email,
+          FALSE AS canvas_user_found,
+          '[]'::jsonb AS canvas_user_matches,
+          'not_synced'::text AS canvas_sync_status,
+          NULL::text AS canvas_sync_error,
+          NULL::timestamptz AS canvas_synced_at,
+          '[]'::jsonb AS active_canvas_enrollments,
+          '[]'::jsonb AS inactive_canvas_enrollments,
+          '[]'::jsonb AS invited_canvas_enrollments,
           NULL::text AS status,
           NULL::text AS status_note,
           NULL::timestamptz AS checked_at,
@@ -2089,20 +2405,45 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           AND cs.end_date >= ${startDate}::date
         ORDER BY ce.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
       `;
+      const rows = buildCampLmsRows(dbRows, new Set());
 
       return {
         schema_ready: false,
+        canvas_configured: canvasConfig.configured,
+        canvas_base_url: canvasConfig.baseUrl,
+        canvas_last_synced_at: null,
         rows,
         summary: summarizeCampLmsRows(rows),
       };
     }
 
-    const rows = await sql<CampLmsChecklistRow[]>`
+    const mappingRows = await sql<Array<{
+      canvas_beginner_course_id: string | null;
+      canvas_intermediate_course_id: string | null;
+      canvas_advanced_course_id: string | null;
+    }>>`
+      SELECT
+        canvas_beginner_course_id,
+        canvas_intermediate_course_id,
+        canvas_advanced_course_id
+      FROM camp_lms_course_mappings;
+    `;
+    const allMappedCanvasCourseIds = new Set(
+      mappingRows
+        .flatMap((row) => [
+          row.canvas_beginner_course_id,
+          row.canvas_intermediate_course_id,
+          row.canvas_advanced_course_id,
+        ])
+        .filter((courseId): courseId is string => Boolean(courseId))
+    );
+
+    const dbRows = await sql<CampLmsChecklistDbRow[]>`
       SELECT
         ce.id::text AS camp_enrolment_id,
-        ce.student_id::text AS student_id,
+        TRUNC(ce.student_id)::text AS student_id,
         s.name AS student_name,
-        ce.student_id::text || '@zebrarobotics.com' AS suggested_lms_login,
+        TRUNC(ce.student_id)::text || '@zebrarobotics.com' AS suggested_lms_login,
         ce.course_id::text AS course_id,
         c.name AS course_name,
         cs.camp_type,
@@ -2112,6 +2453,25 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         m.lms_course_name,
         m.lms_course_link,
         m.notes AS mapping_notes,
+        m.canvas_course_family,
+        m.canvas_beginner_course_id,
+        m.canvas_beginner_course_name,
+        m.canvas_intermediate_course_id,
+        m.canvas_intermediate_course_name,
+        m.canvas_advanced_course_id,
+        m.canvas_advanced_course_name,
+        snap.canvas_user_id,
+        snap.canvas_user_name,
+        snap.canvas_user_login,
+        snap.canvas_user_email,
+        COALESCE(snap.canvas_user_found, FALSE) AS canvas_user_found,
+        COALESCE(snap.canvas_user_matches, '[]'::jsonb) AS canvas_user_matches,
+        COALESCE(snap.sync_status, 'not_synced') AS canvas_sync_status,
+        snap.sync_error AS canvas_sync_error,
+        snap.synced_at AS canvas_synced_at,
+        COALESCE(snap.active_enrollments, '[]'::jsonb) AS active_canvas_enrollments,
+        COALESCE(snap.inactive_enrollments, '[]'::jsonb) AS inactive_canvas_enrollments,
+        COALESCE(snap.invited_enrollments, '[]'::jsonb) AS invited_canvas_enrollments,
         sc.status,
         sc.note AS status_note,
         sc.checked_at,
@@ -2121,6 +2481,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       JOIN students s ON s.id = ce.student_id
       LEFT JOIN courses c ON c.id = ce.course_id
       LEFT JOIN camp_lms_course_mappings m ON m.course_id = ce.course_id::text
+      LEFT JOIN camp_lms_canvas_snapshots snap ON snap.camp_enrolment_id = ce.id
       LEFT JOIN camp_lms_status_checks sc ON sc.camp_enrolment_id = ce.id
       LEFT JOIN users u ON u.id::text = sc.checked_by
       WHERE DATE_TRUNC('week', cs.start_date)::date = ${startDate}::date
@@ -2128,9 +2489,19 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         AND cs.end_date >= ${startDate}::date
       ORDER BY ce.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
     `;
+    const rows = buildCampLmsRows(dbRows, allMappedCanvasCourseIds);
+    const canvasLastSyncedAt = rows.reduce<Date | null>((latest, row) => {
+      if (!row.canvas_synced_at) return latest;
+      const syncedAt = new Date(row.canvas_synced_at);
+      if (!latest || syncedAt > latest) return syncedAt;
+      return latest;
+    }, null);
 
     return {
       schema_ready: true,
+      canvas_configured: canvasConfig.configured,
+      canvas_base_url: canvasConfig.baseUrl,
+      canvas_last_synced_at: canvasLastSyncedAt,
       rows,
       summary: summarizeCampLmsRows(rows),
     };
