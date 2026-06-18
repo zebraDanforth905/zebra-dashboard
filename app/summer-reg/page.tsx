@@ -17,7 +17,11 @@ export default async function SummerRegPage({
 
   if (!token) return <PageShell><InvalidLink /></PageShell>;
 
-  const data = await fetchParentFormData(token);
+  const session = staff === '1' ? await auth() : null;
+  const sessionUser = session?.user as { name?: string | null; email?: string | null; user_type?: string } | undefined;
+  const isStaffEntry = staff === '1' && sessionUser?.user_type === 'admin';
+  const staffName = sessionUser?.name || sessionUser?.email || null;
+  const data = await fetchParentFormData(token, isStaffEntry);
 
   if (!data) return <PageShell><InvalidLink /></PageShell>;
 
@@ -33,11 +37,6 @@ export default async function SummerRegPage({
       </PageShell>
     );
   }
-
-  const session = staff === '1' ? await auth() : null;
-  const sessionUser = session?.user as { name?: string | null; email?: string | null; user_type?: string } | undefined;
-  const isStaffEntry = staff === '1' && sessionUser?.user_type === 'admin';
-  const staffName = sessionUser?.name || sessionUser?.email || null;
 
   return (
     <PageShell>

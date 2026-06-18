@@ -125,7 +125,7 @@ function normalizeLatestRequest(
 }
 
 // NO cache — public route, must always reflect current DB state
-export async function fetchParentFormData(token: string): Promise<ParentFormData | null> {
+export async function fetchParentFormData(token: string, includeInactiveStudents = false): Promise<ParentFormData | null> {
   try {
     const tokenRows = await sql<{
       token_id: string;
@@ -234,12 +234,15 @@ export async function fetchParentFormData(token: string): Promise<ParentFormData
       ) pr ON true
       WHERE s.customer_id = ${customer_id}::uuid
         AND (
-          EXISTS (
-            SELECT 1
-            FROM enrolments e
-            WHERE e.student_id = s.id
+          ${includeInactiveStudents}::boolean
+          OR (
+            EXISTS (
+              SELECT 1
+              FROM enrolments e
+              WHERE e.student_id = s.id
+            )
+            OR s.id::text = ANY(${tokenSnapshotStudentIds}::text[])
           )
-          OR s.id::text = ANY(${tokenSnapshotStudentIds}::text[])
         )
       ORDER BY s.name
     `;
