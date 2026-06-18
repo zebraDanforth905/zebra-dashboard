@@ -414,7 +414,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
 
       {!checklist.schema_ready && (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          Apply migrations <span className="font-mono">024_lms_camp_checklist.sql</span> and <span className="font-mono">025_canvas_lms_workflow.sql</span>.
+          Apply migrations <span className="font-mono">024_lms_camp_checklist.sql</span>, <span className="font-mono">025_canvas_lms_workflow.sql</span>, and <span className="font-mono">026_rename_lms_status_note.sql</span>.
         </div>
       )}
 

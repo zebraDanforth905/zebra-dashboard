@@ -2349,6 +2349,13 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           SELECT 1
           FROM information_schema.columns
           WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_status_checks'
+            AND column_name = 'lms_note'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
             AND table_name = 'camp_lms_course_mappings'
             AND column_name = 'canvas_beginner_course_id'
         )
@@ -2473,7 +2480,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         COALESCE(snap.inactive_enrollments, '[]'::jsonb) AS inactive_canvas_enrollments,
         COALESCE(snap.invited_enrollments, '[]'::jsonb) AS invited_canvas_enrollments,
         sc.status,
-        sc.note AS status_note,
+        sc.lms_note AS status_note,
         sc.checked_at,
         u.name AS checked_by_name
       FROM camp_sessions cs

@@ -1880,6 +1880,13 @@ async function campLmsChecklistSchemaReady() {
         SELECT 1
         FROM information_schema.columns
         WHERE table_schema = 'public'
+          AND table_name = 'camp_lms_status_checks'
+          AND column_name = 'lms_note'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
           AND table_name = 'camp_lms_course_mappings'
           AND column_name = 'canvas_beginner_course_id'
       )
@@ -2243,7 +2250,7 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql and 025_canvas_lms_workflow.sql before syncing Canvas' };
+      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql, 025_canvas_lms_workflow.sql, and 026_rename_lms_status_note.sql before syncing Canvas' };
     }
     if (!process.env.CANVAS_API_TOKEN) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas sync' };
@@ -2318,7 +2325,7 @@ export async function saveCampLmsCourseMapping(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql and 025_canvas_lms_workflow.sql before saving LMS mappings' };
+      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql, 025_canvas_lms_workflow.sql, and 026_rename_lms_status_note.sql before saving LMS mappings' };
     }
 
     await sql`
@@ -2385,7 +2392,7 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql and 025_canvas_lms_workflow.sql before importing LMS mappings' };
+      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql, 025_canvas_lms_workflow.sql, and 026_rename_lms_status_note.sql before importing LMS mappings' };
     }
 
     const lines = parsed.data.tableText
@@ -2493,7 +2500,7 @@ export async function updateCampLmsStatus(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql and 025_canvas_lms_workflow.sql before saving LMS statuses' };
+      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql, 025_canvas_lms_workflow.sql, and 026_rename_lms_status_note.sql before saving LMS statuses' };
     }
 
     if (!status) {
@@ -2506,7 +2513,7 @@ export async function updateCampLmsStatus(input: {
         INSERT INTO camp_lms_status_checks (
           camp_enrolment_id,
           status,
-          note,
+          lms_note,
           checked_by,
           checked_at,
           updated_at
@@ -2521,7 +2528,7 @@ export async function updateCampLmsStatus(input: {
         )
         ON CONFLICT (camp_enrolment_id) DO UPDATE
         SET status = EXCLUDED.status,
-            note = EXCLUDED.note,
+            lms_note = EXCLUDED.lms_note,
             checked_by = EXCLUDED.checked_by,
             checked_at = NOW(),
             updated_at = NOW();
@@ -2558,7 +2565,7 @@ export async function runCampLmsCanvasTestAction(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql and 025_canvas_lms_workflow.sql before running Canvas test actions' };
+      return { ok: false, error: 'Apply migrations 024_lms_camp_checklist.sql, 025_canvas_lms_workflow.sql, and 026_rename_lms_status_note.sql before running Canvas test actions' };
     }
 
     const [row] = await sql<Array<{
