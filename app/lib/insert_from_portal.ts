@@ -51,7 +51,10 @@ async function getExistingSummerSessionId(tx: PortalTx, weekday: string, start: 
     FROM sessions
     WHERE weekday = ${weekday}
       AND start_time = ${start}::time
-      AND end_time = ${end}::time
+      AND (
+        (${end}::time IS NULL AND end_time IS NULL)
+        OR end_time = ${end}::time
+      )
       AND is_summer = TRUE
     LIMIT 1;
   `;
@@ -60,12 +63,13 @@ async function getExistingSummerSessionId(tx: PortalTx, weekday: string, start: 
 
 export async function upsertSummerEnrolmentWeekFromNormalized(
   rows: NormalizedPortalEnrolmentRow[],
-  range: { startDate: string; endDate: string },
+  range: { startDate: string; endDate: string; day?: string },
 ) {
   if (!rows.length) return { inserted: 0, updated: 0, seen: 0, skipped_non_summer: 0 };
 
   let seenRegular = false;
   let skippedNonSummer = 0;
+  const cleanupDay = range.day && range.day !== "All" ? range.day : null;
   const seenEnroll = new Set<string>();
   const seenTrials = new Set<string>();
   const seenMakeup = new Set<string>();
@@ -144,6 +148,7 @@ export async function upsertSummerEnrolmentWeekFromNormalized(
           FROM enrolments e
           JOIN sessions s ON s.id = e.session_id
           WHERE s.is_summer = TRUE
+            AND (${cleanupDay}::text IS NULL OR s.weekday = ${cleanupDay})
             AND (e.start_date IS NULL OR e.start_date <= ${range.endDate}::date)
             AND (e.end_date IS NULL OR e.end_date >= ${range.startDate}::date)
             AND NOT EXISTS (
@@ -167,6 +172,7 @@ export async function upsertSummerEnrolmentWeekFromNormalized(
         USING sessions s
         WHERE s.id = e.session_id
           AND s.is_summer = TRUE
+          AND (${cleanupDay}::text IS NULL OR s.weekday = ${cleanupDay})
           AND (e.start_date IS NULL OR e.start_date <= ${range.endDate}::date)
           AND (e.end_date IS NULL OR e.end_date >= ${range.startDate}::date)
           AND NOT EXISTS (
@@ -195,6 +201,7 @@ export async function upsertSummerEnrolmentWeekFromNormalized(
           FROM trials t
           JOIN sessions s ON s.id = t.session_id
           WHERE s.is_summer = TRUE
+            AND (${cleanupDay}::text IS NULL OR s.weekday = ${cleanupDay})
             AND t.date BETWEEN ${range.startDate}::date AND ${range.endDate}::date
             AND NOT EXISTS (
               SELECT 1
@@ -218,6 +225,7 @@ export async function upsertSummerEnrolmentWeekFromNormalized(
         USING sessions s
         WHERE s.id = t.session_id
           AND s.is_summer = TRUE
+          AND (${cleanupDay}::text IS NULL OR s.weekday = ${cleanupDay})
           AND t.date BETWEEN ${range.startDate}::date AND ${range.endDate}::date
           AND NOT EXISTS (
             SELECT 1
@@ -245,6 +253,7 @@ export async function upsertSummerEnrolmentWeekFromNormalized(
         USING sessions s
         WHERE s.id = m.session_id
           AND s.is_summer = TRUE
+          AND (${cleanupDay}::text IS NULL OR s.weekday = ${cleanupDay})
           AND m.date BETWEEN ${range.startDate}::date AND ${range.endDate}::date
           AND NOT EXISTS (
             SELECT 1

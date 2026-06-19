@@ -231,6 +231,7 @@ export async function scrapeSummerEnrolmentWeek(opts?: {
   const res = await upsertSummerEnrolmentWeekFromNormalized(normalized, {
     startDate: weekStart,
     endDate: weekEnd,
+    day,
   });
 
   const customerRows = extractCustomerRows(raw);
