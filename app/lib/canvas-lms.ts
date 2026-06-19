@@ -45,18 +45,18 @@ export class CanvasConfigError extends Error {
 }
 
 function canvasBaseUrl() {
-  return (process.env.CANVAS_BASE_URL || 'https://lms.zebrarobotics.com').replace(/\/+$/, '');
+  return (process.env.CANVAS_BASE_URL?.trim() || 'https://lms.zebrarobotics.com').replace(/\/+$/, '');
 }
 
 export function getCanvasPublicConfig() {
   return {
     baseUrl: canvasBaseUrl(),
-    configured: Boolean(process.env.CANVAS_API_TOKEN),
+    configured: Boolean(process.env.CANVAS_API_TOKEN?.trim()),
   };
 }
 
 function getCanvasToken() {
-  const token = process.env.CANVAS_API_TOKEN;
+  const token = process.env.CANVAS_API_TOKEN?.trim();
   if (!token) {
     throw new CanvasConfigError('Canvas API token is not configured.');
   }

@@ -2359,6 +2359,13 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
             AND table_name = 'camp_lms_course_mappings'
             AND column_name = 'canvas_beginner_course_id'
         )
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_canvas_action_audit'
+            AND column_name = 'after_state'
+        )
       ) AS schema_ready;
     `;
 

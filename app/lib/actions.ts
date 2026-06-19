@@ -2574,6 +2574,8 @@ export async function runCampLmsCanvasTestAction(input: {
       student_name: string;
       canvas_user_id: string | null;
       canvas_beginner_course_id: string | null;
+      canvas_intermediate_course_id: string | null;
+      canvas_advanced_course_id: string | null;
       active_enrollments: unknown;
       inactive_enrollments: unknown;
       invited_enrollments: unknown;
@@ -2584,6 +2586,8 @@ export async function runCampLmsCanvasTestAction(input: {
         s.name AS student_name,
         snap.canvas_user_id,
         m.canvas_beginner_course_id,
+        m.canvas_intermediate_course_id,
+        m.canvas_advanced_course_id,
         COALESCE(snap.active_enrollments, '[]'::jsonb) AS active_enrollments,
         COALESCE(snap.inactive_enrollments, '[]'::jsonb) AS inactive_enrollments,
         COALESCE(snap.invited_enrollments, '[]'::jsonb) AS invited_enrollments
@@ -2604,6 +2608,16 @@ export async function runCampLmsCanvasTestAction(input: {
     const beforeState = await fetchCampLmsSnapshotState(campEnrolmentId);
     const client = createCanvasClient();
     const requestPayload: Record<string, string> = { type };
+    const activeEnrollments = Array.isArray(row.active_enrollments)
+      ? row.active_enrollments as Array<Record<string, unknown>>
+      : [];
+    const expectedCourseIds = new Set(
+      [
+        row.canvas_beginner_course_id,
+        row.canvas_intermediate_course_id,
+        row.canvas_advanced_course_id,
+      ].filter((courseId): courseId is string => Boolean(courseId))
+    );
     let responsePayload: unknown = null;
     let afterState: CampLmsSnapshotState | null = null;
     let success = false;
@@ -2617,6 +2631,10 @@ export async function runCampLmsCanvasTestAction(input: {
         if (!courseId || courseId !== row.canvas_beginner_course_id) {
           throw new Error('Expected beginner Canvas course is not mapped for this camper.');
         }
+        const alreadyActive = activeEnrollments.some((candidate) => expectedCourseIds.has(String(candidate.course_id)));
+        if (alreadyActive) {
+          throw new Error('An expected Canvas course is already active in the latest snapshot. Sync LMS before trying again.');
+        }
         requestPayload.canvasCourseId = courseId;
         requestPayload.canvasUserId = row.canvas_user_id;
         responsePayload = await client.enrollStudent(courseId, row.canvas_user_id);
@@ -2626,15 +2644,29 @@ export async function runCampLmsCanvasTestAction(input: {
         if (!courseId || !enrollmentId) {
           throw new Error('Choose an active Canvas enrollment to set inactive.');
         }
-
-        const activeEnrollments = Array.isArray(row.active_enrollments)
-          ? row.active_enrollments as Array<Record<string, unknown>>
-          : [];
         const enrollment = activeEnrollments.find((candidate) =>
           String(candidate.enrollment_id) === enrollmentId && String(candidate.course_id) === courseId
         );
         if (!enrollment) {
           throw new Error('The selected enrollment is not in the latest active Canvas snapshot. Sync LMS before trying again.');
+        }
+        if (expectedCourseIds.has(courseId)) {
+          throw new Error('Refusing to set an expected Canvas course inactive for this camper.');
+        }
+
+        const [mappedCourse] = await sql<{ exists: boolean }[]>`
+          SELECT EXISTS (
+            SELECT 1
+            FROM camp_lms_course_mappings
+            WHERE ${courseId} IN (
+              canvas_beginner_course_id,
+              canvas_intermediate_course_id,
+              canvas_advanced_course_id
+            )
+          ) AS exists;
+        `;
+        if (!mappedCourse?.exists) {
+          throw new Error('The selected enrollment is not one of the mapped Canvas camp courses.');
         }
 
         requestPayload.canvasCourseId = courseId;
