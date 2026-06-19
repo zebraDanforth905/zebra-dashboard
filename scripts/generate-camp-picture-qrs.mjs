@@ -2,47 +2,58 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import QRCode from 'qrcode';
-import jsQR from 'jsqr';
-import pngjs from 'pngjs';
 
-const { PNG } = pngjs;
-
+const DEFAULT_YEAR = 2026;
 const DEFAULT_WIDTH = 450;
 const DEFAULT_MARGIN = 2;
 const DEFAULT_COPIES = 1;
+const MAX_COPIES = 100;
+const FILE_BASE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,127}$/;
+
+process.on('uncaughtException', handleFatalError);
+process.on('unhandledRejection', handleFatalError);
 
 const args = parseArgs(process.argv.slice(2));
-const year = Number(args.year ?? new Date().getFullYear());
+
+if (args.help) {
+  console.log(usage());
+  process.exit(0);
+}
+
+const year = parseIntegerOption(args.year ?? DEFAULT_YEAR, '--year');
 const outDir = path.resolve(String(args['out-dir'] ?? `output/camp-picture-qrs/${year}`));
 const payloadsFile = args.payloads ? path.resolve(String(args.payloads)) : null;
-const copies = Number(args.copies ?? DEFAULT_COPIES);
+const copies = parseIntegerOption(args.copies ?? DEFAULT_COPIES, '--copies');
+const dryRun = Boolean(args['dry-run']);
 
 if (!Number.isInteger(year) || year < 2000) {
   throw new Error(`Invalid --year: ${args.year}`);
 }
 
-if (!Number.isInteger(copies) || copies < 1) {
+if (!Number.isInteger(copies) || copies < 1 || copies > MAX_COPIES) {
   throw new Error(`Invalid --copies: ${args.copies}`);
 }
 
 const items = payloadsFile
   ? normalizePayloads(JSON.parse(await fs.readFile(payloadsFile, 'utf8')))
   : defaultCampWeeks(year);
+const planned = prepareRecords(items, outDir, year);
+
+if (dryRun) {
+  console.log(`Dry run: would generate ${planned.length} QR codes in ${outDir}`);
+  for (const item of planned) {
+    console.log(`${item.pngFile}: ${item.payload}`);
+  }
+  process.exit(0);
+}
 
 await fs.mkdir(outDir, { recursive: true });
 
 const generated = [];
+const { PNG, QRCode, jsQR } = await loadQrRuntime();
 
-for (const item of items) {
-  const basename = item.fileBase ?? `Week${item.week}_QRCode`;
-  const pngFile = `${basename}.png`;
-  const svgFile = `${basename}.svg`;
-  const pngPath = path.join(outDir, pngFile);
-  const svgPath = path.join(outDir, svgFile);
-  const payload = item.payload ?? item.targetUrl ?? safeTextPayload(item);
-
-  await QRCode.toFile(pngPath, payload, {
+for (const item of planned) {
+  await QRCode.toFile(item.pngPath, item.payload, {
     type: 'png',
     width: DEFAULT_WIDTH,
     margin: DEFAULT_MARGIN,
@@ -53,24 +64,19 @@ for (const item of items) {
     },
   });
 
-  await QRCode.toFile(svgPath, payload, {
+  await QRCode.toFile(item.svgPath, item.payload, {
     type: 'svg',
     margin: DEFAULT_MARGIN,
     errorCorrectionLevel: 'M',
   });
 
-  const decoded = await decodeQrPng(pngPath);
-  if (decoded !== payload) {
-    throw new Error(`QR verification failed for ${pngFile}: decoded "${decoded}"`);
+  const decoded = await decodeQrPng(item.pngPath, PNG, jsQR);
+  if (decoded !== item.payload) {
+    throw new Error(`QR verification failed for ${item.pngFile}: decoded "${decoded}"`);
   }
 
   generated.push({
     ...item,
-    payload,
-    pngFile,
-    svgFile,
-    pngPath,
-    svgPath,
     decoded,
   });
 }
@@ -85,29 +91,69 @@ for (const item of generated) {
 }
 
 function parseArgs(argv) {
+  const options = new Map([
+    ['year', { takesValue: true }],
+    ['out-dir', { takesValue: true }],
+    ['payloads', { takesValue: true }],
+    ['copies', { takesValue: true }],
+    ['dry-run', { takesValue: false }],
+    ['help', { takesValue: false }],
+  ]);
   const parsed = {};
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
 
+    if (arg === '--') {
+      continue;
+    }
+
     if (!arg.startsWith('--')) {
       throw new Error(`Unexpected argument: ${arg}`);
     }
 
-    const [key, inlineValue] = arg.slice(2).split('=', 2);
+    const eqIndex = arg.indexOf('=');
+    const key = eqIndex === -1 ? arg.slice(2) : arg.slice(2, eqIndex);
+    const inlineValue = eqIndex === -1 ? undefined : arg.slice(eqIndex + 1);
+    const option = options.get(key);
+    if (!option) {
+      throw new Error(`Unknown option: --${key}`);
+    }
+
+    if (!option.takesValue) {
+      if (inlineValue !== undefined) {
+        throw new Error(`--${key} does not take a value`);
+      }
+
+      parsed[key] = true;
+      continue;
+    }
+
     if (inlineValue !== undefined) {
+      if (!inlineValue) {
+        throw new Error(`Missing value for --${key}`);
+      }
+
       parsed[key] = inlineValue;
       continue;
     }
 
     const next = argv[i + 1];
     if (!next || next.startsWith('--')) {
-      parsed[key] = true;
-      continue;
+      throw new Error(`Missing value for --${key}`);
     }
 
     parsed[key] = next;
     i += 1;
+  }
+
+  return parsed;
+}
+
+function parseIntegerOption(value, optionName) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`Invalid ${optionName}: ${value}`);
   }
 
   return parsed;
@@ -120,22 +166,26 @@ function normalizePayloads(raw) {
   }
 
   return payloads.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`Payload item at index ${index} must be an object.`);
+    }
+
     const week = Number(item.week ?? index + 1);
-    if (!Number.isInteger(week) || week < 1) {
+    if (!Number.isInteger(week) || week < 1 || week > 53) {
       throw new Error(`Invalid week at payload index ${index}`);
     }
 
     return {
       week,
-      day: item.day ?? null,
-      startDate: item.startDate ?? item.start_date ?? null,
-      endDate: item.endDate ?? item.end_date ?? null,
-      label: item.label ?? `Week ${week}`,
-      group: item.group ?? null,
-      room: item.room ?? null,
-      targetUrl: item.targetUrl ?? item.target_url ?? null,
-      payload: item.payload ?? item.targetUrl ?? item.target_url ?? null,
-      fileBase: item.fileBase ?? item.file_base ?? `Week${week}_QRCode`,
+      day: normalizeOptionalString(item.day),
+      startDate: normalizeOptionalDate(item.startDate ?? item.start_date, 'startDate', index),
+      endDate: normalizeOptionalDate(item.endDate ?? item.end_date, 'endDate', index),
+      label: normalizeOptionalString(item.label) ?? `Week ${week}`,
+      group: normalizeOptionalString(item.group),
+      room: normalizeOptionalString(item.room),
+      targetUrl: normalizeOptionalString(item.targetUrl ?? item.target_url),
+      payload: normalizeOptionalString(item.payload ?? item.targetUrl ?? item.target_url),
+      fileBase: normalizeOptionalString(item.fileBase ?? item.file_base),
     };
   });
 }
@@ -156,11 +206,7 @@ function defaultCampWeeks(campYear) {
     ];
   }
 
-  const start = firstMondayOnOrAfter(new Date(Date.UTC(campYear, 5, 29)));
-  return Array.from({ length: 10 }, (_, index) => {
-    const monday = addDays(start, index * 7);
-    return week(index + 1, isoDate(monday), isoDate(addDays(monday, 4)));
-  });
+  throw new Error(`No built-in camp week schedule for ${campYear}. Provide --payloads for non-2026 QR sets.`);
 }
 
 function week(number, startDate, endDate) {
@@ -178,10 +224,32 @@ function week(number, startDate, endDate) {
   };
 }
 
-function safeTextPayload(item) {
+function prepareRecords(records, targetDir, campYear) {
+  const prepared = records.map((item, index) => {
+    const basename = normalizeFileBase(item.fileBase ?? `Week${item.week}_QRCode`, index);
+    const pngFile = `${basename}.png`;
+    const svgFile = `${basename}.svg`;
+    const payload = normalizePayload(item.payload ?? item.targetUrl ?? safeTextPayload(item, campYear), index);
+
+    return {
+      ...item,
+      payload,
+      fileBase: basename,
+      pngFile,
+      svgFile,
+      pngPath: safeOutputPath(targetDir, pngFile),
+      svgPath: safeOutputPath(targetDir, svgFile),
+    };
+  });
+
+  assertUniqueOutputFiles(prepared);
+  return prepared;
+}
+
+function safeTextPayload(item, campYear) {
   const pieces = [
     'zebra-camp-picture',
-    `year=${year}`,
+    `year=${campYear}`,
     `week=${item.week}`,
     item.day ? `day=${item.day}` : null,
     item.startDate ? `start=${item.startDate}` : null,
@@ -193,7 +261,95 @@ function safeTextPayload(item) {
   return pieces.join(';');
 }
 
-async function decodeQrPng(filePath) {
+function normalizeOptionalString(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function normalizeOptionalDate(value, fieldName, index) {
+  const text = normalizeOptionalString(value);
+  if (!text) return null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw new Error(`Invalid ${fieldName} at payload index ${index}: ${text}`);
+  }
+
+  return text;
+}
+
+function normalizePayload(value, index) {
+  const payload = normalizeOptionalString(value);
+  if (!payload) {
+    throw new Error(`Missing QR payload at item index ${index}`);
+  }
+
+  return payload;
+}
+
+function normalizeFileBase(value, index) {
+  const fileBase = normalizeOptionalString(value);
+  if (!fileBase) {
+    throw new Error(`Missing fileBase at item index ${index}`);
+  }
+
+  if (
+    fileBase === '.'
+    || fileBase === '..'
+    || fileBase.includes('/')
+    || fileBase.includes('\\')
+    || path.isAbsolute(fileBase)
+    || !FILE_BASE_PATTERN.test(fileBase)
+    || /\.(png|svg)$/i.test(fileBase)
+  ) {
+    throw new Error(
+      `Unsafe fileBase at item index ${index}: use letters, numbers, spaces, dots, dashes, or underscores only, without an extension.`,
+    );
+  }
+
+  return fileBase;
+}
+
+function safeOutputPath(targetDir, fileName) {
+  const resolvedDir = path.resolve(targetDir);
+  const resolvedPath = path.resolve(resolvedDir, fileName);
+  const relative = path.relative(resolvedDir, resolvedPath);
+
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to write outside output directory: ${fileName}`);
+  }
+
+  return resolvedPath;
+}
+
+function assertUniqueOutputFiles(records) {
+  const seen = new Set();
+  for (const record of records) {
+    for (const fileName of [record.pngFile, record.svgFile]) {
+      const key = fileName.toLowerCase();
+      if (seen.has(key)) {
+        throw new Error(`Duplicate output file name: ${fileName}`);
+      }
+      seen.add(key);
+    }
+  }
+}
+
+async function loadQrRuntime() {
+  const [qrcodeModule, jsQrModule, pngjsModule] = await Promise.all([
+    import('qrcode'),
+    import('jsqr'),
+    import('pngjs'),
+  ]);
+
+  return {
+    QRCode: qrcodeModule.default ?? qrcodeModule,
+    jsQR: jsQrModule.default ?? jsQrModule,
+    PNG: (pngjsModule.default ?? pngjsModule).PNG,
+  };
+}
+
+async function decodeQrPng(filePath, PNG, jsQR) {
   const buffer = await fs.readFile(filePath);
   const png = PNG.sync.read(buffer);
   const code = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
@@ -457,22 +613,6 @@ function labelMarkup(item, mode) {
     </${tag}>`;
 }
 
-function firstMondayOnOrAfter(date) {
-  const day = date.getUTCDay();
-  const offset = day === 1 ? 0 : (8 - day) % 7;
-  return addDays(date, offset);
-}
-
-function addDays(date, amount) {
-  const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + amount);
-  return next;
-}
-
-function isoDate(date) {
-  return date.toISOString().slice(0, 10);
-}
-
 function toCsv(rows) {
   return rows.map((row) => row.map(csvCell).join(',')).join('\n');
 }
@@ -493,4 +633,27 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll('`', '&#96;');
+}
+
+function handleFatalError(error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
+function usage() {
+  return `Usage: pnpm camp:picture-qrs [options]
+
+Generate printable camp picture QR codes, manifests, and print HTML.
+
+Options:
+  --year <year>        Camp year. Defaults to ${DEFAULT_YEAR}.
+  --out-dir <path>     Output directory. Defaults to output/camp-picture-qrs/<year>.
+  --payloads <path>    JSON array, or object with an items array, for custom QR payloads.
+  --copies <count>     Copies of each QR in print HTML. Defaults to ${DEFAULT_COPIES}; max ${MAX_COPIES}.
+  --dry-run           Validate inputs and print planned QR payloads without writing files.
+  --help              Show this help.
+
+Custom payload items may include week, startDate/start_date, endDate/end_date, label, group, room,
+targetUrl/target_url, payload, and fileBase/file_base. fileBase must be a plain file basename
+without an extension. Non-2026 schedules require --payloads.`;
 }
