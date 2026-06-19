@@ -282,9 +282,12 @@ export function normalizeCampEnrolments(results: RawCampEnrolment[]): Normalized
         return null;
       }
       
-      // Extended care is typically before 9am or after 4pm
-      const startHour = parseInt(times.start.split(':')[0]);
-      const endHour = parseInt(times.end.split(':')[0]);
+      const parsedCampType = parseCampType(r.camp_type);
+      if (!parsedCampType) {
+        console.warn(`Skipping unknown camp type for student ${r.student_id}:`, r.camp_type);
+        return null;
+      }
+
       const extended_care = r.camp_type.endsWith('-EX');
       
       return {
@@ -297,7 +300,7 @@ export function normalizeCampEnrolments(results: RawCampEnrolment[]): Normalized
         end_date: dates.end,
         start_time: times.start,
         end_time: times.end,
-        camp_type: parseCampType(r.camp_type) as 'FD' | 'PM' | 'AM',
+        camp_type: parsedCampType,
         extended_care,
         allergies: r.allergies || '',
         special_needs: r.special_need || '',

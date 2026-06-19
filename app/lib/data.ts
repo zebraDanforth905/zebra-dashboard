@@ -2308,6 +2308,13 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       SELECT (
         to_regclass('public.camp_lms_course_mappings') IS NOT NULL
         AND to_regclass('public.camp_lms_status_checks') IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_status_checks'
+            AND column_name = 'lms_note'
+        )
       ) AS schema_ready;
     `;
 
@@ -2366,7 +2373,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         m.lms_course_link,
         m.notes AS mapping_notes,
         sc.status,
-        sc.note AS status_note,
+        sc.lms_note AS status_note,
         sc.checked_at,
         u.name AS checked_by_name
       FROM camp_sessions cs

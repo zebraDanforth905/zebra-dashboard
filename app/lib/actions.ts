@@ -2130,6 +2130,13 @@ async function campLmsChecklistSchemaReady() {
     SELECT (
       to_regclass('public.camp_lms_course_mappings') IS NOT NULL
       AND to_regclass('public.camp_lms_status_checks') IS NOT NULL
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'camp_lms_status_checks'
+          AND column_name = 'lms_note'
+      )
     ) AS ready;
   `;
 
@@ -2269,7 +2276,7 @@ export async function updateCampLmsStatus(input: {
         INSERT INTO camp_lms_status_checks (
           camp_enrolment_id,
           status,
-          note,
+          lms_note,
           checked_by,
           checked_at,
           updated_at
@@ -2284,7 +2291,7 @@ export async function updateCampLmsStatus(input: {
         )
         ON CONFLICT (camp_enrolment_id) DO UPDATE
         SET status = EXCLUDED.status,
-            note = EXCLUDED.note,
+            lms_note = EXCLUDED.lms_note,
             checked_by = EXCLUDED.checked_by,
             checked_at = NOW(),
             updated_at = NOW();
@@ -2305,6 +2312,11 @@ export async function updateCampSeatAssignment(
   date?: Date
 ) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
     if (date) {
       if (seatNumber === null) {
         await sql`
@@ -2340,10 +2352,15 @@ export async function updateCampEnrolmentNote(
   note: string
 ) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
     const trimmedNote = note.trim();
 
     if (!(await campEnrolmentNoteColumnExists())) {
-      return { ok: false, error: 'Apply migration 024_lms_camp_checklist.sql before saving camp notes' };
+      return { ok: false, error: 'Apply migration 027_add_camp_roster_contact_fields.sql before saving camp notes' };
     }
 
     await sql`

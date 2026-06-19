@@ -2,9 +2,6 @@
 -- Dashboard-only LMS setup checklist for camp weeks.
 -- No Canvas credentials, API tokens, or automated LMS writes are stored here.
 
-ALTER TABLE camp_enrolments
-  ADD COLUMN IF NOT EXISTS note TEXT;
-
 CREATE TABLE IF NOT EXISTS camp_lms_course_mappings (
   course_id       TEXT PRIMARY KEY,
   lms_course_name TEXT NOT NULL,
@@ -25,7 +22,7 @@ CREATE TABLE IF NOT EXISTS camp_lms_status_checks (
       'not_applicable'
     )
   ),
-  note              TEXT,
+  lms_note          TEXT,
   checked_by        TEXT,
   checked_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
