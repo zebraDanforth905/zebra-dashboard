@@ -393,17 +393,17 @@ function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onD
     return (
       <button
         onClick={() => setConfirm(true)}
-        title="Delete this test response permanently"
+        title="Hide this test response from active summer views"
         className="text-xs px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition"
       >
-        Delete Response
+        Remove Response
       </button>
     );
   }
   return (
     <span className="flex flex-col gap-1">
       <span className="text-[10px] text-red-700 leading-tight">
-        Delete is designed for test responses only. This permanently removes the response.
+        Remove is designed for test responses only. This hides the response without deleting history.
       </span>
       <span className="flex items-center gap-2">
         <button
@@ -414,7 +414,7 @@ function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onD
           })}
           className="text-xs text-red-600 font-medium disabled:opacity-50"
         >
-          {isPending ? '...' : 'Confirm Delete'}
+          {isPending ? '...' : 'Confirm Remove'}
         </button>
         <button onClick={() => setConfirm(false)} className="text-xs text-slate-400">Cancel</button>
       </span>

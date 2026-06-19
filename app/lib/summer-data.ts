@@ -530,6 +530,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         FROM expected_students es
         LEFT JOIN parent_requests pr
           ON pr.student_id::text = es.student_id
+          AND pr.token_id = es.token_id::uuid
           AND pr.is_latest = TRUE
           AND pr.removed_at IS NULL
           AND pr.request_type IN ('summer_scheduling', 'other')

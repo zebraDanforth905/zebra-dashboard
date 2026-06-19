@@ -609,23 +609,19 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
 
 export async function deleteSummerResponse(requestId: string): Promise<{ deleted: boolean }> {
   await requireAdmin();
-  const reqs = await sql<{ id: string; enrolment_ids: string[] }[]>`
-    SELECT id::text, enrolment_ids
-    FROM parent_requests
+  const rows = await sql<{ id: string }[]>`
+    UPDATE parent_requests
+    SET
+      removed_at = NOW(),
+      is_latest = FALSE,
+      status = 'superseded',
+      updated_at = NOW()
     WHERE id = ${requestId}::uuid
-    LIMIT 1
+      AND removed_at IS NULL
+      AND request_type IN ('summer_scheduling', 'other')
+    RETURNING id::text AS id
   `;
-  if (reqs.length === 0) return { deleted: false };
-  const { enrolment_ids } = reqs[0];
-  await sql.begin(async tx => {
-    if (enrolment_ids?.length > 0) {
-      await tx`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
-    }
-    await tx`
-      DELETE FROM parent_requests
-      WHERE id = ${requestId}::uuid
-    `;
-  });
+  if (rows.length === 0) return { deleted: false };
   revalidateTag('summer-responses', 'max');
   revalidateTag('summer-tokens', 'max');
   return { deleted: true };
