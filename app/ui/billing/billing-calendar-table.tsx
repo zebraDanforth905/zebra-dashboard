@@ -75,16 +75,20 @@ const dateStatusTitles: Record<BillingCalendarDateStatus, string> = {
 
 function noteKind(note: string): NoteKind {
   const lower = note.toLowerCase();
+  const lines = note.split('\n').map((line) => line.trim()).filter(Boolean);
+  const hasOpenLine = lines.some(isOpenClassLine);
+  const hasClosedLine = lines.some(isClosedDateLine);
   const wantsMakeup =
     /(do|schedule).*makeup/.test(lower) ||
     /makeup class/.test(lower) ||
     /do only \d+ makeup/.test(lower);
 
-  if (lower.includes('open') && !/(no class|cancel)/.test(lower)) return 'open';
+  if (hasOpenLine && !hasClosedLine) return 'open';
   if (wantsMakeup && !lower.includes('no makeup')) return 'makeup';
   if (lower.includes('no makeup')) return 'no-makeup';
   if (/(pull|move|apply|adjust|bill|billing|fee|credit|extra)/.test(lower)) return 'billing';
-  if (/(closed|closure|no class|cancel)/.test(lower)) return 'closed';
+  if (hasClosedLine) return 'closed';
+  if (hasOpenLine) return 'open';
   return 'note';
 }
 
@@ -124,12 +128,14 @@ function parseClassDates(classes: string): ClassDateItem[] {
   return items;
 }
 
-function isClosedDateNote(note: string): boolean {
-  const lower = note.toLowerCase();
-  if (lower.includes('open') && !/(closed|closure|no class|cancel|winter break)/.test(lower)) {
-    return false;
-  }
+function isOpenClassLine(line: string): boolean {
+  const lower = line.toLowerCase();
+  return /\bopen\b/.test(lower) && !/(no class|cancel)/.test(lower);
+}
 
+function isClosedDateLine(line: string): boolean {
+  const lower = line.toLowerCase();
+  if (isOpenClassLine(line)) return false;
   return /(closed|closure|no class|cancel|winter break|holiday|summer break|march break no classes)/.test(lower);
 }
 
@@ -137,9 +143,9 @@ function closedDateKeys(notes: string[]): Set<string> {
   const keys = new Set<string>();
 
   for (const note of notes) {
-    if (!isClosedDateNote(note)) continue;
-
     for (const line of note.split('\n')) {
+      if (!isClosedDateLine(line)) continue;
+
       const prefix = line.split(':')[0] ?? '';
       const monthMatch = prefix.match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t|tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b/i);
       if (!monthMatch) continue;

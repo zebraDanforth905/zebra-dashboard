@@ -827,7 +827,7 @@ Cancel class on Jul 1 Cda Day, no makeup`,
 
 Aug 4: Closed for Civic Day; No makeup, just don't bill bc it's summer`,
     Tue: 'Aug 5, 12, 19, 26',
-    Wed: 'July 29, Aug 5, 12, 19, 26 (extra class)',
+    Wed: 'July 30, Aug 6, 13, 20, 27 (extra class)',
     Thu: 'Jul 31, Aug 7, 14, 21, 28 (extra class)',
     Fri: `Aug 1, 8, 15, 22, 29
 
@@ -1017,7 +1017,7 @@ Jun 30: No class; summer camp starts Jun 29; no makeup`,
 Jun 27: Open, Canada Day is on Wed`,
     Sun: `Jun 7, 14, 21, 28
 
-Jun 27: Open, Canada Day is on a Wed`,
+Jun 28: Open, Canada Day is on a Wed`,
   }),
   month(2026, 'Jul', {
     Mon: 'Jul 6, 13, 20, 27',
@@ -1123,12 +1123,12 @@ Dec 28: Closed for winter break. No class; no makeup.`,
 Dec 22: Open for classes (no pickup) even though it's during school winter break
 
 Dec 29: Closed for winter break. No class; no makeup.`,
-    Wed: `Dec 2, 9, 15, 23, 30
+    Wed: `Dec 2, 9, 16, 23, 30
 
 Dec 23 & 30: Closed for winter break. Do only 1 makeup bc Dec 30 is extra lesson.`,
-    Thu: `Dec 2, 9, 16, 24, 31
+    Thu: `Dec 3, 10, 17, 24, 31
 
-Dec 23 & 30: No class. Closed for winter break. Do only 1 makeup bc Dec 31 is extra lesson.`,
+Dec 24 & 31: No class. Closed for winter break. Do only 1 makeup bc Dec 31 is extra lesson.`,
     Fri: `Dec 4, 11, 18, 25
 
 Dec 25: No class. Closed for Christmas Day and winter break; do makeup`,
@@ -1156,6 +1156,10 @@ export function getBillingCalendarMonths(year: number): BillingCalendarMonth[] {
   return billingCalendarMonths.filter((entry) => entry.year === year);
 }
 
-export function getDefaultBillingCalendarYear(): number {
-  return Math.max(...billingCalendarYears);
+export function getDefaultBillingCalendarYear(referenceDate = new Date()): number {
+  const currentYear = referenceDate.getFullYear();
+  const currentOrPastYear = billingCalendarYears.find((year) => year <= currentYear);
+  if (currentOrPastYear) return currentOrPastYear;
+
+  return Math.min(...billingCalendarYears);
 }
