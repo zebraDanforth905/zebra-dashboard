@@ -35,6 +35,17 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
   if (!rows.length) return { inserted: 0, updated: 0, seen: 0 };
 
   let seenRegular = false;
+  const regularStudentIds = new Set<number>();
+  const knownStudentExists = new Map<number, boolean>();
+
+  for (const r of rows) {
+    const trial = (r.trial_date || '').toString().trim();
+    const makeup = (r.makeup_date || '').toString().trim();
+    if (!trial && !makeup) {
+      regularStudentIds.add(Number(r.student_id));
+    }
+  }
+
   const seenEnroll = new Set<string>();
   const seenTrials = new Set<string>();
   const seenMakeup = new Set<string>();
@@ -47,20 +58,18 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
 
       const trial = (r.trial_date || '').toString().trim();
       const makeup = (r.makeup_date || '').toString().trim();
-      const defaultLoad = trial ? 2 : 1;
+      const isRegular = !trial && !makeup;
 
-      // student
-      await tx`
-        INSERT INTO students (id, name, load)
-        VALUES (${r.student_id}, ${r.name}, ${defaultLoad})
-        ON CONFLICT (id) DO UPDATE
-          SET name = EXCLUDED.name,
-              load = CASE
-                WHEN students.load IS NULL THEN EXCLUDED.load
-                WHEN ${trial !== ''} AND students.load = 1 THEN 2
-                ELSE students.load
-              END;
-      `;
+      // Only persist students on real enrolments.
+      if (isRegular) {
+        await tx`
+          INSERT INTO students (id, name, load)
+          VALUES (${r.student_id}, ${r.name}, 1)
+          ON CONFLICT (id) DO UPDATE
+            SET name = EXCLUDED.name,
+                load = COALESCE(students.load, EXCLUDED.load);
+        `;
+      }
 
       // course
       if (r.course_code) {
@@ -80,12 +89,33 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
           ON CONFLICT DO NOTHING;
         `;
       } else if (makeup) {
-        seenMakeup.add(`${r.student_id}|${sessionId}|${makeup}`);
-        await tx`
-          INSERT INTO makeups (student_id, session_id, course_id, date)
-          VALUES (${r.student_id}, ${sessionId}, ${r.course_code}, ${makeup}::date)
-          ON CONFLICT DO NOTHING;
-        `;
+        let canCreateMakeup = regularStudentIds.has(Number(r.student_id));
+
+        if (!canCreateMakeup) {
+          const cachedExists = knownStudentExists.get(Number(r.student_id));
+          if (cachedExists !== undefined) {
+            canCreateMakeup = cachedExists;
+          } else {
+            const existingStudent = await tx<{ exists: boolean }[]>`
+              SELECT EXISTS (
+                SELECT 1
+                FROM students s
+                WHERE s.id = ${r.student_id}
+              ) AS exists;
+            `;
+            canCreateMakeup = existingStudent[0]?.exists === true;
+            knownStudentExists.set(Number(r.student_id), canCreateMakeup);
+          }
+        }
+
+        if (canCreateMakeup) {
+          seenMakeup.add(`${r.student_id}|${sessionId}|${makeup}`);
+          await tx`
+            INSERT INTO makeups (student_id, session_id, course_id, date)
+            VALUES (${r.student_id}, ${sessionId}, ${r.course_code}, ${makeup}::date)
+            ON CONFLICT DO NOTHING;
+          `;
+        }
       } else {
         seenRegular = true;
         seenEnroll.add(`${r.student_id}|${sessionId}`);
@@ -679,6 +709,26 @@ export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ u
 
   await sql.begin(async tx => {
     for (const c of customers) {
+      if (c.student_ids.length === 0) {
+        continue;
+      }
+
+      // Only create/update customers when at least one child is actually enrolled.
+      const eligibleStudentRows = await tx<{ id: number }[]>`
+        SELECT s.id
+        FROM students s
+        WHERE s.id = ANY(${c.student_ids}::numeric[])
+          AND (
+            EXISTS (SELECT 1 FROM enrolments e WHERE e.student_id = s.id)
+            OR EXISTS (SELECT 1 FROM camp_enrolments ce WHERE ce.student_id = s.id)
+          )
+      `;
+
+      const eligibleStudentIds = eligibleStudentRows.map((row) => Number(row.id));
+      if (eligibleStudentIds.length === 0) {
+        continue;
+      }
+
       const rows = await tx<{ id: string }[]>`
         INSERT INTO customers (name, email, alternate_email, alternate_name, portal_parent_id)
         VALUES (
@@ -701,11 +751,11 @@ export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ u
 
       const customerId = rows[0].id;
 
-      if (c.student_ids.length > 0) {
+      if (eligibleStudentIds.length > 0) {
         const result = await tx<{ id: string }[]>`
           UPDATE students
           SET customer_id = ${customerId}::uuid
-          WHERE id = ANY(${c.student_ids}::numeric[])
+          WHERE id = ANY(${eligibleStudentIds}::numeric[])
             AND customer_id IS NULL
           RETURNING id
         `;
@@ -718,7 +768,7 @@ export async function syncCustomers(customers: PortalCustomerRow[]): Promise<{ u
           const others = await tx<{ customer_id: string }[]>`
             SELECT DISTINCT customer_id
             FROM students
-            WHERE id = ANY(${c.student_ids}::numeric[])
+            WHERE id = ANY(${eligibleStudentIds}::numeric[])
               AND customer_id IS NOT NULL
               AND customer_id != ${customerId}::uuid
           `;
