@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 
+const authSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+
 export const config = {
   // https://nextjs.org/docs/app/building-your-application/routing/middleware#matcher
   matcher: ['/((?!api|_next/static|_next/image|.*\\.png$).*)'],
@@ -19,7 +21,7 @@ export async function middleware(request: NextRequest) {
   if (shouldRequireLogin && !isLoginRoute && !isPublicParentRoute) {
     const token = await getToken({
       req: request,
-      secret: process.env.AUTH_SECRET as string,
+      secret: authSecret,
       secureCookie: process.env.NODE_ENV === 'production',
     });
 
@@ -41,12 +43,12 @@ export async function middleware(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith('/dashboard/admin')) {
     console.log('Middleware - Admin route access check:', {
       path: request.nextUrl.pathname,
-      hasAuthSecret: !!process.env.AUTH_SECRET,
+      hasAuthSecret: !!authSecret,
     });
     
     const token = await getToken({ 
       req: request, 
-      secret: process.env.AUTH_SECRET as string,
+      secret: authSecret,
       secureCookie: process.env.NODE_ENV === 'production',
     });
     
@@ -67,14 +69,14 @@ export async function middleware(request: NextRequest) {
 
   if (request.nextUrl.pathname.startsWith('/dashboard/billing')){
     console.log('Middleware - Environment check:', {
-      hasAuthSecret: !!process.env.AUTH_SECRET,
-      authSecretLength: process.env.AUTH_SECRET?.length,
+      hasAuthSecret: !!authSecret,
+      authSecretLength: authSecret?.length,
       cookies: request.cookies.getAll().map(c => ({ name: c.name, hasValue: !!c.value })),
     });
     
     const token = await getToken({ 
       req: request, 
-      secret: process.env.AUTH_SECRET as string,
+      secret: authSecret,
       secureCookie: process.env.NODE_ENV === 'production',
     });
     
