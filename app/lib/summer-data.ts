@@ -71,6 +71,10 @@ function normalizeTokenSnapshotStudentIds(value: unknown): Set<string> {
   return ids;
 }
 
+function normalizeSnapshotStudentName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 async function fetchCanonicalFallSessionIds(sessionIds: string[]): Promise<Map<string, string>> {
   const ids = Array.from(new Set(sessionIds));
   if (ids.length === 0) return new Map();
@@ -723,7 +727,22 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
       family.students.push(student);
     }
 
-    return Array.from(families.values());
+    return Array.from(families.values()).map(family => {
+      const visibleNames = new Set(
+        family.students
+          .filter(student => student.is_active || student.in_snapshot)
+          .map(student => normalizeSnapshotStudentName(student.student_name)),
+      );
+
+      return {
+        ...family,
+        students: family.students.filter(student => (
+          student.is_active ||
+          student.in_snapshot ||
+          !visibleNames.has(normalizeSnapshotStudentName(student.student_name))
+        )),
+      };
+    });
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch summer snapshot rows.');
