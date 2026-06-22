@@ -227,7 +227,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
             se.weekday,
             se.start_time,
             co.name AS course_name,
-            cp.school_name AS pickup_school,
+            NULL::text AS pickup_school,
             CASE LOWER(TRIM(se.weekday))
               WHEN 'monday' THEN 1
               WHEN 'tuesday' THEN 2
@@ -241,14 +241,6 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
           FROM enrolments e
           JOIN sessions se ON se.id = e.session_id
           LEFT JOIN courses co ON co.id = e.course_id
-          LEFT JOIN LATERAL (
-            SELECT p.school_name
-            FROM pickups p
-            WHERE p.student_id = s.id
-              AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-            ORDER BY p.id
-            LIMIT 1
-          ) cp ON true
           WHERE e.student_id = s.id
         ) slots
       ) cs ON true
@@ -458,21 +450,13 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           co.name AS course_name,
           se.weekday,
           se.start_time::text AS start_time,
-          cp.school_name AS pickup_school,
+          NULL::text AS pickup_school,
           TRUE AS is_active
         FROM token_base tb
         JOIN students s ON s.customer_id = tb.customer_uuid
         JOIN enrolments e ON e.student_id = s.id
         JOIN sessions se ON se.id = e.session_id
         LEFT JOIN courses co ON co.id = e.course_id
-        LEFT JOIN LATERAL (
-          SELECT p.school_name
-          FROM pickups p
-          WHERE p.student_id = s.id
-            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-          ORDER BY p.id
-          LIMIT 1
-        ) cp ON true
       ),
       recent_snapshot_slots AS (
         SELECT
@@ -665,7 +649,7 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
             se.weekday,
             se.start_time,
             co.name AS course_name,
-            cp.school_name AS pickup_school,
+            NULL::text AS pickup_school,
             CASE LOWER(TRIM(se.weekday))
               WHEN 'monday' THEN 1
               WHEN 'tuesday' THEN 2
@@ -679,14 +663,6 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
           FROM enrolments e
           JOIN sessions se ON se.id = e.session_id
           LEFT JOIN courses co ON co.id = e.course_id
-          LEFT JOIN LATERAL (
-            SELECT p.school_name
-            FROM pickups p
-            WHERE p.student_id = s.id
-              AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-            ORDER BY p.id
-            LIMIT 1
-          ) cp ON true
           WHERE e.student_id = s.id
         ) slots
       ) cs ON true

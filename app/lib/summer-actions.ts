@@ -65,7 +65,7 @@ export async function generateParentToken(customerId: string): Promise<string> {
               'course_name', co.name,
               'weekday', se.weekday,
               'start_time', se.start_time,
-              'pickup_school', cp.school_name
+              'pickup_school', NULL
             )
           ) FILTER (WHERE e.id IS NOT NULL),
           '[]'::jsonb
@@ -74,14 +74,6 @@ export async function generateParentToken(customerId: string): Promise<string> {
       JOIN enrolments e ON e.student_id = s.id
       JOIN sessions se ON se.id = e.session_id
       LEFT JOIN courses co ON co.id = e.course_id
-      LEFT JOIN LATERAL (
-        SELECT p.school_name
-        FROM pickups p
-        WHERE p.student_id = s.id
-          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-        ORDER BY p.id
-        LIMIT 1
-      ) cp ON true
       WHERE s.customer_id = ${customerId}::uuid
     `;
     activeSnapshot = activeSnapshotRows[0]?.last_active_snapshot ?? [];
@@ -101,21 +93,13 @@ export async function generateParentToken(customerId: string): Promise<string> {
               'course_name', co.name,
               'weekday', se.weekday,
               'start_time', se.start_time,
-              'pickup_school', cp.school_name
+              'pickup_school', NULL
             )
           ) AS snapshot
         FROM students s
         JOIN enrolments e ON e.student_id = s.id
         JOIN sessions se ON se.id = e.session_id
         LEFT JOIN courses co ON co.id = e.course_id
-        LEFT JOIN LATERAL (
-          SELECT p.school_name
-          FROM pickups p
-          WHERE p.student_id = s.id
-            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-          ORDER BY p.id
-          LIMIT 1
-        ) cp ON true
         WHERE s.customer_id = ${customerId}::uuid
         GROUP BY s.customer_id
       ) active_family_snapshot
@@ -175,21 +159,13 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
               'course_name', co.name,
               'weekday', se.weekday,
               'start_time', se.start_time,
-              'pickup_school', cp.school_name
+              'pickup_school', NULL
             )
           ) AS snapshot
         FROM students s
         JOIN enrolments e ON e.student_id = s.id
         JOIN sessions se ON se.id = e.session_id
         LEFT JOIN courses co ON co.id = e.course_id
-        LEFT JOIN LATERAL (
-          SELECT p.school_name
-          FROM pickups p
-          WHERE p.student_id = s.id
-            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-          ORDER BY p.id
-          LIMIT 1
-        ) cp ON true
         GROUP BY s.customer_id
       ) active_family_snapshot
       WHERE pt.customer_id = active_family_snapshot.customer_id
@@ -205,7 +181,7 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
           'course_name', co.name,
           'weekday', se.weekday,
           'start_time', se.start_time,
-          'pickup_school', cp.school_name
+          'pickup_school', NULL
         )
       ) AS last_active_snapshot
     FROM customers c
@@ -213,14 +189,6 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
     JOIN enrolments e ON e.student_id = s.id
     JOIN sessions se ON se.id = e.session_id
     LEFT JOIN courses co ON co.id = e.course_id
-    LEFT JOIN LATERAL (
-      SELECT p.school_name
-      FROM pickups p
-      WHERE p.student_id = s.id
-        AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-      ORDER BY p.id
-      LIMIT 1
-    ) cp ON true
     WHERE NOT EXISTS (
       SELECT 1 FROM parent_tokens pt WHERE pt.customer_id = c.id
     )
@@ -275,21 +243,13 @@ export async function refreshParentLinkData(): Promise<{ updated: number; skippe
             'course_name', co.name,
             'weekday', se.weekday,
             'start_time', se.start_time,
-            'pickup_school', cp.school_name
+            'pickup_school', NULL
           )
         ) AS snapshot
       FROM students s
       JOIN enrolments e ON e.student_id = s.id
       JOIN sessions se ON se.id = e.session_id
       LEFT JOIN courses co ON co.id = e.course_id
-      LEFT JOIN LATERAL (
-        SELECT p.school_name
-        FROM pickups p
-        WHERE p.student_id = s.id
-          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-        ORDER BY p.id
-        LIMIT 1
-      ) cp ON true
       GROUP BY s.customer_id
     )
     UPDATE parent_tokens pt
@@ -869,19 +829,11 @@ async function fetchStudentCurrentSnapshotEntries(
     SELECT DISTINCT
       se.weekday,
       se.start_time,
-      cp.school_name AS pickup_school,
+      NULL::text AS pickup_school,
       co.name AS course_name
     FROM enrolments e
     JOIN sessions se ON se.id = e.session_id
     LEFT JOIN courses co ON co.id = e.course_id
-    LEFT JOIN LATERAL (
-      SELECT p.school_name
-      FROM pickups p
-      WHERE p.student_id = e.student_id
-        AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-      ORDER BY p.id
-      LIMIT 1
-    ) cp ON true
     WHERE e.student_id = ${studentId}
     ORDER BY se.weekday, se.start_time, co.name
   `;
@@ -1032,7 +984,7 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
       SELECT DISTINCT
         se.weekday,
         se.start_time,
-        cp.school_name AS pickup_school,
+        NULL::text AS pickup_school,
         co.name AS course_name,
         CASE LOWER(TRIM(se.weekday))
           WHEN 'monday' THEN 1
@@ -1047,14 +999,6 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
       FROM enrolments e
       JOIN sessions se ON se.id = e.session_id
       LEFT JOIN courses co ON co.id = e.course_id
-      LEFT JOIN LATERAL (
-        SELECT p.school_name
-        FROM pickups p
-        WHERE p.student_id = s.id
-          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-        ORDER BY p.id
-        LIMIT 1
-      ) cp ON true
       WHERE e.student_id = s.id
     ) slots ON true
     WHERE s.id = ANY(${ids}::int[])
