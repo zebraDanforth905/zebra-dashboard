@@ -58,6 +58,36 @@ function normalizeTokenStudentSnapshots(value: unknown): Map<string, CurrentSess
   return map;
 }
 
+function normalizeTokenSnapshotDisplaySessions(value: unknown): Map<string, CurrentSessionSummary[]> {
+  const map = new Map<string, CurrentSessionSummary[]>();
+  if (!Array.isArray(value)) return map;
+
+  for (const rawSession of value) {
+    if (!rawSession || typeof rawSession !== 'object') continue;
+    const session = rawSession as Partial<TokenStudentSnapshot>;
+    const studentId = cleanSnapshotString(session.student_id);
+    if (!studentId) continue;
+
+    const weekday = cleanSnapshotString(session.weekday);
+    const startTime = cleanSnapshotString(session.start_time);
+    const pickupSchool = cleanSnapshotString(session.pickup_school);
+    const courseName = cleanSnapshotString(session.course_name);
+    const endDate = cleanSnapshotString(session.end_date);
+    if (!weekday && !startTime && !courseName && !endDate) continue;
+
+    const currentSession: CurrentSessionSummary = {
+      weekday,
+      start_time: startTime,
+      pickup_school: pickupSchool || null,
+      ...(courseName ? { course_name: courseName } : {}),
+      ...(endDate ? { end_date: endDate } : {}),
+    };
+    map.set(studentId, [...(map.get(studentId) ?? []), currentSession]);
+  }
+
+  return map;
+}
+
 function normalizeTokenSnapshotStudentIds(value: unknown): Set<string> {
   const ids = new Set<string>();
   if (!Array.isArray(value)) return ids;
@@ -715,7 +745,7 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
       if (!row.student_id || !row.student_name) continue;
 
       const snapshotIds = normalizeTokenSnapshotStudentIds(row.last_active_snapshot);
-      const snapshotSessions = normalizeTokenStudentSnapshots(row.last_active_snapshot);
+      const snapshotSessions = normalizeTokenSnapshotDisplaySessions(row.last_active_snapshot);
       const student: SummerSnapshotStudentRow = {
         student_id: row.student_id,
         student_name: row.student_name,

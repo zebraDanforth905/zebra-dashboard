@@ -27,9 +27,12 @@ function formatSessions(sessions: SummerSnapshotStudentRow['current_sessions']):
   if (sessions.length === 0) return 'No class saved';
   return sessions
     .map(session => {
-      const slot = `${session.weekday} ${formatTime(session.start_time)}`;
-      const courseSlot = session.course_name ? `${slot} - ${session.course_name}` : slot;
-      return session.end_date ? `${courseSlot} (ended ${session.end_date})` : courseSlot;
+      const slot = session.weekday && session.start_time
+        ? `${session.weekday} ${formatTime(session.start_time)}`
+        : '';
+      const courseSlot = [slot, session.course_name].filter(Boolean).join(' - ');
+      const label = courseSlot || 'Class details missing';
+      return session.end_date ? `${label} (ended ${session.end_date})` : label;
     })
     .join(', ');
 }
