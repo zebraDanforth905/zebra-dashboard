@@ -707,11 +707,13 @@ function normalizeTokenCurrentSessionSnapshots(value: unknown): Map<number, Curr
 
     const pickupSchool = cleanSnapshotString(session.pickup_school);
     const courseName = cleanSnapshotString(session.course_name);
+    const endDate = cleanSnapshotString(session.end_date);
     const currentSession: CurrentSessionSnapshot = {
       weekday,
       start_time: startTime,
       pickup_school: pickupSchool || null,
       ...(courseName ? { course_name: courseName } : {}),
+      ...(endDate ? { end_date: endDate } : {}),
     };
     map.set(studentId, [...(map.get(studentId) ?? []), currentSession]);
   }
@@ -900,7 +902,8 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
             'weekday', slots.weekday,
             'start_time', slots.start_time,
             'pickup_school', slots.pickup_school,
-            'course_name', slots.course_name
+            'course_name', slots.course_name,
+            'end_date', slots.end_date
           )
           ORDER BY slots.weekday_order, slots.start_time, slots.course_name
         ) FILTER (WHERE slots.weekday IS NOT NULL),
@@ -913,6 +916,7 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
         se.start_time,
         NULL::text AS pickup_school,
         co.name AS course_name,
+        e.end_date::text AS end_date,
         CASE LOWER(TRIM(se.weekday))
           WHEN 'monday' THEN 1
           WHEN 'tuesday' THEN 2

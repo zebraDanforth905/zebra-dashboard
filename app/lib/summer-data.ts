@@ -447,6 +447,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           co.name AS course_name,
           se.weekday,
           se.start_time::text AS start_time,
+          NULL::text AS end_date,
           NULL::text AS pickup_school,
           TRUE AS is_active
         FROM token_base tb
