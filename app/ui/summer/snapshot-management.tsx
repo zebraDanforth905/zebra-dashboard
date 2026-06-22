@@ -8,6 +8,8 @@ import {
   removeStudentFromParentSnapshot,
 } from '@/app/lib/summer-actions';
 
+type SnapshotFilter = 'snapshot' | 'all' | 'visible' | 'not_snapshot';
+
 function formatDate(d: Date | null): string {
   if (!d) return 'No snapshot date';
   return new Date(d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -44,16 +46,29 @@ function familyMatchesSearch(row: SummerSnapshotFamilyRow, search: string): bool
     .includes(search);
 }
 
+function studentMatchesFilter(student: SummerSnapshotStudentRow, filter: SnapshotFilter): boolean {
+  if (filter === 'snapshot') return student.in_snapshot;
+  if (filter === 'visible') return student.is_active || student.in_snapshot;
+  if (filter === 'not_snapshot') return !student.in_snapshot;
+  return true;
+}
+
 export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamilyRow[] }) {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<SnapshotFilter>('snapshot');
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = useMemo(
-    () => rows.filter(row => familyMatchesSearch(row, normalizedSearch)),
-    [normalizedSearch, rows],
+    () => rows
+      .map(row => ({
+        ...row,
+        students: row.students.filter(student => studentMatchesFilter(student, filter)),
+      }))
+      .filter(row => row.students.length > 0 && familyMatchesSearch(row, normalizedSearch)),
+    [filter, normalizedSearch, rows],
   );
   const snapshotStudents = rows.reduce(
     (count, row) => count + row.students.filter(student => student.in_snapshot).length,
@@ -96,6 +111,16 @@ export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamil
           placeholder="Search family or student..."
           className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 sm:w-72"
         />
+        <select
+          value={filter}
+          onChange={event => setFilter(event.target.value as SnapshotFilter)}
+          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
+        >
+          <option value="snapshot">Snapshot students</option>
+          <option value="all">All family students</option>
+          <option value="visible">Visible on parent link</option>
+          <option value="not_snapshot">Not in snapshot</option>
+        </select>
         {search && (
           <button
             type="button"
@@ -119,7 +144,7 @@ export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamil
       )}
 
       <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-        Active students appear from current enrolments. Snapshot entries keep recently active or manually added students visible later, even after their class is removed from the live schedule.
+        Snapshot entries are the historic outreach list. They are not refreshed from current enrolments; use add/remove for manual changes.
       </div>
 
       {filtered.length === 0 ? (
@@ -134,7 +159,8 @@ export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamil
                 <th className="px-4 py-3">Family</th>
                 <th className="px-4 py-3">Student</th>
                 <th className="px-4 py-3">Why visible</th>
-                <th className="px-4 py-3">Current / snapshot class</th>
+                <th className="px-4 py-3">Snapshot class</th>
+                <th className="px-4 py-3">Current class</th>
                 <th className="px-4 py-3">Snapshot date</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
@@ -146,9 +172,6 @@ export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamil
                 const visibleReason = student.is_active
                   ? student.in_snapshot ? 'Active + snapshot' : 'Active'
                   : student.in_snapshot ? 'Snapshot' : 'Hidden';
-                const sessions = student.current_sessions.length > 0
-                  ? student.current_sessions
-                  : student.snapshot_sessions;
                 return (
                   <tr key={`${row.token_id}:${student.student_id}`} className="hover:bg-slate-50">
                     <td className="px-4 py-3 align-top">
@@ -176,7 +199,10 @@ export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamil
                       </span>
                     </td>
                     <td className="max-w-md px-4 py-3 align-top text-slate-600">
-                      {formatSessions(sessions)}
+                      {student.in_snapshot ? formatSessions(student.snapshot_sessions) : '-'}
+                    </td>
+                    <td className="max-w-md px-4 py-3 align-top text-slate-600">
+                      {formatSessions(student.current_sessions)}
                     </td>
                     <td className="px-4 py-3 align-top text-slate-500">
                       {student.in_snapshot ? formatDate(row.last_seen_active_at) : '-'}

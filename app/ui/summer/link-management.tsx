@@ -8,7 +8,6 @@ import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
 import ClearExportButton from './clear-export-button';
 import LockedFieldCell from './locked-field-cell';
-import RefreshLinksButton from './refresh-links-button';
 import Link from 'next/link';
 import {
   updatePrimaryName,
@@ -40,7 +39,7 @@ const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'exported',      label: 'Exported' },
   { value: 'responded',     label: 'Responded' },
   { value: 'internal_responded', label: 'Internal response' },
-  { value: 'august_fall_confirmation', label: 'August fall confirmation' },
+  { value: 'august_fall_confirmation', label: 'August email' },
 ];
 const DEFAULT_FILTER: FilterValue = 'not_responded';
 
@@ -93,7 +92,7 @@ export default function LinkManagement({
   const exportRows = filtered;
   const exportLabel =
     filter === 'not_responded' ? 'Export email CSV'
-    : filter === 'august_fall_confirmation' ? 'Export August CSV'
+    : filter === 'august_fall_confirmation' ? 'Export August Email CSV'
     : 'Export CSV';
 
   const total = rows.length;
@@ -159,7 +158,6 @@ export default function LinkManagement({
         <ExportCsvButton rows={exportRows} label={exportLabel} />
         <ClearExportButton rows={filtered} />
         <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
-        <RefreshLinksButton />
         <div className="flex min-w-[11rem] shrink-0 flex-col items-start gap-1">
           {refreshResult && (
             <span className="max-w-48 text-xs leading-tight text-slate-500">{refreshResult}</span>
@@ -179,7 +177,7 @@ export default function LinkManagement({
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{total}</span> families</span>
         <span><span className="font-semibold text-sky-700">{needsEmail}</span> need email</span>
-        <span><span className="font-semibold text-emerald-700">{augustEligible}</span> August fall confirmation</span>
+        <span><span className="font-semibold text-emerald-700">{augustEligible}</span> August email</span>
         <span><span className="font-semibold text-emerald-700">{responded}</span> responded</span>
         <span><span className="font-semibold text-amber-700">{internalResponded}</span> internal response</span>
         {missingEmail > 0 && (

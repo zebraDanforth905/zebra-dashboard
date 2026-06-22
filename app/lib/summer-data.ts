@@ -21,7 +21,6 @@ import {
 import { normalizeSessionSelection } from './session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
-const RECENT_ACTIVE_CUTOFF = '2026-05-01';
 
 type TokenStudentSnapshot = CurrentSessionSummary & {
   student_id?: string;
@@ -165,16 +164,9 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
     `;
     if (tokenRows.length === 0) return null;
 
-    const { token_id, customer_id, customer_name, customer_alternate_name, last_seen_active_at, last_active_snapshot } = tokenRows[0];
-    const snapshotIsEligible = last_seen_active_at
-      ? new Date(last_seen_active_at) >= new Date(`${RECENT_ACTIVE_CUTOFF}T00:00:00`)
-      : false;
-    const tokenSnapshotByStudentId = snapshotIsEligible
-      ? normalizeTokenStudentSnapshots(last_active_snapshot)
-      : new Map<string, CurrentSessionSummary[]>();
-    const tokenSnapshotStudentIds = snapshotIsEligible
-      ? Array.from(normalizeTokenSnapshotStudentIds(last_active_snapshot))
-      : [];
+    const { token_id, customer_id, customer_name, customer_alternate_name, last_active_snapshot } = tokenRows[0];
+    const tokenSnapshotByStudentId = normalizeTokenStudentSnapshots(last_active_snapshot);
+    const tokenSnapshotStudentIds = Array.from(normalizeTokenSnapshotStudentIds(last_active_snapshot));
 
     const studentRows = await sql<{
       student_id: string;
@@ -458,7 +450,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         JOIN sessions se ON se.id = e.session_id
         LEFT JOIN courses co ON co.id = e.course_id
       ),
-      recent_snapshot_slots AS (
+      snapshot_slots AS (
         SELECT
           tb.token_id,
           tb.customer_uuid,
@@ -470,12 +462,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           NULLIF(snapshot.pickup_school, '') AS pickup_school,
           FALSE AS is_active
         FROM token_base tb
-        CROSS JOIN LATERAL jsonb_to_recordset(
-          CASE
-            WHEN tb.last_seen_active_at >= ${RECENT_ACTIVE_CUTOFF}::date THEN tb.last_active_snapshot
-            ELSE '[]'::jsonb
-          END
-        ) AS snapshot(
+        CROSS JOIN LATERAL jsonb_to_recordset(tb.last_active_snapshot) AS snapshot(
           student_id TEXT,
           student_name TEXT,
           course_name TEXT,
@@ -491,7 +478,16 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       expected_slots AS (
         SELECT * FROM active_slots
         UNION ALL
-        SELECT * FROM recent_snapshot_slots
+        SELECT * FROM snapshot_slots
+      ),
+      snapshot_students AS (
+        SELECT
+          token_id,
+          customer_uuid,
+          student_id,
+          MAX(student_name) AS student_name
+        FROM snapshot_slots
+        GROUP BY token_id, customer_uuid, student_id
       ),
       expected_students AS (
         SELECT
@@ -530,19 +526,30 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       ),
       response_summary AS (
         SELECT
-          es.token_id,
-          COUNT(*)::int AS expected_student_count,
+          tb.token_id,
           COUNT(pr.id)::int AS latest_response_count,
-          COUNT(pr.id) FILTER (WHERE pr.submitted_by = 'staff')::int AS latest_staff_response_count,
-          COUNT(pr.id) FILTER (WHERE pr.payload->>'fall_status' = 'not_returning')::int AS fall_not_returning_count
-        FROM expected_students es
+          COUNT(pr.id) FILTER (WHERE pr.submitted_by = 'staff')::int AS latest_staff_response_count
+        FROM token_base tb
         LEFT JOIN parent_requests pr
-          ON pr.student_id::text = es.student_id
-          AND pr.token_id = es.token_id::uuid
+          ON pr.token_id = tb.token_id::uuid
           AND pr.is_latest = TRUE
           AND pr.removed_at IS NULL
           AND pr.request_type IN ('summer_scheduling', 'other')
-        GROUP BY es.token_id
+        GROUP BY tb.token_id
+      ),
+      august_response_summary AS (
+        SELECT
+          ss.token_id,
+          COUNT(*)::int AS snapshot_student_count,
+          COUNT(pr.id) FILTER (WHERE pr.payload->>'fall_status' = 'not_returning')::int AS fall_not_returning_count
+        FROM snapshot_students ss
+        LEFT JOIN parent_requests pr
+          ON pr.student_id::text = ss.student_id
+          AND pr.token_id = ss.token_id::uuid
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        GROUP BY ss.token_id
       )
       SELECT
         tb.token_id,
@@ -564,11 +571,8 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         COALESCE(ss.active_student_count, 0)::int AS active_student_count,
         COALESCE(scs.student_courses, '[]'::jsonb) AS student_courses,
         (
-          COALESCE(rs.expected_student_count, 0) > 0
-          AND NOT (
-            COALESCE(rs.latest_response_count, 0) = COALESCE(rs.expected_student_count, 0)
-            AND COALESCE(rs.fall_not_returning_count, 0) = COALESCE(rs.expected_student_count, 0)
-          )
+          COALESCE(ars.snapshot_student_count, 0) > 0
+          AND COALESCE(ars.fall_not_returning_count, 0) < COALESCE(ars.snapshot_student_count, 0)
         ) AS fall_confirmation_eligible,
         COALESCE(rs.latest_response_count, 0) > 0 AS has_responded,
         COALESCE(rs.latest_staff_response_count, 0) > 0 AS has_internal_response
@@ -576,6 +580,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       LEFT JOIN student_summary ss ON ss.token_id = tb.token_id
       LEFT JOIN student_course_summary scs ON scs.token_id = tb.token_id
       LEFT JOIN response_summary rs ON rs.token_id = tb.token_id
+      LEFT JOIN august_response_summary ars ON ars.token_id = tb.token_id
       ORDER BY tb.customer_name
     `;
     return rows;
@@ -753,13 +758,7 @@ export async function fetchSummerStats(): Promise<SummerStats> {
             )
           UNION
           SELECT snapshot.student_id
-          FROM jsonb_array_elements(
-            CASE
-              WHEN (to_jsonb(parent_tokens)->>'last_seen_active_at')::timestamptz >= ${RECENT_ACTIVE_CUTOFF}::date
-                THEN COALESCE(to_jsonb(parent_tokens)->'last_active_snapshot', '[]'::jsonb)
-              ELSE '[]'::jsonb
-            END
-          ) AS raw_snapshot(value)
+          FROM jsonb_array_elements(COALESCE(to_jsonb(parent_tokens)->'last_active_snapshot', '[]'::jsonb)) AS raw_snapshot(value)
           CROSS JOIN LATERAL (
             SELECT NULLIF(raw_snapshot.value->>'student_id', '') AS student_id
           ) snapshot

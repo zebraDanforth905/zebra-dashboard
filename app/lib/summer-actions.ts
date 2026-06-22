@@ -9,7 +9,6 @@ import { normalizeSessionSelection } from '@/app/lib/session-selection';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 type PostgresJsonValue = Parameters<typeof sql.json>[0];
-const RECENT_ACTIVE_CUTOFF = '2026-05-01';
 
 type SessionUserWithType = {
   name?: string | null;
@@ -50,6 +49,11 @@ async function parentTokenActiveSnapshotColumnsExist(): Promise<boolean> {
 // Idempotent: if a token already exists for this customer, returns the existing one.
 export async function generateParentToken(customerId: string): Promise<string> {
   await requireAdmin();
+  const existing = await sql<{ token: string }[]>`
+    SELECT token FROM parent_tokens WHERE customer_id = ${customerId}::uuid LIMIT 1
+  `;
+  if (existing.length > 0) return existing[0].token;
+
   const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
   let activeSnapshot: PostgresJsonValue = [];
   let activeCount = 0;
@@ -78,38 +82,7 @@ export async function generateParentToken(customerId: string): Promise<string> {
     `;
     activeSnapshot = activeSnapshotRows[0]?.last_active_snapshot ?? [];
     activeCount = activeSnapshotRows[0]?.active_count ?? 0;
-    await sql`
-      UPDATE parent_tokens pt
-      SET
-        last_seen_active_at = NOW(),
-        last_active_snapshot = active_family_snapshot.snapshot
-      FROM (
-        SELECT
-          s.customer_id,
-          JSONB_AGG(
-            DISTINCT JSONB_BUILD_OBJECT(
-              'student_id', s.id::text,
-              'student_name', s.name,
-              'course_name', co.name,
-              'weekday', se.weekday,
-              'start_time', se.start_time,
-              'pickup_school', NULL
-            )
-          ) AS snapshot
-        FROM students s
-        JOIN enrolments e ON e.student_id = s.id
-        JOIN sessions se ON se.id = e.session_id
-        LEFT JOIN courses co ON co.id = e.course_id
-        WHERE s.customer_id = ${customerId}::uuid
-        GROUP BY s.customer_id
-      ) active_family_snapshot
-      WHERE pt.customer_id = active_family_snapshot.customer_id
-    `;
   }
-  const existing = await sql<{ token: string }[]>`
-    SELECT token FROM parent_tokens WHERE customer_id = ${customerId}::uuid LIMIT 1
-  `;
-  if (existing.length > 0) return existing[0].token;
 
   const token = randomBytes(24).toString('hex');
   if (canTrackLastSeenActive) {
@@ -143,34 +116,6 @@ export async function generateParentToken(customerId: string): Promise<string> {
 export async function generateAllParentTokens(): Promise<{ created: number }> {
   await requireAdmin();
   const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
-  if (canTrackLastSeenActive) {
-    await sql`
-      UPDATE parent_tokens pt
-      SET
-        last_seen_active_at = NOW(),
-        last_active_snapshot = active_family_snapshot.snapshot
-      FROM (
-        SELECT
-          s.customer_id,
-          JSONB_AGG(
-            DISTINCT JSONB_BUILD_OBJECT(
-              'student_id', s.id::text,
-              'student_name', s.name,
-              'course_name', co.name,
-              'weekday', se.weekday,
-              'start_time', se.start_time,
-              'pickup_school', NULL
-            )
-          ) AS snapshot
-        FROM students s
-        JOIN enrolments e ON e.student_id = s.id
-        JOIN sessions se ON se.id = e.session_id
-        LEFT JOIN courses co ON co.id = e.course_id
-        GROUP BY s.customer_id
-      ) active_family_snapshot
-      WHERE pt.customer_id = active_family_snapshot.customer_id
-    `;
-  }
   const eligible = await sql<{ customer_id: string; last_active_snapshot: PostgresJsonValue }[]>`
     SELECT
       c.id::text AS customer_id,
@@ -227,42 +172,9 @@ export async function deleteAllParentTokens(): Promise<{ deleted: number }> {
 
 export async function refreshParentLinkData(): Promise<{ updated: number; skipped: boolean }> {
   await requireAdmin();
-  const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
-  if (!canTrackLastSeenActive) {
-    revalidateTag('summer-tokens', 'max');
-    return { updated: 0, skipped: true };
-  }
-  const rows = await sql<{ id: string }[]>`
-    WITH active_family_snapshot AS (
-      SELECT
-        s.customer_id,
-        JSONB_AGG(
-          DISTINCT JSONB_BUILD_OBJECT(
-            'student_id', s.id::text,
-            'student_name', s.name,
-            'course_name', co.name,
-            'weekday', se.weekday,
-            'start_time', se.start_time,
-            'pickup_school', NULL
-          )
-        ) AS snapshot
-      FROM students s
-      JOIN enrolments e ON e.student_id = s.id
-      JOIN sessions se ON se.id = e.session_id
-      LEFT JOIN courses co ON co.id = e.course_id
-      GROUP BY s.customer_id
-    )
-    UPDATE parent_tokens pt
-    SET
-      last_seen_active_at = NOW(),
-      last_active_snapshot = active_family_snapshot.snapshot
-    FROM active_family_snapshot
-    WHERE active_family_snapshot.customer_id = pt.customer_id
-    RETURNING pt.id::text AS id
-  `;
   revalidateTag('summer-tokens', 'max');
   revalidateTag('summer-responses', 'max');
-  return { updated: rows.length, skipped: false };
+  return { updated: 0, skipped: false };
 }
 
 // ── Email send tracking ───────────────────────────────────────────────────────
@@ -917,7 +829,7 @@ export async function addStudentToParentSnapshot(
     UPDATE parent_tokens
     SET
       last_active_snapshot = ${sql.json(nextEntries)}::jsonb,
-      last_seen_active_at = NOW()
+      last_seen_active_at = COALESCE(last_seen_active_at, NOW())
     WHERE id = ${tokenId}::uuid
   `;
   revalidateTag('summer-tokens', 'max');
@@ -1044,13 +956,7 @@ async function validateTokenCurrentStudentIds(
           )
           OR EXISTS (
             SELECT 1
-            FROM jsonb_array_elements(
-              CASE
-                WHEN (to_jsonb(pt)->>'last_seen_active_at')::timestamptz >= ${RECENT_ACTIVE_CUTOFF}::date
-                  THEN COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)
-                ELSE '[]'::jsonb
-              END
-            ) snapshot
+            FROM jsonb_array_elements(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) snapshot
             WHERE snapshot->>'student_id' = s.id::text
           )
         )
