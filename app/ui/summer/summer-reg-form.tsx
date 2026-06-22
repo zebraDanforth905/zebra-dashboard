@@ -60,6 +60,10 @@ function getCurrentSessions(student: ParentFormData['students'][number]) {
   }];
 }
 
+function hasCurrentSessions(student: ParentFormData['students'][number]): boolean {
+  return getCurrentSessions(student).length > 0;
+}
+
 function currentPickupDefaults(student: ParentFormData['students'][number]): Pick<StudentCardState, 'pickup_requested' | 'pickup_school' | 'pickup_school_other'> {
   const pickupSession = getCurrentSessions(student).find(session => isPickupSession(session.weekday, session.start_time));
   if (!pickupSession) {
@@ -113,6 +117,9 @@ function isStudentComplete(
   if (staffEntry && manualCurrentFields) {
     if (!sel.manual_current_course_name.trim() || !sel.manual_current_weekday || !sel.manual_current_start_time) return false;
   }
+  if (staffEntry && sel.fall_status === 'same' && !hasCurrentSessions(student)) {
+    if (!sel.manual_current_course_name.trim() || !sel.manual_current_weekday || !sel.manual_current_start_time) return false;
+  }
   if (!sel.summer_status) return false;
   if (sel.summer_status === 'enrolling' && sel.session_ids.length === 0) return false;
   if (sel.summer_status === 'other' && !sel.custom_notes.trim()) return false;
@@ -125,9 +132,9 @@ function isStudentComplete(
   return true;
 }
 
-function initState(student: ParentFormData['students'][number]): StudentCardState {
+function initState(student: ParentFormData['students'][number], staffEntry: boolean): StudentCardState {
   const req = student.latest_request;
-  const fallStatus = req?.fall_status ?? 'same';
+  const fallStatus = req?.fall_status ?? (staffEntry && !hasCurrentSessions(student) ? null : 'same');
   const summerStatus =
     student.latest_request_type === 'other'
       ? 'other'
@@ -168,7 +175,7 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
     waitlist_session_ids: [],
     custom_notes: '',
     ...defaultPickup,
-    fall_status: 'same',
+    fall_status: fallStatus,
     fall_start_date: defaultFallStartDate(student),
     fall_session_ids: [],
     fall_session_start_dates: {},
@@ -195,7 +202,7 @@ export default function SummerRegForm({
   const [actionState, formAction, isPending] = useActionState(submitSummerForm, undefined);
 
   const [selections, setSelections] = useState<Record<string, StudentCardState>>(
-    () => Object.fromEntries(data.students.map(s => [s.student_id, initState(s)])),
+    () => Object.fromEntries(data.students.map(s => [s.student_id, initState(s, staffEntry)])),
   );
 
   const incompleteCount = data.students.filter(s => !isStudentComplete(s, selections[s.student_id], data.fall_sessions, staffEntry)).length;

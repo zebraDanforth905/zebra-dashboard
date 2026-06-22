@@ -280,8 +280,14 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
     state.manual_current_start_time,
     state.manual_current_pickup_school,
   ].some(value => value.trim());
+  const manualCurrentComplete = Boolean(
+    state.manual_current_course_name.trim() &&
+    state.manual_current_weekday &&
+    state.manual_current_start_time,
+  );
   const requiredMessages = [
     !state.summer_status ? 'Choose a summer plan.' : null,
+    !state.fall_status ? 'Choose a September plan.' : null,
     state.summer_status === 'enrolling' && state.session_ids.length === 0 ? 'Select at least one summer session.' : null,
     state.summer_status === 'other' && !state.custom_notes.trim() ? 'Add custom summer plan notes.' : null,
     state.fall_status === 'change' && state.fall_session_ids.length === 0 ? 'Select at least one September session.' : null,
@@ -291,6 +297,9 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
       : null,
     staffEntry && manualCurrentFields && (!state.manual_current_course_name.trim() || !state.manual_current_weekday || !state.manual_current_start_time)
       ? 'Complete the staff-only previous class fields.'
+      : null,
+    staffEntry && state.fall_status === 'same' && currentSessions.length === 0 && !manualCurrentComplete
+      ? 'Add the previous/current class or choose another September plan.'
       : null,
   ].filter(Boolean);
 
@@ -429,8 +438,10 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
       </div>
 
       {requiredMessages.length > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-          {requiredMessages[0]}
+        <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+          {requiredMessages.map(message => (
+            <p key={message}>{message}</p>
+          ))}
         </div>
       )}
 

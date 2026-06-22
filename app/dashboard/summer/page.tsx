@@ -3,12 +3,14 @@ import {
   fetchParentLinkRows,
   fetchSummerResponseRows,
   fetchSummerSchedule,
+  fetchSummerSnapshotRows,
   fetchSummerStats,
   fetchUntokenizedActiveFamilyCount,
 } from '@/app/lib/summer-data';
 import { fetchLatestSummerResponseNotes } from '@/app/lib/data';
 import LinkManagement from '@/app/ui/summer/link-management';
 import ResponsesTab from '@/app/ui/summer/responses-tab';
+import SnapshotManagement from '@/app/ui/summer/snapshot-management';
 import SummerScheduleTab from '@/app/ui/summer/summer-schedule-tab';
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
@@ -35,13 +37,14 @@ export default async function SummerPage({
 
   const { tab = 'links' } = await searchParams;
 
-  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, scheduleRows, fallScheduleRows] = await Promise.all([
+  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, scheduleRows, fallScheduleRows, snapshotRows] = await Promise.all([
     tab === 'links' ? fetchParentLinkRows() : null,
     tab === 'links' ? fetchUntokenizedActiveFamilyCount() : null,
     tab === 'responses' ? fetchSummerStats() : null,
     tab === 'responses' ? fetchSummerResponseRows() : null,
     tab === 'schedule' ? fetchSummerSchedule() : null,
     tab === 'fall-schedule' ? fetchFallSchedule() : null,
+    tab === 'snapshot' ? fetchSummerSnapshotRows() : null,
   ]);
   let enrichedResponseRows = responseRows;
 
@@ -81,6 +84,9 @@ export default async function SummerPage({
         <TabLink href="/dashboard/summer?tab=fall-schedule" active={tab === 'fall-schedule'}>
           Fall Schedule
         </TabLink>
+        <TabLink href="/dashboard/summer?tab=snapshot" active={tab === 'snapshot'}>
+          Snapshot Add / Remove
+        </TabLink>
       </div>
 
       {tab === 'links' && linkRows && (
@@ -100,6 +106,10 @@ export default async function SummerPage({
 
       {tab === 'fall-schedule' && fallScheduleRows && (
         <SummerScheduleTab rows={fallScheduleRows} term="fall" />
+      )}
+
+      {tab === 'snapshot' && snapshotRows && (
+        <SnapshotManagement rows={snapshotRows} />
       )}
     </div>
   );

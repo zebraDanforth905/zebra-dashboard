@@ -14,6 +14,8 @@ import {
   SummerSchedulingPayload,
   SummerResponseRow,
   SummerScheduleRow,
+  SummerSnapshotFamilyRow,
+  SummerSnapshotStudentRow,
   SummerStats,
 } from './definitions';
 import { normalizeSessionSelection } from './session-selection';
@@ -53,6 +55,19 @@ function normalizeTokenStudentSnapshots(value: unknown): Map<string, CurrentSess
   }
 
   return map;
+}
+
+function normalizeTokenSnapshotStudentIds(value: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (!Array.isArray(value)) return ids;
+
+  for (const rawSession of value) {
+    if (!rawSession || typeof rawSession !== 'object') continue;
+    const studentId = cleanSnapshotString((rawSession as Partial<TokenStudentSnapshot>).student_id);
+    if (studentId) ids.add(studentId);
+  }
+
+  return ids;
 }
 
 async function fetchCanonicalFallSessionIds(sessionIds: string[]): Promise<Map<string, string>> {
@@ -151,17 +166,20 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
     if (tokenRows.length === 0) return null;
 
     const { token_id, customer_id, customer_name, customer_alternate_name, last_seen_active_at, last_active_snapshot } = tokenRows[0];
-    const snapshotIsRecent = last_seen_active_at
+    const snapshotIsEligible = last_seen_active_at
       ? new Date(last_seen_active_at) >= new Date(`${RECENT_ACTIVE_CUTOFF}T00:00:00`)
       : false;
-    const tokenSnapshotByStudentId = snapshotIsRecent
+    const tokenSnapshotByStudentId = snapshotIsEligible
       ? normalizeTokenStudentSnapshots(last_active_snapshot)
       : new Map<string, CurrentSessionSummary[]>();
-    const tokenSnapshotStudentIds = Array.from(tokenSnapshotByStudentId.keys());
+    const tokenSnapshotStudentIds = snapshotIsEligible
+      ? Array.from(normalizeTokenSnapshotStudentIds(last_active_snapshot))
+      : [];
 
     const studentRows = await sql<{
       student_id: string;
       student_name: string;
+      is_active: boolean;
       current_sessions: CurrentSessionSummary[] | null;
       current_weekday: string | null;
       current_start_time: string | null;
@@ -175,6 +193,11 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
       SELECT
         s.id::text AS student_id,
         s.name AS student_name,
+        EXISTS (
+          SELECT 1
+          FROM enrolments e
+          WHERE e.student_id = s.id
+        ) AS is_active,
         cs.current_sessions AS current_sessions,
         cs.current_weekday AS current_weekday,
         cs.current_start_time AS current_start_time,
@@ -348,6 +371,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
       return {
         student_id: r.student_id,
         student_name: r.student_name,
+        is_active: r.is_active,
         current_sessions: currentSessions,
         current_weekday: firstCurrentSession?.weekday ?? r.current_weekday,
         current_start_time: firstCurrentSession?.start_time ?? r.current_start_time,
@@ -574,6 +598,134 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch parent link rows.');
+  }
+}
+
+export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow[]> {
+  'use cache';
+  cacheTag('summer-tokens');
+  try {
+    const rows = await sql<{
+      token_id: string;
+      customer_id: string;
+      customer_name: string;
+      alternate_name: string | null;
+      token: string;
+      last_seen_active_at: Date | null;
+      last_active_snapshot: unknown;
+      student_id: string | null;
+      student_name: string | null;
+      is_active: boolean | null;
+      current_sessions: CurrentSessionSummary[] | null;
+    }[]>`
+      WITH token_base AS (
+        SELECT
+          pt.id::text AS token_id,
+          pt.customer_id AS customer_uuid,
+          c.id::text AS customer_id,
+          c.name AS customer_name,
+          c.alternate_name,
+          pt.token,
+          (to_jsonb(pt)->>'last_seen_active_at')::timestamptz AS last_seen_active_at,
+          COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
+        FROM parent_tokens pt
+        JOIN customers c ON c.id = pt.customer_id
+      )
+      SELECT
+        tb.token_id,
+        tb.customer_id,
+        tb.customer_name,
+        tb.alternate_name,
+        tb.token,
+        tb.last_seen_active_at,
+        tb.last_active_snapshot,
+        s.id::text AS student_id,
+        s.name AS student_name,
+        EXISTS (
+          SELECT 1
+          FROM enrolments e
+          WHERE e.student_id = s.id
+        ) AS is_active,
+        COALESCE(cs.current_sessions, '[]'::jsonb) AS current_sessions
+      FROM token_base tb
+      LEFT JOIN students s ON s.customer_id = tb.customer_uuid
+      LEFT JOIN LATERAL (
+        SELECT
+          JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+              'weekday', slots.weekday,
+              'start_time', slots.start_time,
+              'pickup_school', slots.pickup_school,
+              'course_name', slots.course_name
+            )
+            ORDER BY slots.weekday_order, slots.start_time, slots.course_name
+          ) FILTER (WHERE slots.weekday IS NOT NULL) AS current_sessions
+        FROM (
+          SELECT DISTINCT
+            se.weekday,
+            se.start_time,
+            co.name AS course_name,
+            cp.school_name AS pickup_school,
+            CASE LOWER(TRIM(se.weekday))
+              WHEN 'monday' THEN 1
+              WHEN 'tuesday' THEN 2
+              WHEN 'wednesday' THEN 3
+              WHEN 'thursday' THEN 4
+              WHEN 'friday' THEN 5
+              WHEN 'saturday' THEN 6
+              WHEN 'sunday' THEN 7
+              ELSE 8
+            END AS weekday_order
+          FROM enrolments e
+          JOIN sessions se ON se.id = e.session_id
+          LEFT JOIN courses co ON co.id = e.course_id
+          LEFT JOIN LATERAL (
+            SELECT p.school_name
+            FROM pickups p
+            WHERE p.student_id = s.id
+              AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+            ORDER BY p.id
+            LIMIT 1
+          ) cp ON true
+          WHERE e.student_id = s.id
+        ) slots
+      ) cs ON true
+      ORDER BY tb.customer_name, s.name
+    `;
+
+    const families = new Map<string, SummerSnapshotFamilyRow>();
+
+    for (const row of rows) {
+      const family = families.get(row.token_id) ?? {
+        token_id: row.token_id,
+        customer_id: row.customer_id,
+        customer_name: row.customer_name,
+        alternate_name: row.alternate_name,
+        token: row.token,
+        last_seen_active_at: row.last_seen_active_at,
+        students: [],
+      };
+
+      if (!families.has(row.token_id)) families.set(row.token_id, family);
+      if (!row.student_id || !row.student_name) continue;
+
+      const snapshotIds = normalizeTokenSnapshotStudentIds(row.last_active_snapshot);
+      const snapshotSessions = normalizeTokenStudentSnapshots(row.last_active_snapshot);
+      const student: SummerSnapshotStudentRow = {
+        student_id: row.student_id,
+        student_name: row.student_name,
+        is_active: row.is_active === true,
+        in_snapshot: snapshotIds.has(row.student_id),
+        current_sessions: row.current_sessions ?? [],
+        snapshot_sessions: snapshotSessions.get(row.student_id) ?? [],
+      };
+      family.students.push(student);
+    }
+
+    return Array.from(families.values());
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch summer snapshot rows.');
   }
 }
 

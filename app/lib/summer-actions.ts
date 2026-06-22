@@ -787,6 +787,7 @@ type StudentFormEntry = {
 
 type CurrentSessionSnapshot = NonNullable<StudentFormEntry['current_sessions_snapshot']>[number];
 type TokenCurrentSessionSnapshot = CurrentSessionSnapshot & { student_id: string };
+type ParentTokenSnapshotEntry = TokenCurrentSessionSnapshot & { student_name: string };
 
 function cleanSnapshotString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -836,6 +837,175 @@ function normalizeTokenCurrentSessionSnapshots(value: unknown): Map<number, Curr
   }
 
   return map;
+}
+
+function normalizeParentTokenSnapshot(value: unknown): ParentTokenSnapshotEntry[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap(rawSession => {
+    if (!rawSession || typeof rawSession !== 'object') return [];
+    const session = rawSession as Partial<ParentTokenSnapshotEntry>;
+    const studentId = cleanSnapshotString(session.student_id);
+    const studentName = cleanSnapshotString(session.student_name);
+    if (!studentId) return [];
+
+    return [{
+      student_id: studentId,
+      student_name: studentName,
+      course_name: cleanSnapshotString(session.course_name) || null,
+      weekday: cleanSnapshotString(session.weekday),
+      start_time: cleanSnapshotString(session.start_time),
+      pickup_school: cleanSnapshotString(session.pickup_school) || null,
+    }];
+  });
+}
+
+async function fetchStudentCurrentSnapshotEntries(
+  tokenId: string,
+  studentId: number,
+  studentName: string,
+): Promise<ParentTokenSnapshotEntry[]> {
+  const dbRows = await sql<CurrentSessionSnapshot[]>`
+    SELECT DISTINCT
+      se.weekday,
+      se.start_time,
+      cp.school_name AS pickup_school,
+      co.name AS course_name
+    FROM enrolments e
+    JOIN sessions se ON se.id = e.session_id
+    LEFT JOIN courses co ON co.id = e.course_id
+    LEFT JOIN LATERAL (
+      SELECT p.school_name
+      FROM pickups p
+      WHERE p.student_id = e.student_id
+        AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+      ORDER BY p.id
+      LIMIT 1
+    ) cp ON true
+    WHERE e.student_id = ${studentId}
+    ORDER BY se.weekday, se.start_time, co.name
+  `;
+  if (dbRows.length > 0) {
+    return dbRows.map(row => ({
+      student_id: String(studentId),
+      student_name: studentName,
+      course_name: cleanSnapshotString(row.course_name) || null,
+      weekday: cleanSnapshotString(row.weekday),
+      start_time: cleanSnapshotString(row.start_time),
+      pickup_school: cleanSnapshotString(row.pickup_school) || null,
+    }));
+  }
+
+  const requestRows = await sql<{ current_sessions_snapshot: unknown }[]>`
+    SELECT COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb) AS current_sessions_snapshot
+    FROM parent_requests pr
+    WHERE pr.token_id = ${tokenId}::uuid
+      AND pr.student_id = ${studentId}
+      AND pr.is_latest = TRUE
+      AND pr.removed_at IS NULL
+      AND pr.request_type IN ('summer_scheduling', 'other')
+    ORDER BY pr.submitted_at DESC
+    LIMIT 1
+  `;
+  const requestSessions = normalizeSubmittedCurrentSessionsSnapshot(
+    requestRows[0]?.current_sessions_snapshot as StudentFormEntry['current_sessions_snapshot'],
+  );
+  if (requestSessions.length > 0) {
+    return requestSessions.map(session => ({
+      student_id: String(studentId),
+      student_name: studentName,
+      ...session,
+    }));
+  }
+
+  return [{
+    student_id: String(studentId),
+    student_name: studentName,
+    course_name: null,
+    weekday: '',
+    start_time: '',
+    pickup_school: null,
+  }];
+}
+
+export async function addStudentToParentSnapshot(
+  tokenId: string,
+  studentId: string,
+): Promise<{ updated: boolean }> {
+  await requireAdmin();
+  const numericStudentId = Number(studentId);
+  if (!tokenId || !Number.isFinite(numericStudentId)) {
+    throw new Error('Invalid snapshot update.');
+  }
+
+  const rows = await sql<{
+    student_name: string;
+    last_active_snapshot: unknown;
+  }[]>`
+    SELECT
+      s.name AS student_name,
+      COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
+    FROM parent_tokens pt
+    JOIN students s ON s.customer_id = pt.customer_id
+    WHERE pt.id = ${tokenId}::uuid
+      AND s.id = ${numericStudentId}
+    LIMIT 1
+  `;
+  if (rows.length === 0) {
+    throw new Error('Student not found for this family link.');
+  }
+
+  const nextEntries = [
+    ...normalizeParentTokenSnapshot(rows[0].last_active_snapshot)
+      .filter(entry => entry.student_id !== String(numericStudentId)),
+    ...(await fetchStudentCurrentSnapshotEntries(tokenId, numericStudentId, rows[0].student_name)),
+  ];
+
+  await sql`
+    UPDATE parent_tokens
+    SET
+      last_active_snapshot = ${sql.json(nextEntries)}::jsonb,
+      last_seen_active_at = NOW()
+    WHERE id = ${tokenId}::uuid
+  `;
+  revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
+  return { updated: true };
+}
+
+export async function removeStudentFromParentSnapshot(
+  tokenId: string,
+  studentId: string,
+): Promise<{ updated: boolean }> {
+  await requireAdmin();
+  const numericStudentId = Number(studentId);
+  if (!tokenId || !Number.isFinite(numericStudentId)) {
+    throw new Error('Invalid snapshot update.');
+  }
+
+  const rows = await sql<{ last_active_snapshot: unknown }[]>`
+    SELECT COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
+    FROM parent_tokens pt
+    JOIN students s ON s.customer_id = pt.customer_id
+    WHERE pt.id = ${tokenId}::uuid
+      AND s.id = ${numericStudentId}
+    LIMIT 1
+  `;
+  if (rows.length === 0) {
+    throw new Error('Student not found for this family link.');
+  }
+
+  const nextEntries = normalizeParentTokenSnapshot(rows[0].last_active_snapshot)
+    .filter(entry => entry.student_id !== String(numericStudentId));
+
+  await sql`
+    UPDATE parent_tokens
+    SET last_active_snapshot = ${sql.json(nextEntries)}::jsonb
+    WHERE id = ${tokenId}::uuid
+  `;
+  revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
+  return { updated: true };
 }
 
 async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[]): Promise<Map<number, CurrentSessionSnapshot[]>> {

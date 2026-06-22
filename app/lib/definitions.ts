@@ -507,6 +507,7 @@ export type ParentRequest =
 export type ParentFormStudentData = {
   student_id: string;
   student_name: string;
+  is_active: boolean;
   current_sessions: CurrentSessionSummary[];
   current_weekday: string | null;
   current_start_time: string | null;
@@ -713,4 +714,23 @@ export type ParentLinkRow = {
   fall_confirmation_eligible: boolean;
   has_responded: boolean;
   has_internal_response: boolean;
+};
+
+export type SummerSnapshotStudentRow = {
+  student_id: string;
+  student_name: string;
+  is_active: boolean;
+  in_snapshot: boolean;
+  current_sessions: CurrentSessionSummary[];
+  snapshot_sessions: CurrentSessionSummary[];
+};
+
+export type SummerSnapshotFamilyRow = {
+  token_id: string;
+  customer_id: string;
+  customer_name: string;
+  alternate_name: string | null;
+  token: string;
+  last_seen_active_at: Date | null;
+  students: SummerSnapshotStudentRow[];
 };
