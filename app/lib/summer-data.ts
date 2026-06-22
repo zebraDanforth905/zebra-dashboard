@@ -30,34 +30,6 @@ function cleanSnapshotString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function normalizeTokenStudentSnapshots(value: unknown): Map<string, CurrentSessionSummary[]> {
-  const map = new Map<string, CurrentSessionSummary[]>();
-  if (!Array.isArray(value)) return map;
-
-  for (const rawSession of value) {
-    if (!rawSession || typeof rawSession !== 'object') continue;
-    const session = rawSession as Partial<TokenStudentSnapshot>;
-    const studentId = cleanSnapshotString(session.student_id);
-    const weekday = cleanSnapshotString(session.weekday);
-    const startTime = cleanSnapshotString(session.start_time);
-    if (!studentId || !weekday || !/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) continue;
-
-    const pickupSchool = cleanSnapshotString(session.pickup_school);
-    const courseName = cleanSnapshotString(session.course_name);
-    const endDate = cleanSnapshotString(session.end_date);
-    const currentSession: CurrentSessionSummary = {
-      weekday,
-      start_time: startTime,
-      pickup_school: pickupSchool || null,
-      ...(courseName ? { course_name: courseName } : {}),
-      ...(endDate ? { end_date: endDate } : {}),
-    };
-    map.set(studentId, [...(map.get(studentId) ?? []), currentSession]);
-  }
-
-  return map;
-}
-
 function normalizeTokenSnapshotDisplaySessions(value: unknown): Map<string, CurrentSessionSummary[]> {
   const map = new Map<string, CurrentSessionSummary[]>();
   if (!Array.isArray(value)) return map;
@@ -201,7 +173,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
     if (tokenRows.length === 0) return null;
 
     const { token_id, customer_id, customer_name, customer_alternate_name, last_active_snapshot } = tokenRows[0];
-    const tokenSnapshotByStudentId = normalizeTokenStudentSnapshots(last_active_snapshot);
+    const tokenSnapshotByStudentId = normalizeTokenSnapshotDisplaySessions(last_active_snapshot);
     const tokenSnapshotStudentIds = Array.from(normalizeTokenSnapshotStudentIds(last_active_snapshot));
 
     const studentRows = await sql<{
@@ -776,6 +748,25 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch summer snapshot rows.');
+  }
+}
+
+export async function fetchSummerSnapshotCourseOptions(): Promise<Course[]> {
+  'use cache';
+  cacheTag('summer-tokens');
+  try {
+    return await sql<Course[]>`
+      SELECT c.id::text, c.name, c.description
+      FROM courses c
+      WHERE c.name !~* 'day\\s*camp'
+      ORDER BY
+        COALESCE(substring(c.name from '\\(([A-Za-z]+)[0-9]+\\)'), c.name),
+        COALESCE((substring(c.name from '\\([A-Za-z]+([0-9]+)\\)'))::int, 0),
+        c.name
+    `;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch summer snapshot course options.');
   }
 }
 

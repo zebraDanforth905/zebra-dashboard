@@ -2,13 +2,19 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { SummerSnapshotFamilyRow, SummerSnapshotStudentRow } from '@/app/lib/definitions';
+import { Course, SummerSnapshotFamilyRow, SummerSnapshotStudentRow } from '@/app/lib/definitions';
 import {
   addStudentToParentSnapshot,
   removeStudentFromParentSnapshot,
 } from '@/app/lib/summer-actions';
 
 type SnapshotFilter = 'snapshot' | 'all' | 'visible' | 'not_snapshot';
+type AddSnapshotSelection = {
+  tokenId: string;
+  student: SummerSnapshotStudentRow;
+  courseName: string;
+  endDate: string;
+};
 
 function formatDate(d: Date | null): string {
   if (!d) return 'No snapshot date';
@@ -57,12 +63,19 @@ function studentMatchesFilter(student: SummerSnapshotStudentRow, filter: Snapsho
   return true;
 }
 
-export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamilyRow[] }) {
+export default function SnapshotManagement({
+  rows,
+  courseOptions,
+}: {
+  rows: SummerSnapshotFamilyRow[];
+  courseOptions: Course[];
+}) {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SnapshotFilter>('snapshot');
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [addSelection, setAddSelection] = useState<AddSnapshotSelection | null>(null);
   const [isPending, startTransition] = useTransition();
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = useMemo(
@@ -83,19 +96,48 @@ export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamil
     0,
   );
 
-  function updateSnapshot(tokenId: string, student: SummerSnapshotStudentRow, action: 'add' | 'remove') {
+  function openAddModal(tokenId: string, student: SummerSnapshotStudentRow) {
+    const fallbackSession = student.current_sessions[0] ?? student.snapshot_sessions[0];
+    setMessage(null);
+    setAddSelection({
+      tokenId,
+      student,
+      courseName: fallbackSession?.course_name ?? '',
+      endDate: fallbackSession?.end_date ?? '',
+    });
+  }
+
+  function addSnapshotFromModal() {
+    if (!addSelection) return;
+    const { tokenId, student, courseName, endDate } = addSelection;
+    const key = `${tokenId}:${student.student_id}:add`;
+    setPendingKey(key);
+    setMessage(null);
+    startTransition(async () => {
+      try {
+        await addStudentToParentSnapshot(tokenId, student.student_id, {
+          course_name: courseName || undefined,
+          end_date: endDate || undefined,
+        });
+        setMessage(`${student.student_name} added to the snapshot.`);
+        setAddSelection(null);
+        router.refresh();
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'Snapshot update failed.');
+      } finally {
+        setPendingKey(null);
+      }
+    });
+  }
+
+  function updateSnapshot(tokenId: string, student: SummerSnapshotStudentRow, action: 'remove') {
     const key = `${tokenId}:${student.student_id}:${action}`;
     setPendingKey(key);
     setMessage(null);
     startTransition(async () => {
       try {
-        if (action === 'add') {
-          await addStudentToParentSnapshot(tokenId, student.student_id);
-          setMessage(`${student.student_name} added to the snapshot.`);
-        } else {
-          await removeStudentFromParentSnapshot(tokenId, student.student_id);
-          setMessage(`${student.student_name} removed from the snapshot.`);
-        }
+        await removeStudentFromParentSnapshot(tokenId, student.student_id);
+        setMessage(`${student.student_name} removed from the snapshot.`);
         router.refresh();
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'Snapshot update failed.');
@@ -212,28 +254,90 @@ export default function SnapshotManagement({ rows }: { rows: SummerSnapshotFamil
                       {student.in_snapshot ? formatDate(row.last_seen_active_at) : '-'}
                     </td>
                     <td className="px-4 py-3 align-top">
-                      <button
-                        type="button"
-                        disabled={isPending && pendingKey === key}
-                        onClick={() => updateSnapshot(row.token_id, student, action)}
-                        className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                          action === 'add'
-                            ? 'bg-sky-600 text-white hover:bg-sky-500'
-                            : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        {isPending && pendingKey === key
-                          ? 'Updating...'
-                          : action === 'add'
-                            ? 'Add to snapshot'
-                            : 'Remove snapshot'}
-                      </button>
+                      {action === 'add' ? (
+                        <button
+                          type="button"
+                          disabled={isPending && pendingKey === key}
+                          onClick={() => openAddModal(row.token_id, student)}
+                          className="whitespace-nowrap rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Add to snapshot
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isPending && pendingKey === key}
+                          onClick={() => updateSnapshot(row.token_id, student, action)}
+                          className="whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isPending && pendingKey === key ? 'Updating...' : 'Remove snapshot'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
               }))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {addSelection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-slate-900">
+                Add {addSelection.student.student_name} to snapshot
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Choose the class context to show staff and parents.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700">Course</span>
+                <select
+                  value={addSelection.courseName}
+                  onChange={event => setAddSelection(prev => prev ? { ...prev, courseName: event.target.value } : prev)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                >
+                  <option value="">No course selected</option>
+                  {courseOptions.map(course => (
+                    <option key={course.id} value={course.name}>{course.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700">Ended</span>
+                <input
+                  type="date"
+                  value={addSelection.endDate}
+                  onChange={event => setAddSelection(prev => prev ? { ...prev, endDate: event.target.value } : prev)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                />
+              </label>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAddSelection(null)}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={addSnapshotFromModal}
+                className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isPending ? 'Adding...' : 'Add to snapshot'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

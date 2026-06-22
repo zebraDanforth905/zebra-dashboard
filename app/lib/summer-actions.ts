@@ -661,6 +661,10 @@ type StudentFormEntry = {
 type CurrentSessionSnapshot = NonNullable<StudentFormEntry['current_sessions_snapshot']>[number];
 type TokenCurrentSessionSnapshot = CurrentSessionSnapshot & { student_id: string };
 type ParentTokenSnapshotEntry = TokenCurrentSessionSnapshot & { student_name: string };
+type SnapshotManualDetails = {
+  course_name?: string;
+  end_date?: string;
+};
 
 function cleanSnapshotString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -748,7 +752,38 @@ async function fetchStudentCurrentSnapshotEntries(
   studentId: number,
   studentIdText: string,
   studentName: string,
+  details?: SnapshotManualDetails,
 ): Promise<ParentTokenSnapshotEntry[]> {
+  const manualCourseName = cleanSnapshotString(details?.course_name);
+  const manualEndDate = cleanSnapshotString(details?.end_date);
+
+  if (manualCourseName || manualEndDate) {
+    if (manualCourseName) {
+      const courseRows = await sql<{ name: string }[]>`
+        SELECT name
+        FROM courses
+        WHERE name = ${manualCourseName}
+        LIMIT 1
+      `;
+      if (courseRows.length === 0) {
+        throw new Error('Selected course was not found.');
+      }
+    }
+    if (manualEndDate && !/^\d{4}-\d{2}-\d{2}$/.test(manualEndDate)) {
+      throw new Error('End date must use YYYY-MM-DD format.');
+    }
+
+    return [{
+      student_id: studentIdText,
+      student_name: studentName,
+      course_name: manualCourseName || null,
+      weekday: '',
+      start_time: '',
+      end_date: manualEndDate || null,
+      pickup_school: null,
+    }];
+  }
+
   const dbRows = await sql<CurrentSessionSnapshot[]>`
     SELECT DISTINCT
       se.weekday,
@@ -810,6 +845,7 @@ async function fetchStudentCurrentSnapshotEntries(
 export async function addStudentToParentSnapshot(
   tokenId: string,
   studentId: string,
+  details?: SnapshotManualDetails,
 ): Promise<{ updated: boolean }> {
   await requireAdmin();
   const numericStudentId = Number(studentId);
@@ -839,7 +875,7 @@ export async function addStudentToParentSnapshot(
   const nextEntries = [
     ...normalizeParentTokenSnapshot(rows[0].last_active_snapshot)
       .filter(entry => !snapshotStudentIdMatches(entry.student_id, numericStudentId)),
-    ...(await fetchStudentCurrentSnapshotEntries(tokenId, numericStudentId, rows[0].student_id, rows[0].student_name)),
+    ...(await fetchStudentCurrentSnapshotEntries(tokenId, numericStudentId, rows[0].student_id, rows[0].student_name, details)),
   ];
 
   await sql`

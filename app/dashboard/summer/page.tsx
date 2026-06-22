@@ -3,6 +3,7 @@ import {
   fetchParentLinkRows,
   fetchSummerResponseRows,
   fetchSummerSchedule,
+  fetchSummerSnapshotCourseOptions,
   fetchSummerSnapshotRows,
   fetchSummerStats,
   fetchUntokenizedActiveFamilyCount,
@@ -37,7 +38,7 @@ export default async function SummerPage({
 
   const { tab = 'links' } = await searchParams;
 
-  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, scheduleRows, fallScheduleRows, snapshotRows] = await Promise.all([
+  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, scheduleRows, fallScheduleRows, snapshotRows, snapshotCourseOptions] = await Promise.all([
     tab === 'links' ? fetchParentLinkRows() : null,
     tab === 'links' ? fetchUntokenizedActiveFamilyCount() : null,
     tab === 'responses' ? fetchSummerStats() : null,
@@ -45,6 +46,7 @@ export default async function SummerPage({
     tab === 'schedule' ? fetchSummerSchedule() : null,
     tab === 'fall-schedule' ? fetchFallSchedule() : null,
     tab === 'snapshot' ? fetchSummerSnapshotRows() : null,
+    tab === 'snapshot' ? fetchSummerSnapshotCourseOptions() : null,
   ]);
   let enrichedResponseRows = responseRows;
 
@@ -108,8 +110,8 @@ export default async function SummerPage({
         <SummerScheduleTab rows={fallScheduleRows} term="fall" />
       )}
 
-      {tab === 'snapshot' && snapshotRows && (
-        <SnapshotManagement rows={snapshotRows} />
+      {tab === 'snapshot' && snapshotRows && snapshotCourseOptions && (
+        <SnapshotManagement rows={snapshotRows} courseOptions={snapshotCourseOptions} />
       )}
     </div>
   );

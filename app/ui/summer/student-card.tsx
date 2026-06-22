@@ -37,8 +37,11 @@ function formatCurrentSlots(sessions: ParentFormStudentData['current_sessions'])
   return sessions
     .map(session => {
       const slot = formatCurrentSlot(session.weekday, session.start_time, session.pickup_school);
-      if (!slot) return null;
-      return session.course_name ? `${slot} - ${session.course_name}` : slot;
+      const ended = session.end_date ? `(ended ${session.end_date})` : '';
+      if (slot && session.course_name) return [`${slot} - ${session.course_name}`, ended].filter(Boolean).join(' ');
+      if (slot) return [slot, ended].filter(Boolean).join(' ');
+      if (session.course_name) return [session.course_name, ended].filter(Boolean).join(' ');
+      return null;
     })
     .filter(Boolean)
     .join(', ');
