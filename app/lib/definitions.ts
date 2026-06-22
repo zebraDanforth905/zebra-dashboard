@@ -704,6 +704,7 @@ export type ParentLinkRow = {
   alternate_email_locked: boolean;
   alternate_name_locked: boolean;
   student_names: string[];
+  snapshot_student_names: string[];
   student_courses: StudentCourseEntry[];
   student_count: number;
   active_student_count: number;

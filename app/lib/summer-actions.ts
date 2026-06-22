@@ -1127,6 +1127,17 @@ export async function submitSummerForm(
     token_id,
     normalizedEntries.map(entry => Number(entry.student_id)),
   );
+  if (isStaffEntry) {
+    for (const entry of normalizedEntries) {
+      if (entry.fall_status !== 'same') continue;
+      const studentId = Number(entry.student_id);
+      const storedCurrentSessions = currentSessionSnapshotsByStudentId.get(studentId) ?? [];
+      const submittedCurrentSessions = normalizeSubmittedCurrentSessionsSnapshot(entry.current_sessions_snapshot);
+      if (storedCurrentSessions.length === 0 && submittedCurrentSessions.length === 0) {
+        return { error: 'Staff entries keeping the same September class need previous/current class details.' };
+      }
+    }
+  }
 
   // Upsert each student's request inside a transaction
   await sql.begin(async tx => {

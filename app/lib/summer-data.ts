@@ -405,6 +405,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       last_seen_active_at: Date | null;
       export_count: number;
       student_names: string[];
+      snapshot_student_names: string[];
       student_courses: StudentCourseEntry[];
       student_count: number;
       active_student_count: number;
@@ -489,6 +490,13 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         FROM snapshot_slots
         GROUP BY token_id, customer_uuid, student_id
       ),
+      snapshot_student_summary AS (
+        SELECT
+          token_id,
+          ARRAY_AGG(student_name ORDER BY student_name) AS snapshot_student_names
+        FROM snapshot_students
+        GROUP BY token_id
+      ),
       expected_students AS (
         SELECT
           token_id,
@@ -567,6 +575,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         tb.last_seen_active_at,
         tb.export_count,
         COALESCE(ss.student_names, '{}') AS student_names,
+        COALESCE(sns.snapshot_student_names, '{}') AS snapshot_student_names,
         COALESCE(ss.student_count, 0)::int AS student_count,
         COALESCE(ss.active_student_count, 0)::int AS active_student_count,
         COALESCE(scs.student_courses, '[]'::jsonb) AS student_courses,
@@ -578,6 +587,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         COALESCE(rs.latest_staff_response_count, 0) > 0 AS has_internal_response
       FROM token_base tb
       LEFT JOIN student_summary ss ON ss.token_id = tb.token_id
+      LEFT JOIN snapshot_student_summary sns ON sns.token_id = tb.token_id
       LEFT JOIN student_course_summary scs ON scs.token_id = tb.token_id
       LEFT JOIN response_summary rs ON rs.token_id = tb.token_id
       LEFT JOIN august_response_summary ars ON ars.token_id = tb.token_id

@@ -98,7 +98,7 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
       }
     }
 
-    // Snapshot deletions (optional & guarded)
+    // Strict enrolment reconciliation (optional & guarded)
     const STRICT_SNAPSHOT = true;
 
     if (STRICT_SNAPSHOT && seenRegular) {
@@ -107,61 +107,6 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
         const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));    // ints
         const keepSessions: string[] = keys.map(([, sessionId]) => sessionId);  // uuids
 
-        const canTrackLastSeenActive = await tx<{ exists: boolean }[]>`
-            SELECT EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'parent_tokens'
-                AND column_name IN ('last_seen_active_at', 'last_active_snapshot')
-                GROUP BY table_name
-                HAVING COUNT(*) = 2
-            ) AS exists;
-        `;
-
-        if (canTrackLastSeenActive[0]?.exists === true) {
-          await tx`
-            WITH keep AS (
-                SELECT *
-                FROM UNNEST(${keepStudents}::int[], ${keepSessions}::uuid[])
-                AS t(student_id, session_id)
-            ),
-            active_family_snapshot AS (
-                SELECT
-                    s.customer_id,
-                    JSONB_AGG(
-                        DISTINCT JSONB_BUILD_OBJECT(
-                            'student_id', s.id::text,
-                            'student_name', s.name,
-                            'course_name', co.name,
-                            'weekday', se.weekday,
-                            'start_time', se.start_time,
-                            'pickup_school', cp.school_name
-                        )
-                    ) AS snapshot
-                FROM keep k
-                JOIN students s ON s.id = k.student_id
-                JOIN enrolments e ON e.student_id = k.student_id AND e.session_id = k.session_id
-                JOIN sessions se ON se.id = e.session_id
-                LEFT JOIN courses co ON co.id = e.course_id
-                LEFT JOIN LATERAL (
-                    SELECT p.school_name
-                    FROM pickups p
-                    WHERE p.student_id = s.id
-                    AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-                    ORDER BY p.id
-                    LIMIT 1
-                ) cp ON true
-                GROUP BY s.customer_id
-            )
-            UPDATE parent_tokens pt
-            SET
-                last_seen_active_at = NOW(),
-                last_active_snapshot = active_family_snapshot.snapshot
-            FROM active_family_snapshot
-            WHERE pt.customer_id = active_family_snapshot.customer_id;
-          `;
-        }
-        
         // First, delete absences for enrolments that will be deleted
         await tx`
             WITH keep AS (

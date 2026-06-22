@@ -89,7 +89,9 @@ export default function LinkManagement({
     () => applyFilter(rows, filter).filter(row => matchesSearch(row, normalizedSearch)),
     [filter, normalizedSearch, rows],
   );
-  const exportRows = filtered;
+  const exportRows = filter === 'august_fall_confirmation'
+    ? filtered.map(row => ({ ...row, student_names: row.snapshot_student_names }))
+    : filtered;
   const exportLabel =
     filter === 'not_responded' ? 'Export email CSV'
     : filter === 'august_fall_confirmation' ? 'Export August Email CSV'
