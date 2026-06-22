@@ -28,7 +28,8 @@ function formatSessions(sessions: SummerSnapshotStudentRow['current_sessions']):
   return sessions
     .map(session => {
       const slot = `${session.weekday} ${formatTime(session.start_time)}`;
-      return session.course_name ? `${slot} - ${session.course_name}` : slot;
+      const courseSlot = session.course_name ? `${slot} - ${session.course_name}` : slot;
+      return session.end_date ? `${courseSlot} (ended ${session.end_date})` : courseSlot;
     })
     .join(', ');
 }

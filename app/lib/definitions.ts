@@ -524,6 +524,7 @@ export type CurrentSessionSummary = {
   start_time: string;
   pickup_school: string | null;
   course_name?: string | null;
+  end_date?: string | null;
 };
 
 export type ParentFormData = {
@@ -689,6 +690,7 @@ export type StudentCourseEntry = {
   course_name: string | null;
   weekday: string;
   start_time: string;
+  end_date?: string | null;
   pickup_school?: string | null;
 };
 

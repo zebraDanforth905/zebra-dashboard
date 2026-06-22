@@ -654,6 +654,7 @@ type StudentFormEntry = {
     start_time: string;
     pickup_school: string | null;
     course_name?: string | null;
+    end_date?: string | null;
   }[];
 };
 
@@ -663,6 +664,11 @@ type ParentTokenSnapshotEntry = TokenCurrentSessionSnapshot & { student_name: st
 
 function cleanSnapshotString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function snapshotStudentIdMatches(value: unknown, studentId: number): boolean {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue === studentId;
 }
 
 function normalizeSubmittedCurrentSessionsSnapshot(
@@ -676,11 +682,13 @@ function normalizeSubmittedCurrentSessionsSnapshot(
     if (!weekday || !/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) return [];
     const pickupSchool = cleanSnapshotString(session.pickup_school);
     const courseName = cleanSnapshotString(session.course_name);
+    const endDate = cleanSnapshotString(session.end_date);
     return [{
       weekday,
       start_time: startTime,
       pickup_school: pickupSchool || null,
       ...(courseName ? { course_name: courseName } : {}),
+      ...(endDate ? { end_date: endDate } : {}),
     }];
   });
 }
@@ -727,6 +735,7 @@ function normalizeParentTokenSnapshot(value: unknown): ParentTokenSnapshotEntry[
       course_name: cleanSnapshotString(session.course_name) || null,
       weekday: cleanSnapshotString(session.weekday),
       start_time: cleanSnapshotString(session.start_time),
+      end_date: cleanSnapshotString(session.end_date) || null,
       pickup_school: cleanSnapshotString(session.pickup_school) || null,
     }];
   });
@@ -735,6 +744,7 @@ function normalizeParentTokenSnapshot(value: unknown): ParentTokenSnapshotEntry[
 async function fetchStudentCurrentSnapshotEntries(
   tokenId: string,
   studentId: number,
+  studentIdText: string,
   studentName: string,
 ): Promise<ParentTokenSnapshotEntry[]> {
   const dbRows = await sql<CurrentSessionSnapshot[]>`
@@ -742,7 +752,8 @@ async function fetchStudentCurrentSnapshotEntries(
       se.weekday,
       se.start_time,
       NULL::text AS pickup_school,
-      co.name AS course_name
+      co.name AS course_name,
+      e.end_date::text AS end_date
     FROM enrolments e
     JOIN sessions se ON se.id = e.session_id
     LEFT JOIN courses co ON co.id = e.course_id
@@ -751,11 +762,12 @@ async function fetchStudentCurrentSnapshotEntries(
   `;
   if (dbRows.length > 0) {
     return dbRows.map(row => ({
-      student_id: String(studentId),
+      student_id: studentIdText,
       student_name: studentName,
       course_name: cleanSnapshotString(row.course_name) || null,
       weekday: cleanSnapshotString(row.weekday),
       start_time: cleanSnapshotString(row.start_time),
+      end_date: cleanSnapshotString(row.end_date) || null,
       pickup_school: cleanSnapshotString(row.pickup_school) || null,
     }));
   }
@@ -776,18 +788,19 @@ async function fetchStudentCurrentSnapshotEntries(
   );
   if (requestSessions.length > 0) {
     return requestSessions.map(session => ({
-      student_id: String(studentId),
+      student_id: studentIdText,
       student_name: studentName,
       ...session,
     }));
   }
 
   return [{
-    student_id: String(studentId),
+    student_id: studentIdText,
     student_name: studentName,
     course_name: null,
     weekday: '',
     start_time: '',
+    end_date: null,
     pickup_school: null,
   }];
 }
@@ -803,10 +816,12 @@ export async function addStudentToParentSnapshot(
   }
 
   const rows = await sql<{
+    student_id: string;
     student_name: string;
     last_active_snapshot: unknown;
   }[]>`
     SELECT
+      s.id::text AS student_id,
       s.name AS student_name,
       COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
     FROM parent_tokens pt
@@ -821,8 +836,8 @@ export async function addStudentToParentSnapshot(
 
   const nextEntries = [
     ...normalizeParentTokenSnapshot(rows[0].last_active_snapshot)
-      .filter(entry => entry.student_id !== String(numericStudentId)),
-    ...(await fetchStudentCurrentSnapshotEntries(tokenId, numericStudentId, rows[0].student_name)),
+      .filter(entry => !snapshotStudentIdMatches(entry.student_id, numericStudentId)),
+    ...(await fetchStudentCurrentSnapshotEntries(tokenId, numericStudentId, rows[0].student_id, rows[0].student_name)),
   ];
 
   await sql`
@@ -860,7 +875,7 @@ export async function removeStudentFromParentSnapshot(
   }
 
   const nextEntries = normalizeParentTokenSnapshot(rows[0].last_active_snapshot)
-    .filter(entry => entry.student_id !== String(numericStudentId));
+    .filter(entry => !snapshotStudentIdMatches(entry.student_id, numericStudentId));
 
   await sql`
     UPDATE parent_tokens

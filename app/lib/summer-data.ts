@@ -44,11 +44,13 @@ function normalizeTokenStudentSnapshots(value: unknown): Map<string, CurrentSess
 
     const pickupSchool = cleanSnapshotString(session.pickup_school);
     const courseName = cleanSnapshotString(session.course_name);
+    const endDate = cleanSnapshotString(session.end_date);
     const currentSession: CurrentSessionSummary = {
       weekday,
       start_time: startTime,
       pickup_school: pickupSchool || null,
       ...(courseName ? { course_name: courseName } : {}),
+      ...(endDate ? { end_date: endDate } : {}),
     };
     map.set(studentId, [...(map.get(studentId) ?? []), currentSession]);
   }
@@ -207,7 +209,8 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
               'weekday', slots.weekday,
               'start_time', slots.start_time,
               'pickup_school', slots.pickup_school,
-              'course_name', slots.course_name
+              'course_name', slots.course_name,
+              'end_date', slots.end_date
             )
             ORDER BY slots.weekday_order, slots.start_time
           ) AS current_sessions,
@@ -219,6 +222,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
             se.weekday,
             se.start_time,
             co.name AS course_name,
+            e.end_date::text AS end_date,
             NULL::text AS pickup_school,
             CASE LOWER(TRIM(se.weekday))
               WHEN 'monday' THEN 1
@@ -460,6 +464,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           NULLIF(snapshot.course_name, '') AS course_name,
           NULLIF(snapshot.weekday, '') AS weekday,
           NULLIF(snapshot.start_time, '') AS start_time,
+          NULLIF(snapshot.end_date, '') AS end_date,
           NULLIF(snapshot.pickup_school, '') AS pickup_school,
           FALSE AS is_active
         FROM token_base tb
@@ -469,6 +474,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           course_name TEXT,
           weekday TEXT,
           start_time TEXT,
+          end_date TEXT,
           pickup_school TEXT
         )
         LEFT JOIN students s
@@ -526,6 +532,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
               'course_name', course_name,
               'weekday', weekday,
               'start_time', start_time,
+              'end_date', end_date,
               'pickup_school', pickup_school
             )
           ) FILTER (WHERE student_id IS NOT NULL) AS student_courses
@@ -655,7 +662,8 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
               'weekday', slots.weekday,
               'start_time', slots.start_time,
               'pickup_school', slots.pickup_school,
-              'course_name', slots.course_name
+              'course_name', slots.course_name,
+              'end_date', slots.end_date
             )
             ORDER BY slots.weekday_order, slots.start_time, slots.course_name
           ) FILTER (WHERE slots.weekday IS NOT NULL) AS current_sessions
@@ -664,6 +672,7 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
             se.weekday,
             se.start_time,
             co.name AS course_name,
+            e.end_date::text AS end_date,
             NULL::text AS pickup_school,
             CASE LOWER(TRIM(se.weekday))
               WHEN 'monday' THEN 1
