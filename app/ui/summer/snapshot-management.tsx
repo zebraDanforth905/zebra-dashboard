@@ -1,7 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { Course, SummerSnapshotFamilyRow, SummerSnapshotStudentRow } from '@/app/lib/definitions';
 import {
   addStudentToParentSnapshot,
@@ -70,7 +69,7 @@ export default function SnapshotManagement({
   rows: SummerSnapshotFamilyRow[];
   courseOptions: Course[];
 }) {
-  const router = useRouter();
+  const [snapshotRows, setSnapshotRows] = useState(rows);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SnapshotFilter>('snapshot');
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -78,23 +77,64 @@ export default function SnapshotManagement({
   const [addSelection, setAddSelection] = useState<AddSnapshotSelection | null>(null);
   const [isPending, startTransition] = useTransition();
   const normalizedSearch = search.trim().toLowerCase();
+
+  useEffect(() => {
+    setSnapshotRows(rows);
+  }, [rows]);
+
   const filtered = useMemo(
-    () => rows
+    () => snapshotRows
       .map(row => ({
         ...row,
         students: row.students.filter(student => studentMatchesFilter(student, filter)),
       }))
       .filter(row => row.students.length > 0 && familyMatchesSearch(row, normalizedSearch)),
-    [filter, normalizedSearch, rows],
+    [filter, normalizedSearch, snapshotRows],
   );
-  const snapshotStudents = rows.reduce(
+  const snapshotStudents = snapshotRows.reduce(
     (count, row) => count + row.students.filter(student => student.in_snapshot).length,
     0,
   );
-  const visibleStudents = rows.reduce(
+  const visibleStudents = snapshotRows.reduce(
     (count, row) => count + row.students.filter(student => student.is_active || student.in_snapshot).length,
     0,
   );
+
+  function setStudentSnapshotState(
+    tokenId: string,
+    studentId: string,
+    updater: (student: SummerSnapshotStudentRow) => SummerSnapshotStudentRow,
+  ) {
+    setSnapshotRows(current => current.map(row => (
+      row.token_id !== tokenId
+        ? row
+        : {
+            ...row,
+            last_seen_active_at: row.last_seen_active_at ?? new Date(),
+            students: row.students.map(student => (
+              student.student_id === studentId ? updater(student) : student
+            )),
+          }
+    )));
+  }
+
+  function optimisticSnapshotSessions(student: SummerSnapshotStudentRow, courseName: string, endDate: string) {
+    if (courseName || endDate) {
+      return [{
+        weekday: '',
+        start_time: '',
+        pickup_school: null,
+        ...(courseName ? { course_name: courseName } : {}),
+        ...(endDate ? { end_date: endDate } : {}),
+      }];
+    }
+    if (student.current_sessions.length > 0) return student.current_sessions;
+    return [{
+      weekday: '',
+      start_time: '',
+      pickup_school: null,
+    }];
+  }
 
   function openAddModal(tokenId: string, student: SummerSnapshotStudentRow) {
     const fallbackSession = student.current_sessions[0] ?? student.snapshot_sessions[0];
@@ -119,9 +159,13 @@ export default function SnapshotManagement({
           course_name: courseName || undefined,
           end_date: endDate || undefined,
         });
+        setStudentSnapshotState(tokenId, student.student_id, currentStudent => ({
+          ...currentStudent,
+          in_snapshot: true,
+          snapshot_sessions: optimisticSnapshotSessions(currentStudent, courseName, endDate),
+        }));
         setMessage(`${student.student_name} added to the snapshot.`);
         setAddSelection(null);
-        router.refresh();
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'Snapshot update failed.');
       } finally {
@@ -137,8 +181,12 @@ export default function SnapshotManagement({
     startTransition(async () => {
       try {
         await removeStudentFromParentSnapshot(tokenId, student.student_id);
+        setStudentSnapshotState(tokenId, student.student_id, currentStudent => ({
+          ...currentStudent,
+          in_snapshot: false,
+          snapshot_sessions: [],
+        }));
         setMessage(`${student.student_name} removed from the snapshot.`);
-        router.refresh();
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'Snapshot update failed.');
       } finally {
@@ -177,7 +225,7 @@ export default function SnapshotManagement({
           </button>
         )}
         <div className="ml-auto flex flex-wrap gap-4 text-sm text-slate-600">
-          <span><span className="font-semibold text-slate-800">{rows.length}</span> families</span>
+          <span><span className="font-semibold text-slate-800">{snapshotRows.length}</span> families</span>
           <span><span className="font-semibold text-sky-700">{visibleStudents}</span> visible students</span>
           <span><span className="font-semibold text-emerald-700">{snapshotStudents}</span> in snapshot</span>
         </div>
