@@ -389,10 +389,14 @@ export default function CampSessionDetail({
   seatAssignmentsDate
 }: {
   session: CampSessionWithEnrolments;
-  seatAssignments?: Map<number, string>;
+  seatAssignments?: Map<number, string[]>;
   seatAssignmentsDate?: Date;
 }) {
   const seatAssignmentsDateValue = seatAssignmentsDate; // may be undefined
+
+  const seatAssignmentsDateKey = seatAssignmentsDateValue
+    ? `${seatAssignmentsDateValue.getFullYear()}-${String(seatAssignmentsDateValue.getMonth() + 1).padStart(2, '0')}-${String(seatAssignmentsDateValue.getDate()).padStart(2, '0')}`
+    : undefined;
   // Room configurations
   const ROOM_1_CONFIG = {
     name: 'Back Room',
@@ -439,17 +443,17 @@ export default function CampSessionDetail({
         // Only create seats that should be visible for THIS room
         if (!roomConfig.visibleSeats.has(relativeSeatNumber)) continue;
         
-        const assignedId = seatAssignments?.get(absoluteSeatNumber) ?? null;
+        const assignedIds = seatAssignments?.get(absoluteSeatNumber) ?? [];
 
-        const amEnrolment = assignedId
-          ? session.enrolments.find(e => e.id === assignedId && e.camp_type === 'AM')
-          : session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'AM');
-        const pmEnrolment = assignedId
-          ? session.enrolments.find(e => e.id === assignedId && e.camp_type === 'PM')
-          : session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'PM');
-        const fdEnrolment = assignedId
-          ? session.enrolments.find(e => e.id === assignedId && e.camp_type === 'FD')
-          : session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'FD');
+        const amEnrolment = (assignedIds.length > 0
+          ? session.enrolments.find(e => assignedIds.includes(e.id) && e.camp_type === 'AM')
+          : null) ?? session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'AM');
+        const pmEnrolment = (assignedIds.length > 0
+          ? session.enrolments.find(e => assignedIds.includes(e.id) && e.camp_type === 'PM')
+          : null) ?? session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'PM');
+        const fdEnrolment = (assignedIds.length > 0
+          ? session.enrolments.find(e => assignedIds.includes(e.id) && e.camp_type === 'FD')
+          : null) ?? session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'FD');
         
         seats.push({
           id: `seat-${absoluteSeatNumber}`,
@@ -608,14 +612,23 @@ export default function CampSessionDetail({
     setSeats(newSeats);
 
     // Update database for the moved enrolment
-    await updateCampSeatAssignment(activeId, toSeat.number, seatAssignmentsDateValue);
+    const movedResult = await updateCampSeatAssignment(activeId, toSeat.number, seatAssignmentsDateKey);
+    if (!movedResult.ok) {
+      alert(movedResult.error || 'Failed to save seat assignment');
+    }
     
     // Update database for displaced enrolment if there was one
     if (displacedEnrolmentId && fromSeat) {
-      await updateCampSeatAssignment(displacedEnrolmentId, fromSeat.number, seatAssignmentsDateValue);
+      const displacedResult = await updateCampSeatAssignment(displacedEnrolmentId, fromSeat.number, seatAssignmentsDateKey);
+      if (!displacedResult.ok) {
+        alert(displacedResult.error || 'Failed to save displaced camper seat assignment');
+      }
     } else if (displacedEnrolmentId && !fromSeat) {
       // Displaced from seat but moving student was unassigned, so clear the displaced one
-      await updateCampSeatAssignment(displacedEnrolmentId, null, seatAssignmentsDateValue);
+      const clearResult = await updateCampSeatAssignment(displacedEnrolmentId, null, seatAssignmentsDateKey);
+      if (!clearResult.ok) {
+        alert(clearResult.error || 'Failed to clear displaced camper seat assignment');
+      }
     }
   };
 
@@ -704,7 +717,10 @@ export default function CampSessionDetail({
     }
 
     // Update database to unassign
-    await updateCampSeatAssignment(enrolmentId, null, seatAssignmentsDateValue);
+    const result = await updateCampSeatAssignment(enrolmentId, null, seatAssignmentsDateKey);
+    if (!result.ok) {
+      alert(result.error || 'Failed to unassign seat');
+    }
   };
 
   return (

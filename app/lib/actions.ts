@@ -1786,24 +1786,59 @@ export async function updatePassword(formData: FormData) {
 }
 
 // Camp actions
+function toLocalDateKey(value: Date | string): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    throw new Error('Invalid seat assignment date string');
+  }
+
+  if (Number.isNaN(value.getTime())) {
+    throw new Error('Invalid seat assignment date');
+  }
+
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export async function updateCampSeatAssignment(
   enrolmentId: string,
   seatNumber: number | null,
-  date?: Date
+  date?: Date | string
 ) {
   try {
     if (date) {
+      const dateKey = toLocalDateKey(date);
+
       if (seatNumber === null) {
         await sql`
           DELETE FROM seat_assignments
-          WHERE enrolment_id = ${enrolmentId} AND date = ${date};
+          WHERE enrolment_id = ${enrolmentId};
         `;
       } else {
         await sql`
+          WITH updated AS (
+            UPDATE seat_assignments
+            SET date = ${dateKey}::date,
+                seat = ${seatNumber}
+            WHERE enrolment_id = ${enrolmentId}
+            RETURNING enrolment_id
+          )
           INSERT INTO seat_assignments (enrolment_id, date, seat)
-          VALUES (${enrolmentId}, ${date}, ${seatNumber})
-          ON CONFLICT (enrolment_id, date) DO UPDATE
-          SET seat = EXCLUDED.seat;
+          SELECT ${enrolmentId}, ${dateKey}::date, ${seatNumber}
+          WHERE NOT EXISTS (SELECT 1 FROM updated);
         `;
       }
     } else {
@@ -1818,7 +1853,7 @@ export async function updateCampSeatAssignment(
     return { ok: true };
   } catch (error) {
     console.error('Error updating seat assignment:', error);
-    return { ok: false, error: 'Failed to update seat assignment' };
+    return { ok: false, error: `Failed to update seat assignment: ${String((error as any)?.message ?? error)}` };
   }
 }
 

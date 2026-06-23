@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import Image from "next/image"
 
 import { useActionState } from 'react';
-import { authenticate } from '@/app/lib/actions';
+import { authenticate } from '@/app/login/actions';
 import { useSearchParams } from 'next/navigation';
 
 
