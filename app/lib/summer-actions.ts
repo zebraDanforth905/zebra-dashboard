@@ -1,7 +1,7 @@
 'use server';
 
 import postgres from 'postgres';
-import { revalidateTag } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { randomBytes } from 'crypto';
 import { auth } from '@/auth';
@@ -611,6 +611,43 @@ export async function updateSummerResponseSource(
     submitted_by: rows[0].submitted_by,
     submitted_by_name: rows[0].submitted_by_name,
   };
+}
+
+export async function deleteSummerRecurringInvoice(recurringInvoiceId: string): Promise<void> {
+  await requireAdmin();
+  await sql`
+    DELETE FROM recurring_invoices
+    WHERE id = ${recurringInvoiceId}::uuid
+  `;
+  revalidateTag('summer-responses', 'max');
+  revalidatePath('/dashboard/billing');
+}
+
+export async function pauseSummerRecurringInvoiceUntilSeptember(
+  recurringInvoiceId: string,
+): Promise<{ next_date: Date }> {
+  await requireAdmin();
+
+  const now = new Date();
+  const year = (now.getUTCMonth() > 8 || (now.getUTCMonth() === 8 && now.getUTCDate() > 1))
+    ? now.getUTCFullYear() + 1
+    : now.getUTCFullYear();
+  const pauseDate = `${year}-09-01`;
+
+  const rows = await sql<{ next_date: Date }[]>`
+    UPDATE recurring_invoices
+    SET next_date = ${pauseDate}::date
+    WHERE id = ${recurringInvoiceId}::uuid
+    RETURNING next_date
+  `;
+
+  if (rows.length === 0) {
+    throw new Error('Recurring invoice not found.');
+  }
+
+  revalidateTag('summer-responses', 'max');
+  revalidatePath('/dashboard/billing');
+  return { next_date: rows[0].next_date };
 }
 
 // ── Parent form submission ────────────────────────────────────────────────────

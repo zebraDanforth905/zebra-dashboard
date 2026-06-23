@@ -571,6 +571,14 @@ export type SessionChoiceSummary = {
   start_date: string | null;
 };
 
+export type SummerRecurringInvoiceSummary = {
+  id: string;
+  amount: number;
+  every: number;
+  next_date: Date | string;
+  description: string | null;
+};
+
 export type SummerStats = {
   total_families: number;
   total_students: number;
@@ -664,6 +672,7 @@ export type SummerResponseRow = {
   token_export_count: number;
   added_to_portal_at: Date | null;
   added_to_portal_by: string | null;
+  recurring_invoices: SummerRecurringInvoiceSummary[];
   previous_submission_count: number;
   previous_submitted_at: Date | null;
   submission_history: SummerResponseHistoryItem[];

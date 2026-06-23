@@ -1139,8 +1139,8 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
             // Look for customer with matching email (primary or alternate)
             const customerMatch = await sql`
               SELECT id FROM customers
-              WHERE LOWER(email) = LOWER(${paymentData.email.trim()})
-                 OR LOWER(alternate_email) = LOWER(${paymentData.email.trim()})
+              WHERE LOWER(TRIM(COALESCE(email, ''))) = LOWER(TRIM(${paymentData.email.trim()}))
+                 OR LOWER(TRIM(COALESCE(alternate_email, ''))) = LOWER(TRIM(${paymentData.email.trim()}))
               LIMIT 1;
             `;
             
@@ -1459,11 +1459,12 @@ export async function uploadSettledBatchCSV(csvContent: string): Promise<{ match
 
       if (isNaN(amount) || isNaN(transactionDate.getTime())) continue;
 
-      // Try to match customer by email (case-insensitive)
+      // Try to match customer by primary or alternate email (case-insensitive)
       const customers = await sql<{ id: string; name: string; email: string }[]>`
         SELECT id, name, email
         FROM customers 
-        WHERE LOWER(email) = LOWER(${customerEmail})
+        WHERE LOWER(TRIM(COALESCE(email, ''))) = LOWER(TRIM(${customerEmail}))
+           OR LOWER(TRIM(COALESCE(alternate_email, ''))) = LOWER(TRIM(${customerEmail}))
         LIMIT 1;
       `;
 

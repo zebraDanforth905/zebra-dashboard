@@ -8,11 +8,13 @@ import {
 } from '@/app/lib/definitions';
 import {
   approveAllEnrolling,
+  deleteSummerRecurringInvoice,
   deleteSummerResponse,
   markAllNoChangeComplete,
   markAddedToPortal,
   clearAddedToPortal,
   markNeedsFollowup,
+  pauseSummerRecurringInvoiceUntilSeptember,
   clearFollowup,
   updateSummerResponseSource,
 } from '@/app/lib/summer-actions';
@@ -22,7 +24,7 @@ import CustomerNotesModal from '@/app/ui/billing/customer-notes-modal';
 
 type ResponsePatch = Partial<Pick<
   SummerResponseRow,
-  'status' | 'added_to_portal_at' | 'added_to_portal_by' | 'submitted_by' | 'submitted_by_name'
+  'status' | 'added_to_portal_at' | 'added_to_portal_by' | 'submitted_by' | 'submitted_by_name' | 'recurring_invoices'
 >>;
 
 function formatTime(t: string | null): string {
@@ -627,6 +629,75 @@ function AddedToPortalCell({
   );
 }
 
+function formatRecurringCurrency(cents: number): string {
+  return (Number(cents) / 100).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+  });
+}
+
+function RecurringInvoicesCell({
+  invoices,
+  onChanged,
+}: {
+  invoices: SummerResponseRow['recurring_invoices'];
+  onChanged: (nextInvoices: SummerResponseRow['recurring_invoices']) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+
+  if (!invoices || invoices.length === 0) {
+    return <span className="text-slate-400">—</span>;
+  }
+
+  return (
+    <div className="space-y-2 min-w-[220px]">
+      {invoices.map((invoice) => (
+        <div key={invoice.id} className="rounded-md border border-slate-200 bg-slate-50 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-slate-700">{formatRecurringCurrency(invoice.amount)}</span>
+            <span className="text-[11px] text-slate-500">Every {invoice.every} mo</span>
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            Next: {formatDate(invoice.next_date)}
+          </div>
+          {invoice.description && (
+            <div className="mt-0.5 line-clamp-2 text-[11px] text-slate-500">{invoice.description}</div>
+          )}
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            <button
+              disabled={isPending}
+              onClick={() => startTransition(async () => {
+                const result = await pauseSummerRecurringInvoiceUntilSeptember(invoice.id);
+                onChanged(invoices.map((currentInvoice) => (
+                  currentInvoice.id === invoice.id
+                    ? { ...currentInvoice, next_date: result.next_date }
+                    : currentInvoice
+                )));
+              })}
+              className="text-xs px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 transition disabled:opacity-50"
+              title="Pause this recurring invoice until September 1st"
+            >
+              {isPending ? '...' : 'Pause to Sep 1'}
+            </button>
+            <button
+              disabled={isPending}
+              onClick={() => startTransition(async () => {
+                await deleteSummerRecurringInvoice(invoice.id);
+                onChanged(invoices.filter((currentInvoice) => currentInvoice.id !== invoice.id));
+              })}
+              className="text-xs px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition disabled:opacity-50"
+              title="Delete this recurring invoice"
+            >
+              {isPending ? '...' : 'Delete'}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StudentCell({ row, currentUserName }: { row: SummerResponseRow; currentUserName: string }) {
   const [showModal, setShowModal] = useState(false);
 
@@ -711,7 +782,7 @@ function ResponseHistoryRows({ row, currentUserName }: { row: SummerResponseRow;
   if (row.submission_history.length === 0) return null;
   return (
     <tr className="bg-indigo-50/40">
-      <td colSpan={9} className="px-3 py-3">
+      <td colSpan={10} className="px-3 py-3">
         <div className="rounded-lg border border-indigo-100 bg-white">
           <div className="border-b border-indigo-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-700">
             Previous Submissions
@@ -1226,6 +1297,7 @@ export default function ResponsesTab({
                 <th className="px-3 py-2">Family</th>
                 <th className="px-3 py-2">Summer Plan</th>
                 <th className="px-3 py-2">Fall Plan</th>
+                <th className="px-3 py-2">Recurring Invoices</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Submitted</th>
                 <th className="px-3 py-2">Source</th>
@@ -1261,6 +1333,12 @@ export default function ResponsesTab({
                   </td>
                   <td className="px-3 py-2 align-top min-w-[240px]">
                     <FallPlanCell row={row} />
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <RecurringInvoicesCell
+                      invoices={row.recurring_invoices}
+                      onChanged={(recurring_invoices) => patchResponse(row.request_id, { recurring_invoices })}
+                    />
                   </td>
                   <td className="px-3 py-2 align-top">
                     <StatusBadge status={row.status} />
@@ -1320,7 +1398,9 @@ export default function ResponsesTab({
                     </div>
                   </td>
                 </tr>
-                {expandedHistoryIds.has(row.request_id) && <ResponseHistoryRows row={row} currentUserName={currentUserName} />}
+                {expandedHistoryIds.has(row.request_id) && (
+                  <ResponseHistoryRows row={row} currentUserName={currentUserName} />
+                )}
                 </Fragment>
               ))}
             </tbody>
