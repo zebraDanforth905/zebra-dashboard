@@ -1856,7 +1856,8 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
       student_id: string;
       student_name: string;
       course: string;
-      session: string;
+      session: 'FD' | 'PM' | 'AM';
+      extended_care: boolean;
       other_fields: { [key: string]: string } | null;
     }>>`
       SELECT 
@@ -1864,6 +1865,7 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
         s.name as student_name,
         c.name as course,
         cs.camp_type as session,
+        cs.extended_care,
         JSONB_STRIP_NULLS(
           JSONB_BUILD_OBJECT(
             'Scratch Login', scr.username,
@@ -1901,6 +1903,10 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
         }
       }
 
+      const sessionLabel = enrolment.extended_care && (enrolment.session === 'FD' || enrolment.session === 'PM')
+        ? `${enrolment.session}-EX`
+        : enrolment.session;
+
       await sql`
         INSERT INTO slip_info (
           student_name,
@@ -1915,7 +1921,7 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
           ${userId},
           ${Number(enrolment.student_id) + '@zebrarobotics.com'},
           '',
-          ${enrolment.course + " " + enrolment.session},
+          ${`${enrolment.course} ${sessionLabel}`},
           ${other_fields as any}
         );
       `;
