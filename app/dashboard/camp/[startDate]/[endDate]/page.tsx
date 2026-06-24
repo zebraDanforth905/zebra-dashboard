@@ -1,8 +1,9 @@
-import { fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
+import { fetchCampLmsChecklist, fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import CampMonthlyReport from '@/app/ui/camp/camp-monthly-report';
+import CampLmsChecklist from '@/app/ui/camp/camp-lms-checklist';
 import { connection } from 'next/server';
 
 type DayEnrolments = {
@@ -79,10 +80,6 @@ const formatDate = (date: Date) => {
   return new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 };
 
-const getUniqueCampTypes = (enrolments: DayEnrolments['enrolments']) => {
-  return [...new Set(enrolments.map(e => e.camp_type))];
-};
-
 const countByType = (enrolments: DayEnrolments['enrolments'], type: 'FD' | 'AM' | 'PM') => {
   return enrolments.filter(e => e.camp_type === type).length;
 };
@@ -107,7 +104,10 @@ export default async function CampSessionPage({
   const weekEnd = new Date(parsedWeekEnd);
   weekEnd.setHours(23, 59, 59, 999);
 
-  const sessions = await fetchUpcomingCampSessionsWithEnrolments();
+  const [sessions, lmsChecklist] = await Promise.all([
+    fetchUpcomingCampSessionsWithEnrolments(),
+    fetchCampLmsChecklist(startDate, endDate),
+  ]);
 
   const report = {
     id: startDate,
@@ -282,6 +282,12 @@ export default async function CampSessionPage({
           </div>
         )}
       </div>
+
+      <CampLmsChecklist
+        startDate={startDate}
+        endDate={endDate}
+        checklist={lmsChecklist}
+      />
     </div>
   );
 }
