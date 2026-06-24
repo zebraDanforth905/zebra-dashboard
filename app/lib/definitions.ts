@@ -176,6 +176,26 @@ export type Absence = {
   date: Date;
 }
 
+export type BillingCalendarWeekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+
+export type BillingCalendarDateStatus = 'closed' | 'moved-in' | 'moved-out' | 'extra';
+
+export type BillingCalendarCell = {
+  classes: string;
+  notes: string[];
+  dateStatuses?: Record<string, BillingCalendarDateStatus>;
+};
+
+export type BillingCalendarMonth = {
+  id: string;
+  year: number;
+  month: string;
+  convergeMessage?: string;
+  source?: 'copied' | 'generated';
+  summaryNotes?: string[];
+  days: Record<BillingCalendarWeekday, BillingCalendarCell>;
+};
+
 
 export type StudentNote = {
   id: string;
