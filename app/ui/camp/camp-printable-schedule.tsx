@@ -301,6 +301,27 @@ function PacketHeader({
   );
 }
 
+function EditablePrintField({
+  label,
+  value,
+  className = '',
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div
+      aria-label={label}
+      className={`min-h-5 whitespace-pre-wrap outline-none focus:bg-yellow-50 ${className}`}
+      contentEditable
+      suppressContentEditableWarning
+    >
+      {value}
+    </div>
+  );
+}
+
 function StudentList({
   students,
   schedule,
@@ -333,29 +354,52 @@ function StudentList({
           {students.map((student) => (
             <tr key={student.key} className="camp-print-student-row align-top">
               <td className="border border-slate-400 p-1.5 text-[9px] font-bold leading-tight">
-                {student.studentName}
+                <EditablePrintField
+                  label={`${student.studentName} student name`}
+                  value={student.studentName}
+                />
               </td>
               <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">
-                <div>{student.parentName}</div>
-                <div>{student.parentPhone}</div>
+                <EditablePrintField
+                  label={`${student.studentName} parent`}
+                  value={[student.parentName, student.parentPhone].filter(Boolean).join('\n')}
+                />
               </td>
               <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8.5px] font-bold leading-tight">
-                {student.sessionSummary}
+                <EditablePrintField
+                  label={`${student.studentName} camp type`}
+                  value={student.sessionSummary}
+                />
               </td>
               <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8.5px] leading-tight">
-                {student.campSummary}
+                <EditablePrintField
+                  label={`${student.studentName} camp`}
+                  value={student.campSummary}
+                />
               </td>
               <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">
-                {student.daysSummary}
+                <EditablePrintField
+                  label={`${student.studentName} days`}
+                  value={student.daysSummary}
+                />
               </td>
               <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8.5px] font-bold leading-tight">
-                {student.roomDefault}
+                <EditablePrintField
+                  label={`${student.studentName} room`}
+                  value={student.roomDefault}
+                />
               </td>
               <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8px] leading-tight">
-                {student.medicalAlert}
+                <EditablePrintField
+                  label={`${student.studentName} allergy or medical`}
+                  value={student.medicalAlert}
+                />
               </td>
               <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8px] leading-tight">
-                {student.specialInstruction}
+                <EditablePrintField
+                  label={`${student.studentName} notes`}
+                  value={student.specialInstruction}
+                />
               </td>
             </tr>
           ))}
