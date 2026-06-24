@@ -1,4 +1,5 @@
 // app/lib/normalize.ts
+import { isSummerDateRange } from './tdsb-calendar';
 
 function pad(n: number) { return n.toString().padStart(2, "0"); }
 
@@ -59,6 +60,9 @@ export function normalizeEnrolmentRows(rows: RawEnrolmentRow[]) {
     const trial  = r.trial_date || "";
     const makeup = r.make_up_date || "";
 
+    const effectiveStartDate = trial || makeup || start_date;
+    const effectiveEndDate = trial || makeup || end_date;
+
     return [{
         day: day,
         start_date: start_date,
@@ -70,6 +74,7 @@ export function normalizeEnrolmentRows(rows: RawEnrolmentRow[]) {
         course_code: courseCode ? String(courseCode) : "",
         trial_date: trial ? String(trial) : "",
         makeup_date: makeup ? String(makeup) : "",
+        is_summer: isSummerDateRange(effectiveStartDate, effectiveEndDate),
     }];
   });
 }
@@ -89,19 +94,21 @@ export type NormalizedAbsence = {
   start_time: string;       // sessions.start_time
   end_time: string;         // sessions.end_time
   date: string;             // 'YYYY-MM-DD'
+  is_absent: boolean;
 };
 
 export function normalizeAbsencesFromAttendance(results: RawAttendance[]): NormalizedAbsence[] {
   console.log("normalizing attendance")
   
   return results
-    .filter(r => r.attendance_value === "Absent")
+    .filter(r => r.date && r.student?.user_id && r.batch?.day && r.batch?.start_time && r.batch?.end_time)
     .map(r => ({
       student_id: r.student.user_id,
       weekday: r.batch.day,
       start_time: r.batch.start_time,
       end_time: r.batch.end_time,
       date: r.date,
+      is_absent: r.attendance_value === "Absent",
     }));
 }
 

@@ -60,6 +60,10 @@ function getCurrentSessions(student: ParentFormData['students'][number]) {
   }];
 }
 
+function hasCurrentSessions(student: ParentFormData['students'][number]): boolean {
+  return getCurrentSessions(student).length > 0;
+}
+
 function currentPickupDefaults(student: ParentFormData['students'][number]): Pick<StudentCardState, 'pickup_requested' | 'pickup_school' | 'pickup_school_other'> {
   const pickupSession = getCurrentSessions(student).find(session => isPickupSession(session.weekday, session.start_time));
   if (!pickupSession) {
@@ -109,10 +113,13 @@ function isStudentComplete(
     sel.manual_current_start_time,
     sel.manual_current_pickup_school,
   ].some(value => value.trim());
+  const manualCurrentComplete = Boolean(
+    sel.manual_current_course_name.trim() &&
+    sel.manual_current_weekday &&
+    sel.manual_current_start_time,
+  );
 
-  if (staffEntry && manualCurrentFields) {
-    if (!sel.manual_current_course_name.trim() || !sel.manual_current_weekday || !sel.manual_current_start_time) return false;
-  }
+  if (staffEntry && manualCurrentFields && !manualCurrentComplete) return false;
   if (!sel.summer_status) return false;
   if (sel.summer_status === 'enrolling' && sel.session_ids.length === 0) return false;
   if (sel.summer_status === 'other' && !sel.custom_notes.trim()) return false;
@@ -122,12 +129,86 @@ function isStudentComplete(
   }
   if (!sel.fall_status) return false;
   if (sel.fall_status === 'change' && sel.fall_session_ids.length === 0) return false;
+  if (staffEntry && sel.fall_status === 'same' && !hasCurrentSessions(student) && !manualCurrentComplete) return false;
   return true;
 }
 
-function initState(student: ParentFormData['students'][number]): StudentCardState {
+function currentSessionsSnapshot(
+  student: ParentFormData['students'][number],
+  sel: StudentCardState,
+  staffEntry: boolean,
+): ParentFormData['students'][number]['current_sessions'] {
+  if (
+    staffEntry &&
+    sel.manual_current_course_name.trim() &&
+    sel.manual_current_weekday &&
+    sel.manual_current_start_time
+  ) {
+    return [{
+      weekday: sel.manual_current_weekday,
+      start_time: sel.manual_current_start_time,
+      pickup_school: sel.manual_current_pickup_school.trim() || null,
+      course_name: sel.manual_current_course_name.trim(),
+    }];
+  }
+  return getCurrentSessions(student);
+}
+
+function buildStudentEntry(
+  student: ParentFormData['students'][number],
+  sel: StudentCardState,
+  fallSessions: ParentFormData['fall_sessions'],
+  staffEntry: boolean,
+): StudentFormEntry {
+  const pickupVisible = isPickupVisible(student, sel, fallSessions);
+  const pickupRequested = pickupVisible && sel.pickup_requested;
+  const enrolling = sel.summer_status === 'enrolling';
+  const keepingSameFall = sel.fall_status === 'same';
+  const changingFall = sel.fall_status === 'change';
+  return {
+    student_id: student.student_id,
+    summer_status: (sel.summer_status ?? 'other') as StudentFormEntry['summer_status'],
+    session_ids: enrolling ? sel.session_ids : [],
+    session_start_dates: enrolling ? sel.session_start_dates : {},
+    waitlist_session_ids: enrolling ? sel.waitlist_session_ids : [],
+    custom_notes: sel.summer_status === 'other' ? sel.custom_notes || undefined : undefined,
+    pickup_requested: pickupVisible ? sel.pickup_requested : undefined,
+    pickup_school: pickupRequested ? (sel.pickup_school ?? undefined) : undefined,
+    pickup_school_other: pickupRequested && sel.pickup_school === 'other' ? sel.pickup_school_other || undefined : undefined,
+    fall_status: sel.fall_status as StudentFormEntry['fall_status'],
+    fall_start_date: keepingSameFall ? (sel.fall_start_date || defaultFallStartDate(student) || undefined) : undefined,
+    fall_session_ids: changingFall ? sel.fall_session_ids : [],
+    fall_session_start_dates: changingFall ? sel.fall_session_start_dates : {},
+    fall_waitlist_session_ids: changingFall ? sel.fall_waitlist_session_ids : [],
+    fall_notes: sel.fall_status && !['same', 'change'].includes(sel.fall_status) ? sel.fall_notes || undefined : undefined,
+    current_sessions_snapshot: currentSessionsSnapshot(student, sel, staffEntry),
+  };
+}
+
+function normalizeComparable(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizeComparable)
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entryValue]) => entryValue !== undefined && entryValue !== '')
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entryValue]) => [key, normalizeComparable(entryValue)]),
+    );
+  }
+  return value;
+}
+
+function entriesAreEqual(a: StudentFormEntry, b: StudentFormEntry): boolean {
+  return JSON.stringify(normalizeComparable(a)) === JSON.stringify(normalizeComparable(b));
+}
+
+function initState(student: ParentFormData['students'][number], staffEntry: boolean): StudentCardState {
   const req = student.latest_request;
-  const fallStatus = req?.fall_status ?? 'same';
+  const fallStatus = req?.fall_status ?? (staffEntry && !hasCurrentSessions(student) ? null : 'same');
   const summerStatus =
     student.latest_request_type === 'other'
       ? 'other'
@@ -168,8 +249,8 @@ function initState(student: ParentFormData['students'][number]): StudentCardStat
     waitlist_session_ids: [],
     custom_notes: '',
     ...defaultPickup,
-    fall_status: 'same',
-    fall_start_date: defaultFallStartDate(student),
+    fall_status: fallStatus,
+    fall_start_date: fallStatus === 'same' ? defaultFallStartDate(student) : '',
     fall_session_ids: [],
     fall_session_start_dates: {},
     fall_waitlist_session_ids: [],
@@ -195,58 +276,35 @@ export default function SummerRegForm({
   const [actionState, formAction, isPending] = useActionState(submitSummerForm, undefined);
 
   const [selections, setSelections] = useState<Record<string, StudentCardState>>(
-    () => Object.fromEntries(data.students.map(s => [s.student_id, initState(s)])),
+    () => Object.fromEntries(data.students.map(s => [s.student_id, initState(s, staffEntry)])),
   );
 
-  const incompleteCount = data.students.filter(s => !isStudentComplete(s, selections[s.student_id], data.fall_sessions, staffEntry)).length;
-  const isValid = incompleteCount === 0;
-
-  function currentSessionsSnapshot(
-    student: ParentFormData['students'][number],
-    sel: StudentCardState,
-  ): ParentFormData['students'][number]['current_sessions'] {
-    if (
-      staffEntry &&
-      sel.manual_current_course_name.trim() &&
-      sel.manual_current_weekday &&
-      sel.manual_current_start_time
-    ) {
-      return [{
-        weekday: sel.manual_current_weekday,
-        start_time: sel.manual_current_start_time,
-        pickup_school: sel.manual_current_pickup_school.trim() || null,
-        course_name: sel.manual_current_course_name.trim(),
-      }];
-    }
-    return getCurrentSessions(student);
-  }
-
-  const entries: StudentFormEntry[] = data.students.map(s => {
-    const sel = selections[s.student_id];
-    const pickupVisible = isPickupVisible(s, sel, data.fall_sessions);
-    const pickupRequested = pickupVisible && sel.pickup_requested;
-    const enrolling = sel.summer_status === 'enrolling';
-    const keepingSameFall = sel.fall_status === 'same';
-    const changingFall = sel.fall_status === 'change';
-    return {
-      student_id: s.student_id,
-      summer_status: (sel.summer_status ?? 'other') as StudentFormEntry['summer_status'],
-      session_ids: enrolling ? sel.session_ids : [],
-      session_start_dates: enrolling ? sel.session_start_dates : {},
-      waitlist_session_ids: enrolling ? sel.waitlist_session_ids : [],
-      custom_notes: sel.summer_status === 'other' ? sel.custom_notes || undefined : undefined,
-      pickup_requested: pickupVisible ? sel.pickup_requested : undefined,
-      pickup_school: pickupRequested ? (sel.pickup_school ?? undefined) : undefined,
-      pickup_school_other: pickupRequested && sel.pickup_school === 'other' ? sel.pickup_school_other || undefined : undefined,
-      fall_status: sel.fall_status as 'same' | 'change' | 'pause' | 'unsure' | 'not_returning',
-      fall_start_date: keepingSameFall ? (sel.fall_start_date || defaultFallStartDate(s) || undefined) : undefined,
-      fall_session_ids: changingFall ? sel.fall_session_ids : [],
-      fall_session_start_dates: changingFall ? sel.fall_session_start_dates : {},
-      fall_waitlist_session_ids: changingFall ? sel.fall_waitlist_session_ids : [],
-      fall_notes: sel.fall_status && !['same', 'change'].includes(sel.fall_status) ? sel.fall_notes || undefined : undefined,
-      current_sessions_snapshot: currentSessionsSnapshot(s, sel),
-    };
-  });
+  const allEntries: StudentFormEntry[] = data.students.map(s =>
+    buildStudentEntry(s, selections[s.student_id], data.fall_sessions, staffEntry),
+  );
+  const initialEntriesByStudentId = new Map(data.students.map(s => [
+    s.student_id,
+    buildStudentEntry(s, initState(s, staffEntry), data.fall_sessions, staffEntry),
+  ]));
+  const changedStudentIds = new Set(
+    staffEntry
+      ? allEntries
+          .filter(entry => {
+            const initialEntry = initialEntriesByStudentId.get(entry.student_id);
+            return !initialEntry || !entriesAreEqual(entry, initialEntry);
+          })
+          .map(entry => entry.student_id)
+      : allEntries.map(entry => entry.student_id),
+  );
+  const entries = staffEntry
+    ? allEntries.filter(entry => changedStudentIds.has(entry.student_id))
+    : allEntries;
+  const incompleteCount = data.students.filter(s => {
+    if (staffEntry && !changedStudentIds.has(s.student_id)) return false;
+    return !isStudentComplete(s, selections[s.student_id], data.fall_sessions, staffEntry);
+  }).length;
+  const hasChangesToSubmit = !staffEntry || entries.length > 0;
+  const isValid = incompleteCount === 0 && hasChangesToSubmit;
 
   return (
     <form action={formAction} className="space-y-6 pb-28 sm:pb-0">
@@ -291,7 +349,9 @@ export default function SummerRegForm({
         <div className="mx-auto max-w-3xl space-y-2">
           {!isValid && (
             <p className="text-center text-xs font-medium text-amber-700">
-              {incompleteCount} {incompleteCount === 1 ? 'student needs' : 'students need'} required items before submitting.
+              {staffEntry && entries.length === 0
+                ? 'Make at least one student change before submitting.'
+                : `${incompleteCount} ${incompleteCount === 1 ? 'student needs' : 'students need'} required items before submitting.`}
             </p>
           )}
           <button

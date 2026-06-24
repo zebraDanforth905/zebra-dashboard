@@ -1,4 +1,4 @@
--- Manual deployment required.
+-- #26 Manual deployment required.
 -- Rename LMS checklist note storage to avoid generic camp enrolment note naming.
 -- This migration only touches camp LMS checklist tables.
 

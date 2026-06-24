@@ -2,6 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
+import { isDateInTerm } from './tdsb-calendar';
 import {
   InvoiceTableData,
   CustomerTableData,
@@ -839,6 +840,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
     }
 
     const target = Y(targetDate);
+    const isSummer = isDateInTerm(target, 'summer');
     console.log(target)
 
     // Join absences ON the specific date and project a boolean
@@ -871,6 +873,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
         END AS recent_note
       FROM students s
       JOIN enrolments e ON e.student_id = s.id
+      JOIN sessions sess ON sess.id = e.session_id
       JOIN courses crs ON crs.id = e.course_id
       LEFT JOIN customers c ON c.id = s.customer_id
       LEFT JOIN absences abs
@@ -878,7 +881,9 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
        AND abs.date = ${target}::date
       LEFT JOIN latest_note ln ON ln.student_id = s.id
       WHERE e.session_id = ${sessionId}
+        AND sess.is_summer = ${isSummer}
         AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+        AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
       ORDER BY s.name;
     `;
 
@@ -1008,6 +1013,7 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
           targetDate = nextOccurrenceOf(day);
         }
         const target = Y(targetDate);
+        const isSummer = isDateInTerm(target, 'summer');
 
         const sessions = await sql<Session[]>
         `
@@ -1025,6 +1031,8 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             SELECT COUNT(*) AS student_count
             FROM enrolments e
             WHERE e.session_id = s.id
+              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
           ) ec ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS makeup_count
@@ -1044,9 +1052,11 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             JOIN enrolments e ON e.id = a.enrolment_id
             WHERE e.session_id = s.id
               AND a.date = ${target}
+              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
           ) ac ON true
           WHERE s.weekday = ${day}
-            AND s.is_summer = FALSE
+            AND s.is_summer = ${isSummer}
             AND (
               COALESCE(ec.student_count, 0) > 0
               OR COALESCE(mc.makeup_count, 0) > 0
@@ -2654,6 +2664,16 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           WHERE table_schema = 'public'
             AND table_name = 'camp_lms_course_mappings'
             AND column_name = 'canvas_beginner_course_id'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname = 'public'
+            AND t.relname = 'camp_lms_canvas_action_audit'
+            AND c.contype = 'c'
+            AND pg_get_constraintdef(c.oid) LIKE '%activate_course%'
         )
       ) AS schema_ready;
     `;

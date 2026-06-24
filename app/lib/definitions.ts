@@ -377,6 +377,7 @@ export type CampLmsCanvasIssue =
 
 export type CampLmsCanvasActionType =
   | 'add_expected_beginner'
+  | 'activate_course'
   | 'inactivate_enrollment';
 
 export type CampLmsCanvasMatch = {
@@ -743,6 +744,7 @@ export type ParentRequest =
 export type ParentFormStudentData = {
   student_id: string;
   student_name: string;
+  is_active: boolean;
   current_sessions: CurrentSessionSummary[];
   current_weekday: string | null;
   current_start_time: string | null;
