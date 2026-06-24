@@ -1,0 +1,231 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e29]:
+    - generic [ref=e31]:
+      - link "Logo Dashboard" [ref=e32] [cursor=pointer]:
+        - /url: /dashboard
+        - generic [ref=e35]:
+          - img "Logo" [ref=e36]
+          - generic [ref=e37]: Dashboard
+      - generic [ref=e40]:
+        - img [ref=e41]
+        - textbox "Search students..." [ref=e43]
+      - generic [ref=e44]:
+        - link "Schedule" [ref=e45] [cursor=pointer]:
+          - /url: /dashboard/schedule
+          - paragraph [ref=e46]: Schedule
+        - link "My Schedule" [ref=e47] [cursor=pointer]:
+          - /url: /dashboard/my-schedule
+          - paragraph [ref=e48]: My Schedule
+        - link "Staff Scheduling" [ref=e49] [cursor=pointer]:
+          - /url: /dashboard/staff-schedule
+          - paragraph [ref=e50]: Staff Scheduling
+        - link "Camps" [ref=e51] [cursor=pointer]:
+          - /url: /dashboard/camp
+          - paragraph [ref=e52]: Camps
+        - link "Billing" [ref=e53] [cursor=pointer]:
+          - /url: /dashboard/billing
+          - paragraph [ref=e54]: Billing
+        - link "Slips" [ref=e55] [cursor=pointer]:
+          - /url: /dashboard/printable
+          - paragraph [ref=e56]: Slips
+        - link "Accounts" [ref=e57] [cursor=pointer]:
+          - /url: /dashboard/scratch-accounts
+          - paragraph [ref=e58]: Accounts
+        - link "Incidents" [ref=e59] [cursor=pointer]:
+          - /url: /dashboard/admin/incident-reports
+          - paragraph [ref=e60]: Incidents
+        - link "Summer Reg" [ref=e61] [cursor=pointer]:
+          - /url: /dashboard/summer
+          - paragraph [ref=e62]: Summer Reg
+        - link "Settings" [ref=e63] [cursor=pointer]:
+          - /url: /dashboard/settings
+          - paragraph [ref=e64]: Settings
+        - button "Sign Out" [ref=e66] [cursor=pointer]:
+          - generic [ref=e67]: Sign Out
+    - generic [ref=e69]:
+      - link "Back to Camp Sessions" [ref=e70] [cursor=pointer]:
+        - /url: /dashboard/camp
+        - img [ref=e71]
+        - text: Back to Camp Sessions
+      - generic [ref=e73]:
+        - heading "Week of Jun 22 - Jun 28, 2026" [level=1] [ref=e74]
+        - paragraph [ref=e75]: Enrollment report and camp day cards for this week.
+      - generic [ref=e76]:
+        - heading "Weekly Enrollment Summary" [level=2] [ref=e77]
+        - generic [ref=e79]:
+          - heading "Week of Jun 22 - Jun 28, 2026" [level=3] [ref=e80]
+          - generic [ref=e81]:
+            - generic [ref=e82]:
+              - generic [ref=e83]: "1"
+              - generic [ref=e84]: Total Enrolments (including students enrolled twice for same week)
+            - generic [ref=e85]:
+              - generic [ref=e86]: "1"
+              - generic [ref=e87]: Students - Deduped (exclude double enrolments)
+          - generic [ref=e88]:
+            - generic [ref=e89]:
+              - heading "By Camp Type" [level=4] [ref=e90]
+              - generic [ref=e91]:
+                - generic [ref=e92]:
+                  - generic "Full Day" [ref=e93]
+                  - generic [ref=e96]: "1"
+                - generic [ref=e97]:
+                  - generic "Half Day" [ref=e98]
+                  - generic [ref=e100]: "0"
+            - generic [ref=e101]:
+              - heading "By Session Length" [level=4] [ref=e102]
+              - generic [ref=e104]:
+                - generic "2 Days" [ref=e105]
+                - generic [ref=e108]: "1"
+            - generic [ref=e109]:
+              - heading "By Course" [level=4] [ref=e110]
+              - generic [ref=e112]:
+                - generic "Day Camp" [ref=e113]
+                - generic [ref=e116]: "1"
+      - generic [ref=e117]:
+        - heading "Camp Days" [level=2] [ref=e118]
+        - link "Fri, Jun 26 1 FD + AM | 1 FD + PM 1 FD 1 Ext Care" [ref=e120] [cursor=pointer]:
+          - /url: /dashboard/camp/day/2026-06-26
+          - heading "Fri, Jun 26" [level=3] [ref=e123]
+          - generic [ref=e124]:
+            - img [ref=e125]
+            - generic [ref=e127]:
+              - generic [ref=e128]: 1 FD + AM
+              - generic [ref=e129]: "|"
+              - generic [ref=e130]: 1 FD + PM
+          - generic [ref=e131]:
+            - generic [ref=e132]: 1 FD
+            - generic [ref=e133]: 1 Ext Care
+      - generic [ref=e134]:
+        - generic [ref=e135]:
+          - generic [ref=e136]:
+            - heading "LMS Checklist" [level=2] [ref=e137]
+            - generic [ref=e138]:
+              - generic [ref=e139]: "Canvas: https://lms.zebrarobotics.com"
+              - generic [ref=e140]: "|"
+              - generic [ref=e141]: "Last sync: Never"
+          - generic [ref=e142]:
+            - button "Refresh Portal" [ref=e143]:
+              - img [ref=e144]
+              - text: Refresh Portal
+            - button "Sync LMS" [disabled] [ref=e146]:
+              - img [ref=e147]
+              - text: Sync LMS
+            - button "Add All Preview (0)" [disabled] [ref=e149]:
+              - img [ref=e150]
+              - text: Add All Preview (0)
+            - button "Copy" [ref=e152]:
+              - img [ref=e153]
+              - text: Copy
+        - generic [ref=e155]: Apply migrations 024_lms_camp_checklist.sql and 025_canvas_lms_workflow.sql.
+        - generic [ref=e156]:
+          - generic [ref=e157]:
+            - generic [ref=e158]: Total
+            - generic [ref=e159]: "1"
+          - generic [ref=e160]:
+            - generic [ref=e161]: Canvas OK
+            - generic [ref=e162]: "0"
+          - generic [ref=e163]:
+            - generic [ref=e164]: Not synced
+            - generic [ref=e165]: "1"
+          - generic [ref=e166]:
+            - generic [ref=e167]: Missing user
+            - generic [ref=e168]: "0"
+          - generic [ref=e169]:
+            - generic [ref=e170]: Missing course
+            - generic [ref=e171]: "0"
+          - generic [ref=e172]:
+            - generic [ref=e173]: Inactive expected
+            - generic [ref=e174]: "0"
+          - generic [ref=e175]:
+            - generic [ref=e176]: Extra active
+            - generic [ref=e177]: "0"
+        - generic [ref=e178]:
+          - generic [ref=e179]:
+            - generic [ref=e180]: Verified
+            - generic [ref=e181]: "0"
+          - generic [ref=e182]:
+            - generic [ref=e183]: Missing setup
+            - generic [ref=e184]: "0"
+          - generic [ref=e185]:
+            - generic [ref=e186]: Follow-up
+            - generic [ref=e187]: "0"
+          - generic [ref=e188]:
+            - generic [ref=e189]: Unmapped
+            - generic [ref=e190]: "1"
+          - generic [ref=e191]:
+            - generic [ref=e192]: Unchecked
+            - generic [ref=e193]: "1"
+          - generic [ref=e194]:
+            - generic [ref=e195]: N/A
+            - generic [ref=e196]: "0"
+          - generic [ref=e197]:
+            - generic [ref=e198]: No course ID
+            - generic [ref=e199]: "0"
+        - generic [ref=e201]:
+          - generic [ref=e202]:
+            - text: Wiki Mapping Import
+            - textbox "Wiki Mapping Import" [disabled] [ref=e203]:
+              - /placeholder: Portal course | Family | Beginner course | Intermediate course | Advanced course
+          - button "Import Mappings" [disabled] [ref=e204]
+        - generic [ref=e205]:
+          - heading "Unmapped Camp Courses" [level=3] [ref=e206]
+          - generic [ref=e208]:
+            - generic [ref=e209]:
+              - generic [ref=e210]: Day Camp
+              - generic [ref=e211]: 1 camper row(s)
+            - textbox "Family" [disabled] [ref=e212]
+            - textbox "Beginner ID" [disabled] [ref=e213]
+            - textbox "Inter. ID" [disabled] [ref=e214]
+            - textbox "Adv. ID" [disabled] [ref=e215]
+            - textbox "Notes" [disabled] [ref=e216]
+            - button "Save" [disabled] [ref=e217]
+        - table [ref=e219]:
+          - rowgroup [ref=e220]:
+            - row "Student Canvas User Camp Course Expected Active LMS Inactive LMS Canvas Status Suggested Fix Test Action Office" [ref=e221]:
+              - columnheader "Student" [ref=e222]
+              - columnheader "Canvas User" [ref=e223]
+              - columnheader "Camp Course" [ref=e224]
+              - columnheader "Expected" [ref=e225]
+              - columnheader "Active LMS" [ref=e226]
+              - columnheader "Inactive LMS" [ref=e227]
+              - columnheader "Canvas Status" [ref=e228]
+              - columnheader "Suggested Fix" [ref=e229]
+              - columnheader "Test Action" [ref=e230]
+              - columnheader "Office" [ref=e231]
+          - rowgroup [ref=e232]:
+            - row "William Thom ID 25159 25159@zebrarobotics.com Not found Day Camp FD EX Unmapped None None Not synced unmapped course Click Sync LMS to read current Canvas users and enrollments. None Unchecked Verified Missing user Missing course Follow-up N/A Clear" [ref=e233]:
+              - cell "William Thom ID 25159 25159@zebrarobotics.com" [ref=e234]:
+                - generic [ref=e235]: William Thom
+                - generic [ref=e236]: ID 25159
+                - generic [ref=e237]: 25159@zebrarobotics.com
+              - cell "Not found" [ref=e238]:
+                - generic [ref=e239]: Not found
+              - cell "Day Camp FD EX" [ref=e240]:
+                - generic [ref=e241]: Day Camp
+                - generic [ref=e242]: FD EX
+              - cell "Unmapped" [ref=e243]
+              - cell "None" [ref=e244]
+              - cell "None" [ref=e245]
+              - cell "Not synced unmapped course" [ref=e246]:
+                - generic [ref=e247]:
+                  - text: Not synced
+                  - generic [ref=e249]: unmapped course
+              - cell "Click Sync LMS to read current Canvas users and enrollments." [ref=e250]:
+                - generic [ref=e251]: Click Sync LMS to read current Canvas users and enrollments.
+              - cell "None" [ref=e252]
+              - cell "Unchecked Verified Missing user Missing course Follow-up N/A Clear" [ref=e253]:
+                - generic [ref=e254]:
+                  - text: Unchecked
+                  - textbox "Office note" [disabled] [ref=e255]
+                  - generic [ref=e256]:
+                    - button "Verified" [disabled] [ref=e257]
+                    - button "Missing user" [disabled] [ref=e258]
+                    - button "Missing course" [disabled] [ref=e259]
+                    - button "Follow-up" [disabled] [ref=e260]
+                    - button "N/A" [disabled] [ref=e261]
+                    - button "Clear" [disabled] [ref=e262]
+    - button "Report an Incident" [ref=e263]:
+      - img [ref=e264]
+  - button "Open Next.js Dev Tools" [ref=e24] [cursor=pointer]:
+    - img [ref=e25]
+  - alert [ref=e28]: Zebra Dashboard
