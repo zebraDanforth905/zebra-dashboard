@@ -15,7 +15,11 @@ import {
   CanvasConfigError,
   CanvasUser,
   NormalizedCanvasEnrollment,
+  isCanvasTokenConfigured,
   createCanvasClient,
+  clearCanvasTokenCache,
+  getCanvasTokenSettings,
+  saveCanvasApiTokenToDb,
 } from './canvas-lms';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
@@ -2152,6 +2156,60 @@ export async function updatePassword(formData: FormData) {
   }
 }
 
+export async function fetchCanvasApiSettings() {
+  try {
+    const session = await auth();
+    if (getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const settings = await getCanvasTokenSettings();
+    return { ok: true, settings };
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) };
+  }
+}
+
+export async function saveCanvasApiToken(formData: FormData) {
+  try {
+    const session = await auth();
+    if (getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const rawToken = formData.get('canvasApiToken');
+    const intent = formData.get('intent');
+    const shouldClear = intent === 'clear';
+    const token = typeof rawToken === 'string' && !shouldClear ? rawToken.trim() : null;
+
+    if (!shouldClear && token && token.length > 0) {
+      await saveCanvasApiTokenToDb(token);
+    } else {
+      await saveCanvasApiTokenToDb(null);
+    }
+
+    clearCanvasTokenCache();
+    revalidatePath('/dashboard/settings');
+
+    const settings = await getCanvasTokenSettings();
+    const isCleared = shouldClear || !token;
+    return {
+      ok: true,
+      settings,
+      message: isCleared
+        ? 'Canvas API token entry removed from dashboard settings.'
+        : 'Canvas API token saved to dashboard settings.',
+    };
+  } catch (error) {
+    const pgError = error as { code?: string } | undefined;
+    if (pgError?.code === '42P01') {
+      return { ok: false, error: 'Apply migration 033_create_app_settings.sql before saving the Canvas API token setting.' };
+    }
+
+    return { ok: false, error: errorMessage(error) };
+  }
+}
+
 // Camp actions
 function toLocalDateKey(value: Date | string): string {
   if (typeof value === 'string') {
@@ -2709,7 +2767,7 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
     if (!(await campLmsChecklistSchemaReady())) {
       return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, and 032_lms_mapping_additional_courses.sql before syncing Canvas' };
     }
-    if (!process.env.CANVAS_API_TOKEN) {
+    if (!(await isCanvasTokenConfigured())) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas sync' };
     }
 
@@ -2852,7 +2910,7 @@ export async function searchCampLmsCanvasCourses(input: { term: string }) {
   }
 
   try {
-    if (!process.env.CANVAS_API_TOKEN) {
+    if (!(await isCanvasTokenConfigured())) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas search', courses: [] };
     }
 
@@ -3120,6 +3178,9 @@ export async function runCampLmsCanvasTestAction(input: {
   try {
     if (!(await campLmsChecklistSchemaReady())) {
       return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, and 032_lms_mapping_additional_courses.sql before running Canvas test actions' };
+    }
+    if (!(await isCanvasTokenConfigured())) {
+      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas test actions' };
     }
 
     const [row] = await sql<Array<{

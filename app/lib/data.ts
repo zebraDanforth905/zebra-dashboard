@@ -2705,7 +2705,7 @@ function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSumm
 
 export async function fetchCampLmsChecklist(startDate: string, endDate: string): Promise<CampLmsChecklistData> {
   try {
-    const canvasConfig = getCanvasPublicConfig();
+    const canvasConfig = await getCanvasPublicConfig();
     const [schema] = await sql<{ schema_ready: boolean }[]>`
       SELECT (
         to_regclass('public.camp_lms_course_mappings') IS NOT NULL
