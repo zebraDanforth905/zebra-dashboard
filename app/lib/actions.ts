@@ -3143,7 +3143,7 @@ export async function runCampLmsCanvasTestAction(input: {
       if (type === 'add_expected_beginner') {
         courseId = canvasCourseId || row.canvas_beginner_course_id;
         if (!courseId || courseId !== row.canvas_beginner_course_id) {
-          throw new Error('Expected beginner Canvas course is not mapped for this camper.');
+          throw new Error('Expected Canvas course is not mapped for this camper.');
         }
         const alreadyActive = activeEnrollments.some((candidate) => expectedCourseIds.has(String(candidate.course_id)));
         if (alreadyActive) {

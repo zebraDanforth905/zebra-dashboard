@@ -156,7 +156,7 @@ export default function CampLmsMappingsTable({ rows, schemaReady }: Props) {
               </button>
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              Use the numeric Canvas course ID from URLs like /courses/12345. Put extra acceptable courses in Additional IDs.
+              Use the numeric Canvas course ID from URLs like /courses/12345. If one Canvas course covers the whole camp, put it in General / Beginner and leave the rest blank.
             </p>
           </div>
         </div>
@@ -235,7 +235,7 @@ export default function CampLmsMappingsTable({ rows, schemaReady }: Props) {
           <thead className="bg-slate-50">
             <tr>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Camp</th>
-              <th className="px-3 py-2 text-left font-medium text-slate-600">Beginner ID</th>
+              <th className="px-3 py-2 text-left font-medium text-slate-600">General / Beginner ID</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Intermediate ID</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Advanced ID</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Additional IDs</th>

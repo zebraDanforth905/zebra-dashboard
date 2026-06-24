@@ -21,7 +21,7 @@ export default async function CampLmsMappingsPage() {
       <div className="mb-5">
         <h1 className="text-2xl font-bold text-slate-900">LMS Camp Mappings</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Map each camp course to beginner, intermediate, advanced, and additional acceptable Canvas course IDs.
+          Map each camp course to one shared Canvas course or multiple acceptable Canvas course IDs.
         </p>
       </div>
 

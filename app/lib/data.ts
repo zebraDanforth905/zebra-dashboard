@@ -2442,7 +2442,7 @@ function suggestedCanvasFix(params: {
   const familyLabel = family ?? 'the expected Canvas family';
 
   if (status === 'not_synced') return 'Click Sync LMS to read current Canvas users and enrollments.';
-  if (status === 'unmapped_course') return 'Map this portal camp course to its beginner, intermediate, advanced, or additional Canvas course IDs.';
+  if (status === 'unmapped_course') return 'Map this portal camp course to one shared Canvas course or multiple acceptable Canvas course IDs.';
   if (manualMapping) return 'Day Camp is handled manually by staff for each camper.';
   if (status === 'missing_canvas_user') return `Create or locate the Canvas user for ${login}, then sync again.`;
   if (status === 'missing_expected_course') {
@@ -2484,13 +2484,13 @@ function suggestedCanvasActions(params: {
   if (row.canvas_sync_status !== 'synced' || !row.canvas_user_found) return [];
 
   const actions: CampLmsSuggestedAction[] = [];
-  const beginner = expectedCourses.find((course) => course.level === 'beginner');
-  if (beginner && activeExpected.length === 0) {
+  const primaryExpectedCourse = expectedCourses.find((course) => course.level === 'beginner') ?? expectedCourses[0];
+  if (primaryExpectedCourse && activeExpected.length === 0) {
     actions.push({
       type: 'add_expected_beginner',
-      label: 'Test add beginner',
-      canvas_course_id: beginner.course_id,
-      canvas_course_name: beginner.course_name,
+      label: 'Test add expected',
+      canvas_course_id: primaryExpectedCourse.course_id,
+      canvas_course_name: primaryExpectedCourse.course_name,
     });
   }
 
