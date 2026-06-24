@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zebra Dashboard Agent Branch Review</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5c6875;
+      --line: #d9dee5;
+      --green: #0f7b4f;
+      --green-bg: #e7f5ee;
+      --amber: #9a5b00;
+      --amber-bg: #fff1d8;
+      --red: #a23434;
+      --red-bg: #fde7e7;
+      --blue: #235d9f;
+      --blue-bg: #e7f0fb;
+      --purple: #6b3b8f;
+      --purple-bg: #f0e8f8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    main {
+      margin: 0 auto;
+      max-width: 1180px;
+      padding: 32px 20px 56px;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.15;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(28px, 4vw, 42px);
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 22px;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 17px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .subhead {
+      color: var(--muted);
+      margin-top: 10px;
+      max-width: 840px;
+    }
+
+    .meta {
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      font-size: 13px;
+      gap: 10px 18px;
+      margin-top: 16px;
+    }
+
+    section {
+      margin-top: 24px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .summary-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card,
+    .metric,
+    .branch {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(18, 24, 31, 0.04);
+    }
+
+    .metric {
+      padding: 16px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .card {
+      padding: 18px;
+    }
+
+    .timeline {
+      counter-reset: step;
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .timeline li {
+      align-items: start;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      counter-increment: step;
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 34px 1fr;
+      list-style: none;
+      padding: 14px;
+    }
+
+    .timeline li::before {
+      align-items: center;
+      background: var(--blue-bg);
+      border-radius: 999px;
+      color: var(--blue);
+      content: counter(step);
+      display: inline-flex;
+      font-weight: 700;
+      height: 28px;
+      justify-content: center;
+      width: 28px;
+    }
+
+    .branch-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .branch {
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+    }
+
+    .branch-head {
+      align-items: start;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+    }
+
+    .branch-title {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .branch code,
+    .thread-id {
+      background: #eef1f4;
+      border-radius: 5px;
+      color: #24313f;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      padding: 2px 5px;
+      word-break: break-all;
+    }
+
+    .thread-id {
+      color: var(--muted);
+      display: inline-block;
+      margin-top: 4px;
+    }
+
+    .badge {
+      border-radius: 999px;
+      display: inline-flex;
+      flex: 0 0 auto;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 9px;
+      white-space: nowrap;
+    }
+
+    .badge.ready {
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .badge.caution {
+      background: var(--amber-bg);
+      color: var(--amber);
+    }
+
+    .badge.stop {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .badge.info {
+      background: var(--blue-bg);
+      color: var(--blue);
+    }
+
+    .badge.deps {
+      background: var(--purple-bg);
+      color: var(--purple);
+    }
+
+    dl {
+      display: grid;
+      gap: 9px;
+      margin: 0;
+    }
+
+    dt {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    dd {
+      margin: 0;
+    }
+
+    ul.compact {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .compact li {
+      margin: 3px 0;
+    }
+
+    .note {
+      background: #fffdf5;
+      border: 1px solid #ead8a8;
+      border-radius: 8px;
+      color: #4d3b12;
+      padding: 14px 16px;
+    }
+
+    .table-wrap {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+
+    table {
+      border-collapse: collapse;
+      min-width: 840px;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f0f3f6;
+      color: #334150;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    footer {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 28px;
+      text-align: center;
+    }
+
+    @media (max-width: 900px) {
+      .summary-grid,
+      .branch-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .branch-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Agent Branch Review Summary</h1>
+      <p class="subhead">Clean rollup of the nine branch-review threads for zebra-dashboard. Use this as the mass-review control sheet: what to merge, what to rebase, what to archive, and what still needs a human decision.</p>
+      <div class="meta">
+        <span>Generated: June 19, 2026</span>
+        <span>Repo: /Users/kylenewbigging/dev/zebra-dashboard</span>
+        <span>Source thread: 019ede54-40dd-70f2-8d35-380164f13de4</span>
+      </div>
+    </header>
+
+    <section class="grid summary-grid" aria-label="Review totals">
+      <div class="metric">
+        <strong>9</strong>
+        <span>review threads completed</span>
+      </div>
+      <div class="metric">
+        <strong>7</strong>
+        <span>branches with saved fix commits</span>
+      </div>
+      <div class="metric">
+        <strong>1</strong>
+        <span>branch to archive</span>
+      </div>
+      <div class="metric">
+        <strong>0</strong>
+        <span>billing/customer hard-rule violations found</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Recommended Order</h2>
+      <ol class="timeline">
+        <li>
+          <div>
+            <h3>Merge the shared summer base first</h3>
+            <p><code>origin/summer-responses</code> should land before stacked camp/LMS branches. It now uses soft remove for responses and scopes summaries to the active token.</p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Port the staff-entry fix deliberately</h3>
+            <p><code>codex/staff-entry-all-family-students</code> is small and useful, but overlaps summer response files. Cherry-pick or rebase the inactive-student UI fix after the summer base lands.</p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Land LMS migration chain before camp add-ons</h3>
+            <p>Prefer <code>codex/summer-lms-checklist</code> as the source for migrations <code>024-026</code> and the <code>lms_note</code> naming path.</p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Rebase account prep and QR work onto LMS</h3>
+            <p><code>codex/camp-account-assignments</code> should supersede <code>codex/summer-week-schedule</code>. The QR branch should carry only script/dependency work after de-duping old LMS files.</p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Handle week selector after summer sync review</h3>
+            <p><code>origin/week-selector</code> builds and has a safety patch, but still needs a logged-in smoke and careful DB/migration readiness for summer session refresh.</p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Review billing calendar separately</h3>
+            <p><code>origin/billing-calendar</code> is isolated and read-only, but should get an authenticated admin UI smoke plus date-signoff for generated future years.</p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <h3>Archive the old staff schedule branch</h3>
+            <p><code>origin/staff_schedule_branch</code> is obsolete. Do not merge or apply its migrations. Reimplement any useful ideas from current master later.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Decision Table</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Branch</th>
+              <th>Decision</th>
+              <th>Agent Work</th>
+              <th>Checks</th>
+              <th>Next Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>origin/summer-responses</code></td>
+              <td><span class="badge ready">Merge base</span></td>
+              <td>Soft-remove responses, current-token summary scoping, UI copy update.</td>
+              <td>Build passed, targeted lint passed, public route smoke passed.</td>
+              <td>Merge first, then rebase stacked camp/LMS branches.</td>
+            </tr>
+            <tr>
+              <td><code>codex/staff-entry-all-family-students</code></td>
+              <td><span class="badge info">Port small fix</span></td>
+              <td>Staff-visible inactive students no longer default to keep-current when they have no current class.</td>
+              <td>Build passed, targeted lint passed, invalid-link smoke passed.</td>
+              <td>Cherry-pick/rebase after summer base, then verify real staff token.</td>
+            </tr>
+            <tr>
+              <td><code>codex/summer-lms-checklist</code></td>
+              <td><span class="badge deps">Merge before add-ons</span></td>
+              <td>Tightened Canvas action validation, trimmed env handling, aligned schema readiness.</td>
+              <td>Build passed, targeted LMS lint passed, login redirect smoke passed.</td>
+              <td>Apply manual migrations <code>024</code>, <code>025</code>, <code>026</code> in order after merge.</td>
+            </tr>
+            <tr>
+              <td><code>codex/camp-account-assignments</code></td>
+              <td><span class="badge ready">Keep over base</span></td>
+              <td>Aligned <code>lms_note</code>, moved roster/contact migration to <code>027</code>, added auth checks, skipped unknown camp types.</td>
+              <td>Build passed, branch-focused lint had no errors.</td>
+              <td>Merge after LMS chain; do not separately merge <code>summer-week-schedule</code>.</td>
+            </tr>
+            <tr>
+              <td><code>codex/summer-week-schedule</code></td>
+              <td><span class="badge stop">Superseded</span></td>
+              <td>No edits. Verified successor branch is exactly one commit ahead and healthier.</td>
+              <td>Build passed on both base and successor; changed-file lint no errors.</td>
+              <td>Close/skip after <code>camp-account-assignments</code> is reviewed.</td>
+            </tr>
+            <tr>
+              <td><code>codex/camp-picture-qr-codes</code></td>
+              <td><span class="badge caution">Rebase/de-dupe</span></td>
+              <td>Hardened QR CLI, added help/dry-run, safe paths, duplicate checks, lazy deps, cleaner errors, reduced png dependency duplication.</td>
+              <td>QR script lint/checks passed, temp QR generation/PNG decode passed, build passed.</td>
+              <td>Rebase onto LMS branch and carry only script/dependency changes.</td>
+            </tr>
+            <tr>
+              <td><code>origin/week-selector</code></td>
+              <td><span class="badge caution">Rebase first</span></td>
+              <td>Nullable end-time handling and day-scoped summer cleanup for future day-specific scrapes.</td>
+              <td>Lint passed with warnings, build passed, unauthenticated schedule smoke preserved callback URL.</td>
+              <td>Rebase onto current master/summer base, verify logged-in schedule UI and DB readiness.</td>
+            </tr>
+            <tr>
+              <td><code>origin/billing-calendar</code></td>
+              <td><span class="badge ready">Separate review</span></td>
+              <td>Fixed open/closed parser, default year selection, copied date typos.</td>
+              <td>Scoped lint passed, build passed, custom date validation passed.</td>
+              <td>Authenticated admin smoke plus date/product signoff for future years.</td>
+            </tr>
+            <tr>
+              <td><code>origin/staff_schedule_branch</code></td>
+              <td><span class="badge stop">Archive</span></td>
+              <td>No edits. Determined obsolete/incompatible with current master schema.</td>
+              <td>Build passed; lint failed like master baseline.</td>
+              <td>Archive branch. Do not apply migrations <code>002-004</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Saved And Pushed Commits</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Branch / Preservation Ref</th>
+              <th>Commit</th>
+              <th>Purpose</th>
+              <th>Push / Merge Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>summer-responses</code></td>
+              <td><code>365cee7</code></td>
+              <td>Preserve summer response soft-remove and current-token fixes.</td>
+              <td>Pushed to <code>origin/summer-responses</code>.</td>
+            </tr>
+            <tr>
+              <td><code>codex/staff-entry-all-family-students</code></td>
+              <td><code>6c31df8</code></td>
+              <td>Preserve inactive-student staff entry UI fix.</td>
+              <td>Pushed to remote; may need cherry-pick after summer base.</td>
+            </tr>
+            <tr>
+              <td><code>codex/summer-lms-review-fixes</code></td>
+              <td><code>4ea8d27</code></td>
+              <td>Preserve LMS/Canvas hardening on a new local review branch.</td>
+              <td>Pushed as new remote branch; rebase/merge into final LMS branch before PR.</td>
+            </tr>
+            <tr>
+              <td><code>codex/camp-account-assignments</code></td>
+              <td><code>cc50721</code></td>
+              <td>Preserve migration deconflict, auth checks, and normalization fix.</td>
+              <td>Pushed to remote.</td>
+            </tr>
+            <tr>
+              <td><code>codex/camp-picture-qr-codes</code></td>
+              <td><code>50b296e</code></td>
+              <td>Preserve QR CLI hardening and dependency cleanup.</td>
+              <td>Pushed to remote; rebase onto LMS branch before final merge.</td>
+            </tr>
+            <tr>
+              <td><code>codex/week-selector-review-fixes</code></td>
+              <td><code>6f3d398</code></td>
+              <td>Preserve summer week sync cleanup narrowing.</td>
+              <td>Pushed as new remote branch; rebase into final week-selector branch later.</td>
+            </tr>
+            <tr>
+              <td><code>codex/billing-calendar-review-fixes</code></td>
+              <td><code>c969a1b</code></td>
+              <td>Preserve billing calendar display/date fixes.</td>
+              <td>Pushed as new remote branch; rebase into billing calendar branch after auth smoke.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Branch Details</h2>
+      <div class="grid branch-grid">
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Summer Responses</h3>
+              <code>origin/summer-responses</code>
+              <span class="thread-id">019ede56-d3ed-7880-b010-8c96d0259c7d</span>
+            </div>
+            <span class="badge ready">Merge base</span>
+          </div>
+          <dl>
+            <dt>What Changed</dt>
+            <dd>Response cleanup became soft-remove. Response summaries now scope to the current token. UI copy says Remove instead of Delete.</dd>
+            <dt>Risk</dt>
+            <dd>Token reissue/history behavior still needs product signoff.</dd>
+            <dt>Next</dt>
+            <dd>Merge first to shrink review noise in stacked camp/LMS branches.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Staff Entry Student Filtering</h3>
+              <code>codex/staff-entry-all-family-students</code>
+              <span class="thread-id">019ede56-2ce1-7de2-acb3-bcf181b8ae3d</span>
+            </div>
+            <span class="badge info">Port fix</span>
+          </div>
+          <dl>
+            <dt>What Changed</dt>
+            <dd>Inactive family students visible to staff require an explicit fall plan when no current class exists.</dd>
+            <dt>Risk</dt>
+            <dd>Real staff-entry form with valid token was not browser-verified.</dd>
+            <dt>Next</dt>
+            <dd>Cherry-pick/rebase the two UI-file fix after the summer base lands.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>LMS + Canvas Workflow</h3>
+              <code>codex/summer-lms-checklist</code>
+              <span class="thread-id">019ede56-4c1c-7800-9a60-ffb2b3b22323</span>
+            </div>
+            <span class="badge deps">Migration chain</span>
+          </div>
+          <dl>
+            <dt>What Changed</dt>
+            <dd>Canvas writes are stricter server-side. Whitespace Canvas env values no longer enable actions. Schema readiness checks match action requirements.</dd>
+            <dt>Risk</dt>
+            <dd>Canvas API and authenticated DB-backed page were not live-tested.</dd>
+            <dt>Next</dt>
+            <dd>Apply manual migrations <code>024_lms_camp_checklist.sql</code>, <code>025_canvas_lms_workflow.sql</code>, <code>026_rename_lms_status_note.sql</code>.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Camp Account Assignments</h3>
+              <code>codex/camp-account-assignments</code>
+              <span class="thread-id">019ede56-6957-7cf1-b560-e175ad1d00c2</span>
+            </div>
+            <span class="badge ready">Keep</span>
+          </div>
+          <dl>
+            <dt>What Changed</dt>
+            <dd>Moved roster fields to migration <code>027</code>, aligned LMS note naming, added auth to seat/note writes, skipped unknown camp types.</dd>
+            <dt>Risk</dt>
+            <dd>No live UI smoke due to missing local DB/auth env.</dd>
+            <dt>Next</dt>
+            <dd>Merge after LMS migrations. Skip the predecessor branch.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Summer Week Schedule</h3>
+              <code>codex/summer-week-schedule</code>
+              <span class="thread-id">019ede56-81f7-7521-b86b-8624d444ada3</span>
+            </div>
+            <span class="badge stop">Superseded</span>
+          </div>
+          <dl>
+            <dt>Finding</dt>
+            <dd><code>camp-account-assignments</code> is exactly one commit ahead and contains the useful refinement.</dd>
+            <dt>Risk</dt>
+            <dd>Default password <code>zebra123</code> in successor should be confirmed as intended convention.</dd>
+            <dt>Next</dt>
+            <dd>Do not merge separately.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Camp Picture QR Codes</h3>
+              <code>codex/camp-picture-qr-codes</code>
+              <span class="thread-id">019ede56-9ee5-79f2-951d-bbbd07aafa08</span>
+            </div>
+            <span class="badge caution">De-dupe</span>
+          </div>
+          <dl>
+            <dt>What Changed</dt>
+            <dd>QR generator is safer: dry-run/help, path containment, duplicate output checks, validation errors, lazy deps, verified temp generation.</dd>
+            <dt>Risk</dt>
+            <dd>Branch carries stale LMS migration <code>024</code>.</dd>
+            <dt>Next</dt>
+            <dd>Rebase onto LMS branch; keep only QR script and dependency changes.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Week Selector</h3>
+              <code>origin/week-selector</code>
+              <span class="thread-id">019ede56-ebbf-7d03-860c-b0c85717f06e</span>
+            </div>
+            <span class="badge caution">Needs env smoke</span>
+          </div>
+          <dl>
+            <dt>What Changed</dt>
+            <dd>Summer session matching handles nullable end times. Cleanup is scoped by day for day-specific scrapes.</dd>
+            <dt>Risk</dt>
+            <dd>Summer refresh deletes allowed tables by week/date range; needs DB/data readiness check before production use.</dd>
+            <dt>Next</dt>
+            <dd>Rebase onto current master/summer base, then logged-in schedule smoke.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Billing Calendar</h3>
+              <code>origin/billing-calendar</code>
+              <span class="thread-id">019ede57-04ed-7c40-ba57-ed94140c77c1</span>
+            </div>
+            <span class="badge ready">Isolated</span>
+          </div>
+          <dl>
+            <dt>What Changed</dt>
+            <dd>Fixed date/status parser, default year behavior, and several copied date mismatches.</dd>
+            <dt>Risk</dt>
+            <dd>Future generated years are advisory and need date/product signoff.</dd>
+            <dt>Next</dt>
+            <dd>Run authenticated admin UI smoke before merge.</dd>
+          </dl>
+        </article>
+
+        <article class="branch">
+          <div class="branch-head">
+            <div class="branch-title">
+              <h3>Old Staff Schedule</h3>
+              <code>origin/staff_schedule_branch</code>
+              <span class="thread-id">019ede57-1a5b-7e00-bbdd-a35a4acef390</span>
+            </div>
+            <span class="badge stop">Archive</span>
+          </div>
+          <dl>
+            <dt>Finding</dt>
+            <dd>Old incompatible schema and merge conflicts with current master staff scheduling line.</dd>
+            <dt>Possible Salvage</dt>
+            <dd>Backlog ideas only: capacity override, primary coach flag, student support/load overrides.</dd>
+            <dt>Next</dt>
+            <dd>Archive. Do not apply migrations <code>002-004</code>.</dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="note">
+      <h2>Global Notes</h2>
+      <ul class="compact">
+        <li>No agent found customer deletes, customer merges, unguarded <code>students.customer_id</code> overwrites, or summer/sync writes to <code>customers.set_up_qbo</code>.</li>
+        <li>Full <code>pnpm lint</code> remains noisy across the repo. Agents used targeted lint plus <code>pnpm build</code> to isolate branch-level issues.</li>
+        <li>Many UI smokes stopped at auth/DB boundaries because worktrees lacked local secrets. Treat authenticated browser verification as the main mass-review follow-up.</li>
+        <li>Review fixes are now saved and pushed. Rebase or cherry-pick still needed before final PR review.</li>
+      </ul>
+    </section>
+
+    <footer>
+      Generated for local review. Open this file directly in a browser or serve it as static HTML.
+    </footer>
+  </main>
+</body>
+</html>

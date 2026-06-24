@@ -3472,8 +3472,8 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
         }
         if (Object.keys(other_fields).length === 0) {
           other_fields = null;
-        }
-      }
+    }
+  }
       const otherFieldsValue = other_fields ? sql`${sql.json(other_fields)}::jsonb` : sql`NULL`;
 
       const sessionLabel = enrolment.extended_care && (enrolment.session === 'FD' || enrolment.session === 'PM')

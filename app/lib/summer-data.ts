@@ -185,6 +185,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
       student_name: string;
       is_active: boolean;
       current_sessions: CurrentSessionSummary[] | null;
+      is_active: boolean;
       current_weekday: string | null;
       current_start_time: string | null;
       current_pickup_school: string | null;
@@ -1000,7 +1001,7 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         COALESCE(pt.export_count, 0)::int                                     AS token_export_count,
         pr.added_to_portal_at,
         pr.added_to_portal_by,
-        COALESCE(ri.recurring_invoices, '[]'::json)                          AS recurring_invoices,
+        '[]'::json                                                            AS recurring_invoices,
         COALESCE(history.previous_submission_count, 0)::int                 AS previous_submission_count,
         history.previous_submitted_at,
         COALESCE(history.submission_history, '[]'::json)                    AS submission_history
@@ -1136,24 +1137,6 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
             fsid.ordinality DESC
         ) slot
       ) fwl ON true
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(
-            JSON_AGG(
-              JSON_BUILD_OBJECT(
-                'id', r.id::text,
-                'amount', r.amount,
-                'every', r.every,
-                'next_date', r.next_date,
-                'description', r.description
-              )
-              ORDER BY r.next_date, r.id
-            ),
-            '[]'::json
-          ) AS recurring_invoices
-        FROM recurring_invoices r
-        WHERE r.customer_id = c.id
-      ) ri ON true
       LEFT JOIN LATERAL (
         SELECT
           COUNT(*)::int AS previous_submission_count,

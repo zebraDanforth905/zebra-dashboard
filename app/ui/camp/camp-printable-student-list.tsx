@@ -138,7 +138,7 @@ export default function CampPrintableStudentList({
             <th className="w-[8%] border border-slate-700 p-1.5 text-[9px] uppercase">Type</th>
             <th className="w-[17%] border border-slate-700 p-1.5 text-[9px] uppercase">Camp</th>
             <th className="w-[10%] border border-slate-700 p-1.5 text-[9px] uppercase">Days</th>
-            <th className="w-[9%] border border-slate-700 p-1.5 text-[9px] uppercase">Room F/B</th>
+            <th className="w-[9%] border border-slate-700 p-1.5 text-[9px] uppercase">Seat</th>
             <th className="w-[13%] border border-slate-700 p-1.5 text-[9px] uppercase">Allergy / Medical</th>
             <th className="w-[12%] border border-slate-700 p-1.5 text-[9px] uppercase">Notes</th>
           </tr>

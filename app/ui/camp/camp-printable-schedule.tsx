@@ -120,6 +120,13 @@ function roomFromSeatNumber(seatNumber?: number | null) {
   return seatNumber >= 100 ? 'Front' : 'Back';
 }
 
+function normalizeRoomLabel(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'f') return 'Front';
+  if (normalized === 'b') return 'Back';
+  return value;
+}
+
 function assignedSeatForDate(row: CampPrintableScheduleRow, day: Date) {
   const dateKey = getDateKey(day);
   const datedSeat = (row.seat_assignments ?? []).find((assignment) => assignment.date === dateKey)?.seat;
@@ -188,7 +195,7 @@ function daysSummaryForRows(rows: CampPrintableScheduleRow[], days: WeekdaySched
   const activeDays = days.filter(({ day }) => rows.some((row) => isActiveOnDate(row, day)));
 
   if (activeDays.length === days.length) {
-    return 'All week';
+    return 'Full week';
   }
 
   return activeDays
@@ -268,6 +275,7 @@ function buildPrintableStudents(
         field: CampPrintableStudentListField,
         fallback: string
       ) => studentOverrides?.get(field) ?? fallback;
+      const roomValue = normalizeRoomLabel(overrideValue('room', roomSummaryForRows(studentRows, days)));
 
       return {
         key: studentId,
@@ -279,7 +287,7 @@ function buildPrintableStudents(
         sessionSummary: overrideValue('type', sessionSummaryForRows(studentRows)),
         campSummary: overrideValue('camp', campSummaryForRows(studentRows)),
         daysSummary: overrideValue('days', daysSummaryForRows(studentRows, days)),
-        roomDefault: overrideValue('room', roomSummaryForRows(studentRows, days)),
+        roomDefault: roomValue,
         medicalAlert: overrideValue('medical', medicalAlertForRows(studentRows)),
         specialInstruction: overrideValue('notes', specialInstructionForRows(studentRows)),
       };
