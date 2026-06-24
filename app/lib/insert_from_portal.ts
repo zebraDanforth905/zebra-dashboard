@@ -470,6 +470,24 @@ type NormalizedCampRow = {
   course_id: string;
 };
 
+function normalizeCampDob(dob: string | null | undefined): string | null {
+  const value = (dob ?? '').trim();
+  if (!value || value === '0000-00-00') return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return value;
+}
+
 async function getCampSessionId(
   tx: any,
   startDate: string,
@@ -532,7 +550,7 @@ export async function insertCampEnrolments(
       );
 
       // Update student with name, dob, and special_needs
-      const dobValue = r.dob ? r.dob : null;
+      const dobValue = normalizeCampDob(r.dob);
       await tx`
         INSERT INTO students (id, name, dob, special_needs)
         VALUES (${r.student_id}, ${r.student_name}, ${dobValue}::date, ${r.special_needs})
