@@ -137,13 +137,9 @@ function officeNotes(row: CampPrintableScheduleRow) {
   ].filter(Boolean).join(' | ');
 }
 
-function roomName(row: CampPrintableScheduleRow) {
+function assignedRoomLabel(row: CampPrintableScheduleRow) {
   if (!row.assigned_seat_number) return 'Unassigned';
-  return row.assigned_seat_number >= 100 ? 'Front Room' : 'Back Room';
-}
-
-function seatLabel(row: CampPrintableScheduleRow) {
-  return row.assigned_seat_number ? `Seat ${row.assigned_seat_number}` : 'Unassigned';
+  return row.assigned_seat_number >= 100 ? 'Front' : 'Back';
 }
 
 function rowsForBlock(rows: CampPrintableScheduleRow[], blockId: BlockId) {
@@ -190,69 +186,78 @@ function studentLabel(row: CampPrintableScheduleRow, blockId: BlockId) {
   return row.student_name;
 }
 
-function RosterRow({ row }: { row: CampPrintableScheduleRow }) {
+function StaffRoomCell({ row }: { row: CampPrintableScheduleRow }) {
+  const room = assignedRoomLabel(row);
+
   return (
-    <div className="camp-print-roster-row border-b border-slate-300 py-1 text-[8.5px] leading-tight">
-      <div className="grid grid-cols-[0.7in_1.1fr_0.48in_1.25fr_0.78in_1fr] gap-1">
-        <div className="font-bold">{seatLabel(row)}</div>
-        <div className="min-w-0 break-words font-bold">{row.student_name}</div>
-        <div className="font-bold uppercase">{sessionLabel(row)}</div>
-        <div className="min-w-0 break-words">
-          <span className="font-semibold">Parent:</span> {parentContact(row)}
-        </div>
-        <div className="whitespace-nowrap">
-          <span className="font-semibold">Sep Gr:</span> _____
-        </div>
-        <div className="min-w-0 break-words">
-          <span className="font-semibold">Course:</span> {courseLabel(row)}
-        </div>
-      </div>
-      <div className="mt-0.5 grid grid-cols-2 gap-2 text-[8px]">
-        <div className="min-w-0 break-words">
-          <span className="font-semibold">Allergies/Special:</span> {careNotes(row)}
-        </div>
-        <div className="min-w-0 break-words">
-          <span className="font-semibold">Office:</span> {officeNotes(row)}
-        </div>
-      </div>
+    <div
+      contentEditable
+      suppressContentEditableWarning
+      className="min-h-7 whitespace-pre-wrap rounded-sm border border-dashed border-slate-300 bg-white px-1 py-0.5 text-slate-900 outline-none"
+      aria-label={`Room for ${row.student_name}`}
+    >
+      {room === 'Unassigned' ? '' : room}
     </div>
   );
 }
 
-function DailyRoomRoster({ rows }: { rows: CampPrintableScheduleRow[] }) {
-  const roomOrder = ['Front Room', 'Back Room', 'Unassigned'];
-  const grouped = new Map<string, CampPrintableScheduleRow[]>();
+function StudentListRow({ row }: { row: CampPrintableScheduleRow }) {
+  return (
+    <tr className="camp-print-student-row align-top">
+      <td className="border border-slate-400 p-1.5 text-[9px] font-bold leading-tight">
+        {row.student_name}
+      </td>
+      <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">
+        {parentContact(row)}
+      </td>
+      <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">
+        <div className="font-bold uppercase">{sessionLabel(row)}</div>
+        <div>{courseLabel(row)}</div>
+      </td>
+      <td className="border border-slate-400 p-1 text-[8.5px] leading-tight">
+        <StaffRoomCell row={row} />
+      </td>
+      <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">_____</td>
+      <td className="border border-slate-400 p-1.5 text-[8px] leading-tight">
+        {careNotes(row)}
+      </td>
+      <td className="border border-slate-400 p-1.5 text-[8px] leading-tight">
+        {officeNotes(row)}
+      </td>
+    </tr>
+  );
+}
 
-  rows
+function DailyStudentList({ rows }: { rows: CampPrintableScheduleRow[] }) {
+  const sortedRows = rows
     .slice()
-    .sort((a, b) => {
-      const aSeat = a.assigned_seat_number ?? 9999;
-      const bSeat = b.assigned_seat_number ?? 9999;
-      return aSeat - bSeat || a.student_name.localeCompare(b.student_name);
-    })
-    .forEach((row) => {
-      const key = roomName(row);
-      grouped.set(key, [...(grouped.get(key) ?? []), row]);
-    });
+    .sort((a, b) => a.student_name.localeCompare(b.student_name));
 
   return (
-    <div className="mt-4 space-y-3">
-      {roomOrder
-        .filter((room) => grouped.has(room))
-        .map((room) => (
-          <section key={room} className="break-inside-avoid">
-            <div className="mb-1 flex items-center justify-between border-b border-slate-500 pb-1">
-              <h3 className="text-sm font-bold">{room} Roster</h3>
-              <span className="text-xs font-semibold text-slate-600">{grouped.get(room)!.length} campers</span>
-            </div>
-            <div>
-              {grouped.get(room)!.map((row) => (
-                <RosterRow key={`${room}-${row.camp_enrolment_id}`} row={row} />
-              ))}
-            </div>
-          </section>
-        ))}
-    </div>
+    <section className="mt-4 break-inside-avoid">
+      <div className="mb-1 flex items-center justify-between border-b border-slate-500 pb-1">
+        <h3 className="text-sm font-bold">Student List</h3>
+        <span className="text-xs font-semibold text-slate-600">{sortedRows.length} campers</span>
+      </div>
+      <table className="w-full border-collapse text-left">
+        <thead>
+          <tr className="bg-slate-100">
+            <th className="w-[15%] border border-slate-400 p-1.5 text-[8px] uppercase">Student</th>
+            <th className="w-[18%] border border-slate-400 p-1.5 text-[8px] uppercase">Parent / Contact</th>
+            <th className="w-[18%] border border-slate-400 p-1.5 text-[8px] uppercase">Camp</th>
+            <th className="w-[10%] border border-slate-400 p-1.5 text-[8px] uppercase">Room F/B</th>
+            <th className="w-[7%] border border-slate-400 p-1.5 text-[8px] uppercase">Sep Gr</th>
+            <th className="w-[16%] border border-slate-400 p-1.5 text-[8px] uppercase">Allergies / Special</th>
+            <th className="w-[16%] border border-slate-400 p-1.5 text-[8px] uppercase">Office Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortedRows.map((row) => (
+            <StudentListRow key={row.camp_enrolment_id} row={row} />
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
@@ -450,7 +455,7 @@ export default function CampPrintableSchedule({
                   </tbody>
                 </table>
 
-                <DailyRoomRoster rows={rows} />
+                <DailyStudentList rows={rows} />
               </section>
             ))
           )}

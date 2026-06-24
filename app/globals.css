@@ -58,6 +58,11 @@ body {
     break-inside: avoid;
   }
 
+  .camp-print-student-row {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
   .camp-schedule-print-day {
     page-break-after: always;
     break-after: page;
