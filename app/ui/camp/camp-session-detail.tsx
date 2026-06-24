@@ -3,12 +3,12 @@
 import { useState } from 'react';
 import { CampSessionWithEnrolments } from '@/app/lib/definitions';
 import { createSlipsForCampers, updateCampEnrolmentNote, updateCampSeatAssignment } from '@/app/lib/actions';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragOverlay, DragStartEvent } from '@dnd-kit/core';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent, DragOverlay, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
-import { CakeIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+import { CakeIcon, DocumentTextIcon, PrinterIcon } from '@heroicons/react/24/outline';
 
 type Seat = {
   id: string;
@@ -20,8 +20,44 @@ type Seat = {
   fdEnrolmentId: string | null;
 };
 
+type CampRosterEnrolment = CampSessionWithEnrolments['enrolments'][0];
+
+const cleanText = (value?: string | null) => value?.trim() || '';
+
+const formatCourseLabel = (enrolment: CampRosterEnrolment) => (
+  cleanText(enrolment.course_name) || cleanText(enrolment.course_id)
+);
+
+const formatSessionLabel = (enrolment: CampRosterEnrolment) => (
+  `${enrolment.camp_type}${enrolment.extended_care ? ' EX' : ''}`
+);
+
+const formatParentContact = (enrolment: CampRosterEnrolment) => {
+  const parent = cleanText(enrolment.parent_name);
+  const phone = cleanText(enrolment.parent_phone);
+  return [parent, phone].filter(Boolean).join(' / ');
+};
+
+const formatCareNotes = (enrolment: CampRosterEnrolment) => {
+  const notes = [
+    cleanText(enrolment.allergies) ? `Allergies: ${cleanText(enrolment.allergies)}` : '',
+    cleanText(enrolment.special_needs) ? `Special: ${cleanText(enrolment.special_needs)}` : '',
+  ].filter(Boolean);
+
+  return notes.join(' | ');
+};
+
+const formatOfficeNotes = (enrolment: CampRosterEnrolment, rosterNote?: string | null) => {
+  const notes = [
+    cleanText(enrolment.parent_request_notes),
+    cleanText(rosterNote) ? `Roster note: ${cleanText(rosterNote)}` : '',
+  ].filter(Boolean);
+
+  return notes.join(' | ');
+};
+
 type CamperCardProps = {
-  enrolment: CampSessionWithEnrolments['enrolments'][0];
+  enrolment: CampRosterEnrolment;
   isSelected: boolean;
   onToggleSelect: () => void;
   isDragging?: boolean;
@@ -135,9 +171,9 @@ function CamperCard({
               Ext Care
             </span>
           )}
-          {enrolment.course_id && (
+          {formatCourseLabel(enrolment) && (
             <span className="px-1 py-0.5 text-[10px] font-medium rounded bg-slate-100 text-slate-700">
-              {enrolment.course_id}
+              {formatCourseLabel(enrolment)}
             </span>
           )}
         </div>
@@ -150,7 +186,7 @@ function CamperCard({
 
         <div className="mt-1 border border-slate-200 rounded p-1 bg-slate-50">
           <div className="flex items-center justify-between gap-2 mb-1">
-            <span className="text-[10px] font-semibold text-slate-700">Enrolment Note</span>
+            <span className="text-[10px] font-semibold text-slate-700">Roster Note</span>
             {!isEditingNote ? (
               <button
                 type="button"
@@ -660,7 +696,146 @@ export default function CampSessionDetail({
     setIsCreatingSlips(false);
   };
 
+  const handlePrint = () => {
+    window.print();
+  };
+
   const activeEnrolment = activeId ? enrolmentMap.get(activeId) : null;
+
+  const getSeatEnrolments = (seat: Seat) => {
+    return [
+      seat.fdEnrolmentId ? enrolmentMap.get(seat.fdEnrolmentId) ?? null : null,
+      seat.amEnrolmentId ? enrolmentMap.get(seat.amEnrolmentId) ?? null : null,
+      seat.pmEnrolmentId ? enrolmentMap.get(seat.pmEnrolmentId) ?? null : null,
+    ].filter((enrolment): enrolment is CampSessionWithEnrolments['enrolments'][0] => Boolean(enrolment));
+  };
+
+  const renderPrintRosterRow = (enrolment: CampRosterEnrolment, seatLabel: string) => {
+    const rosterNote = getNote(enrolment.id);
+    const careNotes = formatCareNotes(enrolment);
+    const officeNotes = formatOfficeNotes(enrolment, rosterNote);
+    const parentContact = formatParentContact(enrolment);
+    const courseLabel = formatCourseLabel(enrolment);
+
+    return (
+      <div key={`${seatLabel}-${enrolment.id}`} className="camp-print-roster-row border-b border-slate-300 py-1 text-[8.5px] leading-tight">
+        <div className="grid grid-cols-[0.64in_1.15fr_0.48in_1.25fr_0.78in_1fr] gap-1">
+          <div className="font-bold">{seatLabel}</div>
+          <div className="min-w-0 break-words font-bold">{enrolment.student_name}</div>
+          <div className="font-bold uppercase">{formatSessionLabel(enrolment)}</div>
+          <div className="min-w-0 break-words">
+            <span className="font-semibold">Parent:</span> {parentContact || ''}
+          </div>
+          <div className="whitespace-nowrap">
+            <span className="font-semibold">Sep Gr:</span> _____
+          </div>
+          <div className="min-w-0 break-words">
+            <span className="font-semibold">Course:</span> {courseLabel || ''}
+          </div>
+        </div>
+        <div className="mt-0.5 grid grid-cols-2 gap-2 text-[8px]">
+          <div className="min-w-0 break-words">
+            <span className="font-semibold">Allergies/Special:</span> {careNotes || ''}
+          </div>
+          <div className="min-w-0 break-words">
+            <span className="font-semibold">Office:</span> {officeNotes || ''}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPrintRoom = (roomConfig: typeof ROOM_1_CONFIG, roomSeats: Seat[]) => {
+    const printRowsWithSeats = new Set<number>();
+    const printColsWithSeats = new Set<number>();
+
+    roomConfig.visibleSeats.forEach((seatNum) => {
+      printRowsWithSeats.add(Math.floor((seatNum - 1) / roomConfig.cols));
+      printColsWithSeats.add((seatNum - 1) % roomConfig.cols);
+    });
+
+    const roster = roomSeats
+      .flatMap((seat) => getSeatEnrolments(seat).map((enrolment) => ({ seat, enrolment })))
+      .sort((a, b) => a.seat.number - b.seat.number || a.enrolment.student_name.localeCompare(b.enrolment.student_name));
+
+    return (
+      <section key={roomConfig.name} className="camp-print-room bg-white text-black">
+        <div className="mb-2 flex items-start justify-between gap-4 border-b border-slate-400 pb-1.5">
+          <div>
+            <h2 className="text-xl font-bold">{roomConfig.name}</h2>
+            <p className="text-xs text-slate-700">Camp room roster</p>
+          </div>
+          <div className="text-right text-xs font-semibold text-slate-700">
+            <div>{roster.length} assigned</div>
+            <div>Front of Room -&gt;</div>
+          </div>
+        </div>
+
+        <div>
+          <div
+            className="mb-2 grid gap-1"
+            style={{
+              gridTemplateColumns: Array.from({ length: roomConfig.cols }, (_, i) =>
+                printColsWithSeats.has(i) ? 'minmax(0, 1fr)' : '0.35in'
+              ).join(' '),
+              gridTemplateRows: Array.from({ length: roomConfig.rows }, (_, i) =>
+                printRowsWithSeats.has(i) ? 'minmax(0.42in, auto)' : '0.14in'
+              ).join(' ')
+            }}
+          >
+            {Array.from({ length: roomConfig.rows * roomConfig.cols }, (_, i) => {
+              const relativeSeatNumber = i + 1;
+              const absoluteSeatNumber = relativeSeatNumber + roomConfig.seatOffset;
+              const seat = roomSeats.find((roomSeat) => roomSeat.number === absoluteSeatNumber);
+
+              if (!seat) {
+                return <div key={`print-empty-${absoluteSeatNumber}`} />;
+              }
+
+              const assignedEnrolments = getSeatEnrolments(seat);
+
+              return (
+                <div
+                  key={`print-seat-${absoluteSeatNumber}`}
+                  className="min-h-[0.42in] rounded border border-slate-500 p-0.5 text-[7.5px] leading-tight"
+                >
+                  <div className="mb-0.5 flex items-center justify-between border-b border-slate-300 pb-0.5">
+                    <span className="font-bold">Seat {absoluteSeatNumber}</span>
+                    <span className="text-[7px] text-slate-600">R{seat.row + 1} C{seat.col + 1}</span>
+                  </div>
+                  {assignedEnrolments.length === 0 ? (
+                    <div className="pt-1 text-center text-slate-400">Open</div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      {assignedEnrolments.map((enrolment) => (
+                        <div key={enrolment.id}>
+                          <div className="font-semibold">
+                            {enrolment.student_name}
+                          </div>
+                          <div className="text-[7px] uppercase text-slate-700">
+                            {formatSessionLabel(enrolment)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <h3 className="mb-1 text-xs font-bold uppercase">Roster</h3>
+          {roster.length === 0 ? (
+            <p className="text-xs text-slate-500">No assigned campers.</p>
+          ) : (
+            <div>
+              {roster.map(({ seat, enrolment }) => renderPrintRosterRow(enrolment, `Seat ${seat.number}`))}
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  };
 
   // Items for sortable context should be all enrolment IDs
   const allEnrolmentIds = session.enrolments.map(e => e.id);
@@ -709,15 +884,16 @@ export default function CampSessionDetail({
 
   return (
     <div>
+      <div className="print:hidden">
       <div className="bg-white border border-slate-200 rounded-lg p-4 mb-6">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold text-slate-900 mb-1">Seating Chart</h2>
             <p className="text-sm text-slate-600">
               Drag and drop campers to assign seats. Select campers to create login slips.
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={selectAll}
               className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition"
@@ -729,6 +905,14 @@ export default function CampSessionDetail({
               className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition"
             >
               Deselect All
+            </button>
+            <button
+              onClick={handlePrint}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition"
+              title="Print seating chart"
+            >
+              <PrinterIcon className="h-4 w-4" />
+              Print
             </button>
             <button
               onClick={handleCreateSlips}
@@ -803,7 +987,6 @@ export default function CampSessionDetail({
                   {Array.from({ length: ROWS * COLS }, (_, i) => {
                     const relativeSeatNumber = i + 1;
                     const absoluteSeatNumber = relativeSeatNumber + currentRoomConfig.seatOffset;
-                    const row = Math.floor(i / COLS);
                     const seat = seats.find(s => s.number === absoluteSeatNumber);
                     
                     if (!seat) {
@@ -874,6 +1057,24 @@ export default function CampSessionDetail({
           ) : null}
         </DragOverlay>
       </DndContext>
+      </div>
+
+      <div className="hidden print:block">
+        {renderPrintRoom(ROOM_2_CONFIG, room2Seats)}
+        {renderPrintRoom(ROOM_1_CONFIG, room1Seats)}
+        {unassignedEnrolments.length > 0 && (
+          <section className="bg-white text-black">
+            <h2 className="mb-3 border-b border-slate-400 pb-2 text-2xl font-bold">
+              Unassigned Campers
+            </h2>
+            <div>
+              {unassignedEnrolments.map((enrolment) => (
+                renderPrintRosterRow(enrolment, 'Unassigned')
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 }

@@ -12,6 +12,7 @@ import { fetchFamilyView } from "./scraper_helpers";
 // makeups(id, student_id, session_id, course text, date date)
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: "require" });
+type DbTx = typeof sql;
 
 
 function splitName(full: string): { first: string; last: string } {
@@ -19,7 +20,7 @@ function splitName(full: string): { first: string; last: string } {
   return { first: parts[0] || "", last: parts.slice(1).join(" ") || "" };
 }
 
-async function getSessionId(tx: any, weekday: string, start: string, end: string): Promise<string> {
+async function getSessionId(tx: DbTx, weekday: string, start: string, end: string): Promise<string> {
   const [{ id }] = await tx<{ id: string }[]>`
     INSERT INTO sessions (weekday, start_time, end_time, is_summer)
     VALUES (${weekday}, ${start}, ${end}, FALSE)
@@ -30,7 +31,20 @@ async function getSessionId(tx: any, weekday: string, start: string, end: string
   return id;
 }
 
-export async function upsertEnrolmentFromNormalized(rows: any[]) {
+type NormalizedEnrolmentRow = {
+  day: string;
+  start_date: string;
+  end_date: string | null;
+  start_time: string;
+  end_time: string;
+  student_id: number;
+  name: string;
+  course_code: string;
+  trial_date: string;
+  makeup_date: string;
+};
+
+export async function upsertEnrolmentFromNormalized(rows: NormalizedEnrolmentRow[]) {
   
   if (!rows.length) return { inserted: 0, updated: 0, seen: 0 };
 
@@ -296,7 +310,7 @@ export async function upsertEnrolmentFromNormalized(rows: any[]) {
 type Pair = { student_id: number; session_id: string };
 
 export async function resolveEnrolmentIds(
-  tx: any,
+  tx: DbTx,
   pairs: Pair[]
 ): Promise<Map<string, string>> {
   if (!pairs.length) return new Map();
@@ -329,7 +343,7 @@ export async function resolveEnrolmentIds(
 // upsert_absences.ts
 
 export async function upsertAbsences(
-  tx: any,
+  tx: DbTx,
   enrolmentIds: string[],
   dates: string[]
 ) {
@@ -353,7 +367,7 @@ export async function upsertAbsences(
 
 
 export async function deleteAbsencesNotSeen(
-  tx: any,
+  tx: DbTx,
   enrolmentIds: string[],
   dates: string[],
   startDate: string,
@@ -384,7 +398,13 @@ export async function deleteAbsencesNotSeen(
   `;
 }
 
-type AttendanceApiRow = any; // your raw attendance result type
+type AttendanceApiRow = {
+  date: string;
+  weekday: string;
+  start_time: string;
+  end_time: string;
+  student_id: number | string;
+};
 
 export async function syncAbsencesForRange(opts: {
   attendanceResults: AttendanceApiRow[];
@@ -404,7 +424,7 @@ export async function syncAbsencesForRange(opts: {
   
   if (rows.length == 0) return {inserted: 0, seen: 0};
 
-  return await sql.begin(async (tx: any) => {
+  return await sql.begin(async (tx) => {
     // 1) resolve session ids (cache by weekday|start|end)
     const sessMap = new Map<string, string>();
     for (const r of rows) {
@@ -485,18 +505,27 @@ type NormalizedCampRow = {
   student_id: number;
   student_name: string;
   dob: string;
+  parent_name: string;
+  parent_phone: string;
   start_date: string;
   end_date: string;
   start_time: string;
   end_time: string;
   camp_type: 'FD' | 'PM' | 'AM';
   extended_care: boolean;
+  allergies: string;
   special_needs: string;
   course_id: string;
 };
 
+type CampRosterColumnFlags = {
+  parent_name: boolean;
+  parent_phone: boolean;
+  allergies: boolean;
+};
+
 async function getCampSessionId(
-  tx: any,
+  tx: DbTx,
   startDate: string,
   endDate: string,
   extendedCare: boolean,
@@ -510,6 +539,23 @@ async function getCampSessionId(
     RETURNING id;
   `;
   return result[0].id;
+}
+
+async function getCampRosterColumnFlags(tx: DbTx): Promise<CampRosterColumnFlags> {
+  const columns = await tx<{ column_name: keyof CampRosterColumnFlags }[]>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'camp_enrolments'
+      AND column_name IN ('parent_name', 'parent_phone', 'allergies');
+  `;
+  const names = new Set(columns.map((column: { column_name: keyof CampRosterColumnFlags }) => column.column_name));
+
+  return {
+    parent_name: names.has('parent_name'),
+    parent_phone: names.has('parent_phone'),
+    allergies: names.has('allergies'),
+  };
 }
 
 export async function insertCampEnrolments(
@@ -537,6 +583,10 @@ export async function insertCampEnrolments(
   let updatedCount = 0;
 
   await sql.begin(async (tx) => {
+    const rosterColumns = await getCampRosterColumnFlags(tx);
+    const hasRosterContactColumns =
+      rosterColumns.parent_name && rosterColumns.parent_phone && rosterColumns.allergies;
+
     for (const r of rows) {
       console.log(
         r.student_id,
@@ -599,13 +649,38 @@ export async function insertCampEnrolments(
         courseId = trimmedCourseId;
       }
       
-      const result = await tx`
-        INSERT INTO camp_enrolments (student_id, camp_session_id, course_id)
-        VALUES (${r.student_id}, ${campSessionId}::uuid, ${courseId})
-        ON CONFLICT (student_id, camp_session_id) DO UPDATE
-          SET course_id = EXCLUDED.course_id
-        RETURNING (xmax = 0) AS inserted;
-      `;
+      const result = hasRosterContactColumns
+        ? await tx`
+            INSERT INTO camp_enrolments (
+              student_id,
+              camp_session_id,
+              course_id,
+              parent_name,
+              parent_phone,
+              allergies
+            )
+            VALUES (
+              ${r.student_id},
+              ${campSessionId}::uuid,
+              ${courseId},
+              ${r.parent_name || null},
+              ${r.parent_phone || null},
+              ${r.allergies || null}
+            )
+            ON CONFLICT (student_id, camp_session_id) DO UPDATE
+              SET course_id = EXCLUDED.course_id,
+                  parent_name = EXCLUDED.parent_name,
+                  parent_phone = EXCLUDED.parent_phone,
+                  allergies = EXCLUDED.allergies
+            RETURNING (xmax = 0) AS inserted;
+          `
+        : await tx`
+            INSERT INTO camp_enrolments (student_id, camp_session_id, course_id)
+            VALUES (${r.student_id}, ${campSessionId}::uuid, ${courseId})
+            ON CONFLICT (student_id, camp_session_id) DO UPDATE
+              SET course_id = EXCLUDED.course_id
+            RETURNING (xmax = 0) AS inserted;
+          `;
       
       if (result[0].inserted) {
         insertedCount++;
