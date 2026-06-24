@@ -9,7 +9,7 @@ import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized, upsertSummerEnrolmentWeekFromNormalized } from './insert_from_portal';
-import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice } from './definitions';
+import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampPrintableStudentListField } from './definitions';
 import {
   CanvasConfigError,
   CanvasUser,
@@ -2210,6 +2210,25 @@ const CampLmsDateSchema = z.object({
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+const CampPrintableStudentListFieldSchema = z.enum([
+  'student',
+  'parent',
+  'type',
+  'camp',
+  'days',
+  'room',
+  'medical',
+  'notes',
+] satisfies [CampPrintableStudentListField, ...CampPrintableStudentListField[]]);
+
+const CampPrintableStudentListOverrideSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  studentId: z.string().trim().regex(/^\d+$/),
+  field: CampPrintableStudentListFieldSchema,
+  value: z.string().max(5000),
+});
+
 const CampLmsCourseMappingSchema = z.object({
   courseId: z.string().trim().min(1),
   lmsCourseName: optionalTrimmedString,
@@ -2286,6 +2305,14 @@ async function campLmsChecklistSchemaReady() {
           AND column_name = 'after_state'
       )
     ) AS ready;
+  `;
+
+  return Boolean(schema?.ready);
+}
+
+async function campPrintStudentListOverridesReady() {
+  const [schema] = await sql<{ ready: boolean }[]>`
+    SELECT to_regclass('public.camp_print_student_list_overrides') IS NOT NULL AS ready;
   `;
 
   return Boolean(schema?.ready);
@@ -3168,6 +3195,70 @@ export async function updateCampSeatAssignment(
   } catch (error) {
     console.error('Error updating seat assignment:', error);
     return { ok: false, error: `Failed to update seat assignment: ${String((error as any)?.message ?? error)}` };
+  }
+}
+
+export async function updateCampPrintableStudentListOverride(input: {
+  weekStart: string;
+  weekEnd: string;
+  studentId: string;
+  field: CampPrintableStudentListField;
+  value: string;
+}) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampPrintableStudentListOverrideSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid printable student list update' };
+  }
+
+  try {
+    const ready = await campPrintStudentListOverridesReady();
+    if (!ready) {
+      return {
+        ok: false,
+        error: 'Printable student list saving needs migration 026 applied.',
+      };
+    }
+
+    const updatedBy =
+      session.user.email ?? session.user.name ?? getSessionUserId(session) ?? 'unknown';
+    const { weekStart, weekEnd, studentId, field, value } = parsed.data;
+
+    await sql`
+      INSERT INTO camp_print_student_list_overrides (
+        week_start,
+        week_end,
+        student_id,
+        field,
+        value,
+        updated_by,
+        updated_at
+      )
+      VALUES (
+        ${weekStart}::date,
+        ${weekEnd}::date,
+        ${studentId}::numeric,
+        ${field},
+        ${value},
+        ${updatedBy},
+        NOW()
+      )
+      ON CONFLICT (week_start, week_end, student_id, field) DO UPDATE
+      SET value = EXCLUDED.value,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = NOW();
+    `;
+
+    revalidateTag('camps', 'max');
+    revalidatePath(`/dashboard/camp/${weekStart}/${weekEnd}/printable`);
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating printable camp student list override:', error);
+    return { ok: false, error: 'Failed to save printable student list update' };
   }
 }
 

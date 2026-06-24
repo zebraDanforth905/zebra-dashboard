@@ -34,6 +34,7 @@ import {
   CampPrintableScheduleData,
   CampPrintableScheduleRow,
   CampSessionWithEnrolments,
+  CampPrintableStudentListOverride,
 } from './definitions';
 import { getCanvasPublicConfig } from './canvas-lms';
 import { cacheTag, unstable_cache } from 'next/cache';
@@ -1817,6 +1818,14 @@ async function campEnrolmentsRosterColumns(): Promise<CampRosterColumnFlags> {
   };
 }
 
+async function campPrintStudentListOverridesReady() {
+  const [schema] = await sql<{ ready: boolean }[]>`
+    SELECT to_regclass('public.camp_print_student_list_overrides') IS NOT NULL AS ready;
+  `;
+
+  return Boolean(schema?.ready);
+}
+
 export async function fetchUpcomingCampSessions() {
   'use cache'
   cacheTag('camps');
@@ -2610,11 +2619,24 @@ export async function fetchCampPrintableSchedule(
         ce.course_id NULLS LAST,
         s.name ASC;
     `;
+    const studentListOverrides = (await campPrintStudentListOverridesReady())
+      ? await sql<CampPrintableStudentListOverride[]>`
+          SELECT
+            student_id::text AS student_id,
+            field,
+            value
+          FROM camp_print_student_list_overrides
+          WHERE week_start = ${startDate}::date
+            AND week_end = ${endDate}::date
+          ORDER BY student_id::text ASC, field ASC;
+        `
+      : [];
 
     return {
       start_date: startDate,
       end_date: endDate,
       rows,
+      student_list_overrides: studentListOverrides,
     };
   } catch (error) {
     console.error('Database Error:', error);

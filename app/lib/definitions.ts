@@ -596,10 +596,27 @@ export type CampPrintableScheduleRow = {
   parent_request_notes: string | null;
 };
 
+export type CampPrintableStudentListField =
+  | 'student'
+  | 'parent'
+  | 'type'
+  | 'camp'
+  | 'days'
+  | 'room'
+  | 'medical'
+  | 'notes';
+
+export type CampPrintableStudentListOverride = {
+  student_id: string;
+  field: CampPrintableStudentListField;
+  value: string;
+};
+
 export type CampPrintableScheduleData = {
   start_date: string;
   end_date: string;
   rows: CampPrintableScheduleRow[];
+  student_list_overrides: CampPrintableStudentListOverride[];
 };
 
 export type SeatAssignment = {
