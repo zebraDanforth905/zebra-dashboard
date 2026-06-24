@@ -1,8 +1,9 @@
 // app/lib/insert.ts
 import postgres from "postgres";
 import { ymd, assertAligned } from "./utils";
-import { normalizeAbsencesFromAttendance, PortalCustomerRow } from "./normalize";
+import { PortalCustomerRow } from "./normalize";
 import { fetchFamilyView } from "./scraper_helpers";
+import { isSummerDateRange } from "./tdsb-calendar";
 
 // expects tables: students(student_id int PK?, first_name, last_name, lms_password?),
 // sessions(id serial/bigint, weekday text/enum, start_time time, end_time time) unique(weekday,start_time,end_time),
@@ -27,6 +28,7 @@ type NormalizedPortalEnrolmentRow = {
   course_code: string;
   trial_date: string;
   makeup_date: string;
+  is_summer?: boolean;
 };
 
 
@@ -35,10 +37,10 @@ function splitName(full: string): { first: string; last: string } {
   return { first: parts[0] || "", last: parts.slice(1).join(" ") || "" };
 }
 
-async function getSessionId(tx: PortalTx, weekday: string, start: string, end: string | null): Promise<string> {
+async function getSessionId(tx: PortalTx, weekday: string, start: string, end: string | null, isSummer = false): Promise<string> {
   const [{ id }] = await tx<{ id: string }[]>`
     INSERT INTO sessions (weekday, start_time, end_time, is_summer)
-    VALUES (${weekday}, ${start}, ${end}, FALSE)
+    VALUES (${weekday}, ${start}, ${end}, ${isSummer})
     ON CONFLICT (start_time, end_time, weekday, is_summer)
       DO UPDATE SET weekday = EXCLUDED.weekday
     RETURNING id;
@@ -298,8 +300,9 @@ export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolm
   await sql.begin(async (tx) => {
 
     for (const r of rows) {
-      console.log(r.student_id, r.name, r.day, r.start_date, r.end_date, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date);
-      const sessionId = await getSessionId(tx, r.day, r.start_time, r.end_time);
+      const isSummer = r.is_summer === true;
+      console.log(r.student_id, r.name, r.day, r.start_date, r.end_date, r.start_time, r.end_time, r.course_code, r.trial_date, r.makeup_date, isSummer);
+      const sessionId = await getSessionId(tx, r.day, r.start_time, r.end_time, isSummer);
 
       const trial = (r.trial_date || '').toString().trim();
       const makeup = (r.makeup_date || '').toString().trim();
@@ -376,7 +379,9 @@ export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolm
     // Strict enrolment reconciliation (optional & guarded)
     const STRICT_SNAPSHOT = true;
 
-    if (STRICT_SNAPSHOT && seenRegular) {
+    const seenNonSummerRegular = rows.some((r) => !r.trial_date && !r.makeup_date && r.is_summer !== true);
+
+    if (STRICT_SNAPSHOT && seenRegular && seenNonSummerRegular) {
         const keys = Array.from(seenEnroll).map((k) => k.split("|"));
 
         const keepStudents: number[] = keys.map(([studentId]) => Number(studentId));    // ints
@@ -393,12 +398,14 @@ export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolm
             WHERE enrolment_id IN (
                 SELECT e.id
                 FROM enrolments e
+                JOIN sessions se ON se.id = e.session_id
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM keep k
                     WHERE k.student_id = e.student_id
                     AND k.session_id = e.session_id
                 )
+                AND se.is_summer = FALSE
             );
         `;
         
@@ -410,7 +417,10 @@ export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolm
                 AS t(student_id, session_id)  -- zip pairs correctly
             )
             DELETE FROM enrolments e
-            WHERE NOT EXISTS (
+            USING sessions se
+            WHERE se.id = e.session_id
+            AND se.is_summer = FALSE
+            AND NOT EXISTS (
                 SELECT 1
                 FROM keep k
                 WHERE k.student_id = e.student_id
@@ -573,28 +583,41 @@ export async function upsertAbsences(
 
 
 export async function deleteAbsencesNotSeen(
-  tx: DbTx,
-  enrolmentIds: string[],
-  dates: string[],
+  tx: PortalTx,
+  scopeEnrolmentIds: string[],
+  scopeDates: string[],
+  absentEnrolmentIds: string[],
+  absentDates: string[],
   startDate: string,
   endDate: string
 ) {
-  if (!enrolmentIds.length) return;
-  assertAligned("deleteAbsencesNotSeen", { enrolmentIds, dates });
-
-  const scopeEnrolments = Array.from(new Set(enrolmentIds));
+  if (!scopeEnrolmentIds.length) return;
+  assertAligned("deleteAbsencesNotSeen scope", { scopeEnrolmentIds, scopeDates });
+  assertAligned("deleteAbsencesNotSeen absent", { absentEnrolmentIds, absentDates });
 
   await tx`
-    WITH keep AS (
+    WITH scope AS (
       SELECT *
       FROM UNNEST(
-        ${enrolmentIds}::uuid[],
-        ${dates}::date[]
+        ${scopeEnrolmentIds}::uuid[],
+        ${scopeDates}::date[]
+      ) AS t(enrolment_id, date)
+    ),
+    keep AS (
+      SELECT *
+      FROM UNNEST(
+        ${absentEnrolmentIds}::uuid[],
+        ${absentDates}::date[]
       ) AS t(enrolment_id, date)
     )
     DELETE FROM absences a
     WHERE a.date BETWEEN ${ymd(startDate)}::date AND ${ymd(endDate)}::date
-      AND a.enrolment_id = ANY(${scopeEnrolments}::uuid[])
+      AND EXISTS (
+        SELECT 1
+        FROM scope s
+        WHERE s.enrolment_id = a.enrolment_id
+          AND s.date = a.date
+      )
       AND NOT EXISTS (
         SELECT 1
         FROM keep k
@@ -610,6 +633,7 @@ type AttendanceApiRow = {
   start_time: string;
   end_time: string;
   student_id: number | string;
+  is_absent: boolean;
 };
 
 export async function syncAbsencesForRange(opts: {
@@ -634,15 +658,16 @@ export async function syncAbsencesForRange(opts: {
     // 1) resolve session ids (cache by weekday|start|end)
     const sessMap = new Map<string, string>();
     for (const r of rows) {
-      const key = `${r.weekday}|${r.start_time}|${r.end_time}`;
+      const isSummer = isSummerDateRange(r.date, r.date);
+      const key = `${r.weekday}|${r.start_time}|${r.end_time}|${isSummer}`;
       if (!sessMap.has(key)) {
-        const sid = await getSessionId(tx, r.weekday, r.start_time, r.end_time);
+        const sid = await getSessionId(tx, r.weekday, r.start_time, r.end_time, isSummer);
         sessMap.set(key, sid);
       }
     }
 
     const pairs = rows.map(r => {
-      const key = `${r.weekday}|${r.start_time}|${r.end_time}`;
+      const key = `${r.weekday}|${r.start_time}|${r.end_time}|${isSummerDateRange(r.date, r.date)}`;
       const session_id = sessMap.get(key)!;
     
       return { student_id: Number(r.student_id), session_id };
@@ -653,14 +678,15 @@ export async function syncAbsencesForRange(opts: {
 
     
 
- 
-    const enrolmentIds: string[] = [];
-    const dates: string[] = [];
+    const scopeEnrolmentIds: string[] = [];
+    const scopeDates: string[] = [];
+    const absentEnrolmentIds: string[] = [];
+    const absentDates: string[] = [];
 
   
 
     for (const r of rows) {
-      const sessKey = `${r.weekday}|${r.start_time}|${r.end_time}`;
+      const sessKey = `${r.weekday}|${r.start_time}|${r.end_time}|${isSummerDateRange(r.date, r.date)}`;
       const session_id = sessMap.get(sessKey)!;
       const enrolKey = `${Number(r.student_id)}|${session_id}`;
 
@@ -672,37 +698,45 @@ export async function syncAbsencesForRange(opts: {
        
         continue;
       }
-      enrolmentIds.push(enrolment_id);
-      dates.push(ymd(r.date));
+      const date = ymd(r.date);
+      scopeEnrolmentIds.push(enrolment_id);
+      scopeDates.push(date);
+
+      if (r.is_absent) {
+        absentEnrolmentIds.push(enrolment_id);
+        absentDates.push(date);
+      }
     }
 
 
-    if (!enrolmentIds.length) return {inserted: 0, seen: rows.length};
+    if (!scopeEnrolmentIds.length) return {inserted: 0, seen: rows.length};
 
 
-    try {
-      await tx`
-        WITH new_rows AS (
-          SELECT *
-          FROM UNNEST(
-            ${enrolmentIds}::uuid[],
-            ${dates}::date[]
-          ) AS t(enrolment_id, date)
-        )
-        INSERT INTO absences (enrolment_id, date)
-        SELECT enrolment_id, date
-        FROM new_rows
-        ON CONFLICT (enrolment_id, date) DO NOTHING;
-      `;
-    } catch (e){
-        console.error("error upserting snapshot", e)
+    if (absentEnrolmentIds.length) {
+      try {
+        await tx`
+          WITH new_rows AS (
+            SELECT *
+            FROM UNNEST(
+              ${absentEnrolmentIds}::uuid[],
+              ${absentDates}::date[]
+            ) AS t(enrolment_id, date)
+          )
+          INSERT INTO absences (enrolment_id, date)
+          SELECT enrolment_id, date
+          FROM new_rows
+          ON CONFLICT (enrolment_id, date) DO NOTHING;
+        `;
+      } catch (e){
+          console.error("error upserting snapshot", e)
+      }
     }
     
 
     console.log("5) delete-not-seen within range, scoped to the enrolments we just touched")
-    await deleteAbsencesNotSeen(tx, enrolmentIds, dates, start, end);
+    await deleteAbsencesNotSeen(tx, scopeEnrolmentIds, scopeDates, absentEnrolmentIds, absentDates, start, end);
 
-    return {inserted: enrolmentIds.length, seen: rows.length};
+    return {inserted: absentEnrolmentIds.length, seen: rows.length};
   });
 }
 

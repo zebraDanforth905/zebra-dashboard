@@ -2257,7 +2257,7 @@ const CampLmsImportMappingsSchema = z.object({
 
 const CampLmsCanvasActionSchema = z.object({
   campEnrolmentId: z.string().uuid(),
-  type: z.enum(['add_expected_beginner', 'inactivate_enrollment']),
+  type: z.enum(['add_expected_beginner', 'activate_course', 'inactivate_enrollment']),
   canvasCourseId: optionalTrimmedString,
   canvasEnrollmentId: optionalTrimmedString,
 });
@@ -2303,6 +2303,16 @@ async function campLmsChecklistSchemaReady() {
         WHERE table_schema = 'public'
           AND table_name = 'camp_lms_canvas_action_audit'
           AND column_name = 'after_state'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = 'camp_lms_canvas_action_audit'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) LIKE '%activate_course%'
       )
     ) AS ready;
   `;
@@ -2665,7 +2675,7 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before syncing Canvas' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, and 030_lms_canvas_activate_course_action.sql before syncing Canvas' };
     }
     if (!process.env.CANVAS_API_TOKEN) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas sync' };
@@ -2740,7 +2750,7 @@ export async function saveCampLmsCourseMapping(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before saving LMS mappings' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, and 030_lms_canvas_activate_course_action.sql before saving LMS mappings' };
     }
 
     await sql`
@@ -2807,7 +2817,7 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before importing LMS mappings' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, and 030_lms_canvas_activate_course_action.sql before importing LMS mappings' };
     }
 
     const lines = parsed.data.tableText
@@ -2915,7 +2925,7 @@ export async function updateCampLmsStatus(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before saving LMS statuses' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, and 030_lms_canvas_activate_course_action.sql before saving LMS statuses' };
     }
 
     if (!status) {
@@ -2980,7 +2990,7 @@ export async function runCampLmsCanvasTestAction(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before running Canvas test actions' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, and 030_lms_canvas_activate_course_action.sql before running Canvas test actions' };
     }
 
     const [row] = await sql<Array<{
@@ -3052,6 +3062,29 @@ export async function runCampLmsCanvasTestAction(input: {
         }
         requestPayload.canvasCourseId = courseId;
         requestPayload.canvasUserId = row.canvas_user_id;
+        responsePayload = await client.enrollStudent(courseId, row.canvas_user_id);
+      } else if (type === 'activate_course') {
+        courseId = canvasCourseId ?? null;
+        enrollmentId = canvasEnrollmentId ?? null;
+        if (!courseId) {
+          throw new Error('Choose a Canvas course to set active.');
+        }
+
+        if (enrollmentId) {
+          const inactiveEnrollments = Array.isArray(row.inactive_enrollments)
+            ? row.inactive_enrollments as Array<Record<string, unknown>>
+            : [];
+          const enrollment = inactiveEnrollments.find((candidate) =>
+            String(candidate.enrollment_id) === enrollmentId && String(candidate.course_id) === courseId
+          );
+          if (!enrollment) {
+            throw new Error('The selected enrollment is not in the latest inactive Canvas snapshot. Sync LMS before trying again.');
+          }
+        }
+
+        requestPayload.canvasCourseId = courseId;
+        requestPayload.canvasUserId = row.canvas_user_id;
+        if (enrollmentId) requestPayload.canvasEnrollmentId = enrollmentId;
         responsePayload = await client.enrollStudent(courseId, row.canvas_user_id);
       } else {
         courseId = canvasCourseId ?? null;

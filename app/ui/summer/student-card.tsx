@@ -440,10 +440,22 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
     <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm p-4 space-y-5 sm:p-6">
       {/* Header */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-800">{student.student_name}</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold text-slate-800">{student.student_name}</h2>
+          {staffEntry && !student.is_active && (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-700">
+              Inactive
+            </span>
+          )}
+        </div>
         <p className="text-sm text-slate-500 mt-0.5">
           {currentSlot ? `Current session${currentSessions.length > 1 ? 's' : ''}: ${currentSlot}` : 'No current class on file'}
         </p>
+        {staffEntry && !student.is_active && (
+          <p className="mt-1 text-xs text-amber-700">
+            Inactive in portal. Staff can update this card, but no response is saved unless something changes.
+          </p>
+        )}
       </div>
 
       {requiredMessages.length > 0 && (

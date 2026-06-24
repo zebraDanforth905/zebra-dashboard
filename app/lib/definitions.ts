@@ -397,6 +397,7 @@ export type CampLmsCanvasIssue =
 
 export type CampLmsCanvasActionType =
   | 'add_expected_beginner'
+  | 'activate_course'
   | 'inactivate_enrollment';
 
 export type CampLmsCanvasMatch = {
