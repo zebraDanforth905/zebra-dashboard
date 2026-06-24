@@ -294,6 +294,12 @@ export default function StudentCard({ student, summerSessions, fallSessions, cou
     state.summer_status === 'enrolling' && state.session_ids.length === 0 ? 'Select at least one summer session.' : null,
     state.summer_status === 'other' && !state.custom_notes.trim() ? 'Add custom summer plan notes.' : null,
     state.fall_status === 'change' && state.fall_session_ids.length === 0 ? 'Select at least one September session.' : null,
+    staffEntry &&
+    state.fall_status === 'same' &&
+    currentSessions.length === 0 &&
+    (!state.manual_current_course_name.trim() || !state.manual_current_weekday || !state.manual_current_start_time)
+      ? 'Add the previous/current class or choose another September plan.'
+      : null,
     pickupVisible && state.pickup_requested && !state.pickup_school ? 'Choose a pickup school.' : null,
     pickupVisible && state.pickup_requested && state.pickup_school === 'other' && !state.pickup_school_other.trim()
       ? 'Enter the pickup school name.'

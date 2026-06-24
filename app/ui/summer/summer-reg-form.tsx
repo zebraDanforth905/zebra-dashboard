@@ -113,13 +113,13 @@ function isStudentComplete(
     sel.manual_current_start_time,
     sel.manual_current_pickup_school,
   ].some(value => value.trim());
+  const manualCurrentComplete = Boolean(
+    sel.manual_current_course_name.trim() &&
+    sel.manual_current_weekday &&
+    sel.manual_current_start_time,
+  );
 
-  if (staffEntry && manualCurrentFields) {
-    if (!sel.manual_current_course_name.trim() || !sel.manual_current_weekday || !sel.manual_current_start_time) return false;
-  }
-  if (staffEntry && sel.fall_status === 'same' && !hasCurrentSessions(student)) {
-    if (!sel.manual_current_course_name.trim() || !sel.manual_current_weekday || !sel.manual_current_start_time) return false;
-  }
+  if (staffEntry && manualCurrentFields && !manualCurrentComplete) return false;
   if (!sel.summer_status) return false;
   if (sel.summer_status === 'enrolling' && sel.session_ids.length === 0) return false;
   if (sel.summer_status === 'other' && !sel.custom_notes.trim()) return false;
@@ -129,6 +129,7 @@ function isStudentComplete(
   }
   if (!sel.fall_status) return false;
   if (sel.fall_status === 'change' && sel.fall_session_ids.length === 0) return false;
+  if (staffEntry && sel.fall_status === 'same' && !hasCurrentSessions(student) && !manualCurrentComplete) return false;
   return true;
 }
 
