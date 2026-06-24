@@ -7,14 +7,14 @@ import {
 import { auth } from "@/auth";
 import ScheduleRowClient from "./schedule-row-client";
 
-export default async function ScheduleTable({ sessionId }: { sessionId: string }) {
+export default async function ScheduleTable({ sessionId, date }: { sessionId: string; date?: Date }) {
   
   const session = await auth();
   const currentUserName = session?.user?.name || 'Unknown User';
 
-  const students = await fetchSessionStudents(sessionId);
-  const makeups = await fetchUpcomingSessionMakeups(sessionId);
-  const trials = await fetchUpcomingSessionTrials(sessionId);
+  const students = await fetchSessionStudents(sessionId, date);
+  const makeups = await fetchUpcomingSessionMakeups(sessionId, date);
+  const trials = await fetchUpcomingSessionTrials(sessionId, date);
 
   return (
     <ScheduleRowClient 
