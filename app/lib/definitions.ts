@@ -369,6 +369,7 @@ export type CampLmsCanvasIssue =
   | 'ok'
   | 'not_synced'
   | 'unmapped_course'
+  | 'needs_manual_course'
   | 'missing_canvas_user'
   | 'missing_expected_course'
   | 'inactive_expected_course'
@@ -376,6 +377,9 @@ export type CampLmsCanvasIssue =
 
 export type CampLmsCanvasActionType =
   | 'add_expected_beginner'
+  | 'create_canvas_user'
+  | 'assign_expected_course'
+  | 'add_canvas_course'
   | 'inactivate_enrollment';
 
 export type CampLmsCanvasMatch = {
@@ -396,10 +400,52 @@ export type CampLmsCanvasEnrollment = {
   updated_at: string | null;
 };
 
-export type CampLmsExpectedCourse = {
-  level: 'beginner' | 'intermediate' | 'advanced';
+export type CampLmsCanvasCourseCatalogItem = {
+  id: string;
+  canvas_course_id: string;
+  canvas_course_name: string;
+  canvas_course_code: string | null;
+  canvas_course_link: string | null;
+  stream_code: string | null;
+  stream_name: string | null;
+  grade_label: string | null;
+  version_label: string | null;
+  suggested_portal_course_ids: string[];
+  requires_verification: boolean;
+  notes: string | null;
+};
+
+export type CampLmsPortalCourseMappingRow = {
   course_id: string;
   course_name: string | null;
+  enrolment_count: number;
+  first_start_date: Date | null;
+  last_end_date: Date | null;
+  lms_course_name: string | null;
+  lms_course_link: string | null;
+  mapping_notes: string | null;
+  canvas_course_family: string | null;
+  canvas_beginner_course_id: string | null;
+  canvas_beginner_course_name: string | null;
+  canvas_intermediate_course_id: string | null;
+  canvas_intermediate_course_name: string | null;
+  canvas_advanced_course_id: string | null;
+  canvas_advanced_course_name: string | null;
+};
+
+export type CampLmsCourseMappingDashboardData = {
+  schema_ready: boolean;
+  course_catalog: CampLmsCanvasCourseCatalogItem[];
+  portal_courses: CampLmsPortalCourseMappingRow[];
+};
+
+export type CampLmsExpectedCourse = {
+  level: 'assigned' | 'beginner' | 'intermediate' | 'advanced';
+  course_id: string;
+  course_name: string | null;
+  catalog_course_id?: string | null;
+  requires_verification?: boolean;
+  notes?: string | null;
 };
 
 export type CampLmsSuggestedAction = {
@@ -431,6 +477,15 @@ export type CampLmsChecklistRow = {
   canvas_intermediate_course_name: string | null;
   canvas_advanced_course_id: string | null;
   canvas_advanced_course_name: string | null;
+  assigned_catalog_course_id: string | null;
+  assigned_canvas_course_id: string | null;
+  assigned_canvas_course_name: string | null;
+  assigned_canvas_course_code: string | null;
+  assigned_canvas_course_link: string | null;
+  assigned_canvas_requires_verification: boolean;
+  assigned_canvas_notes: string | null;
+  assigned_by_name: string | null;
+  assigned_at: Date | null;
   canvas_user_id: string | null;
   canvas_user_name: string | null;
   canvas_user_login: string | null;
@@ -481,6 +536,7 @@ export type CampLmsChecklistData = {
   canvas_configured: boolean;
   canvas_base_url: string;
   canvas_last_synced_at: Date | null;
+  course_catalog: CampLmsCanvasCourseCatalogItem[];
   rows: CampLmsChecklistRow[];
   summary: CampLmsChecklistSummary;
 };

@@ -192,13 +192,21 @@ export default async function CampSessionPage({
 
   return (
     <div className="m-2 md:m-4">
-      <Link
-        href="/dashboard/camp"
-        className="inline-flex items-center gap-2 text-sm text-sky-600 hover:text-sky-700 mb-4"
-      >
-        <ArrowLeftIcon className="h-4 w-4" />
-        Back to Camp Sessions
-      </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <Link
+          href="/dashboard/camp"
+          className="inline-flex items-center gap-2 text-sm text-sky-600 hover:text-sky-700"
+        >
+          <ArrowLeftIcon className="h-4 w-4" />
+          Back to Camp Sessions
+        </Link>
+        <Link
+          href="/dashboard/camp/lms-course-mapping"
+          className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          LMS Course Mapping
+        </Link>
+      </div>
 
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">

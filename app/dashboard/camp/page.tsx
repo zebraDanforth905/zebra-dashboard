@@ -151,6 +151,12 @@ export default async function CampPage() {
         </div>
         <div className="flex items-center gap-2">
           <Link
+            href="/dashboard/camp/lms-course-mapping"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
+          >
+            LMS Course Mapping
+          </Link>
+          <Link
             href="/dashboard/camp/past"
             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
           >
@@ -174,4 +180,3 @@ export default async function CampPage() {
     </div>
   );
 }
-

@@ -15,6 +15,8 @@ export type CanvasCourse = {
   name?: string | null;
   course_code?: string | null;
   workflow_state?: string | null;
+  enrollments_count?: number | null;
+  total_students?: number | null;
 };
 
 export type CanvasEnrollment = {
@@ -61,6 +63,14 @@ function getCanvasToken() {
     throw new CanvasConfigError('Canvas API token is not configured.');
   }
   return token;
+}
+
+function getCanvasAccountId() {
+  const accountId = process.env.CANVAS_ACCOUNT_ID?.trim();
+  if (!accountId) {
+    throw new CanvasConfigError('Canvas account ID is not configured.');
+  }
+  return accountId;
 }
 
 function appendQuery(url: URL, query?: CanvasRequestInit['query']) {
@@ -164,6 +174,47 @@ export class CanvasClient {
       search_term: term,
       per_page: 50,
     });
+  }
+
+  async searchCourses(term: string) {
+    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    return this.requestAll<CanvasCourse>(`/api/v1/accounts/${accountId}/courses`, {
+      search_term: term,
+      'include[]': ['total_students'],
+      per_page: 50,
+    });
+  }
+
+  async createStudentUser(input: {
+    name: string;
+    loginId: string;
+    password: string;
+    sisUserId?: string;
+    includeSisUserId?: boolean;
+  }) {
+    const accountId = getCanvasAccountId();
+    const body = new URLSearchParams({
+      'user[name]': input.name,
+      'pseudonym[unique_id]': input.loginId,
+      'pseudonym[password]': input.password,
+      'pseudonym[send_confirmation]': 'false',
+      'communication_channel[skip_confirmation]': 'true',
+      'force_validations': 'true',
+    });
+
+    if (input.includeSisUserId && input.sisUserId) {
+      body.set('user[sis_user_id]', input.sisUserId);
+    }
+
+    const result = await this.request<CanvasUser>(
+      `/api/v1/accounts/${encodeURIComponent(accountId)}/users`,
+      {
+        method: 'POST',
+        body,
+      }
+    );
+
+    return result.data;
   }
 
   async getUserEnrollments(userId: string) {
