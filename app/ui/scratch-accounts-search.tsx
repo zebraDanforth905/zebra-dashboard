@@ -4,11 +4,9 @@ import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { useSearchParams, usePathname, useRouter } from 'next/navigation';
 import { useDebouncedCallback } from 'use-debounce';
 
-export default function ScratchAccountsSearch({ 
-  query, 
-  unassignedOnly 
-}: { 
-  query: string; 
+export default function ScratchAccountsSearch({
+  unassignedOnly
+}: {
   unassignedOnly: boolean;
 }) {
   const searchParams = useSearchParams();
@@ -44,7 +42,7 @@ export default function ScratchAccountsSearch({
         <input
           id="scratch-search"
           className="peer block w-full rounded-md border border-gray-200 py-[9px] pl-10 text-sm outline-2 placeholder:text-gray-500"
-          placeholder="Search by username, laptop number, or student..."
+          placeholder="Search by type, username, laptop number, or student..."
           onChange={(e) => handleSearchChange(e.target.value)}
           defaultValue={searchParams.get('query')?.toString()}
         />

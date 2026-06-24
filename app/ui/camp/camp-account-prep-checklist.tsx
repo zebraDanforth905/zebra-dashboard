@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   CheckCircleIcon,
@@ -93,6 +94,10 @@ function inventoryForKind(
 
 function defaultPasswordForKind(kind: CampPrepResourceKind) {
   return kind === 'laptop' ? '' : DEFAULT_CAMP_ACCOUNT_PASSWORD;
+}
+
+function accountsSearchHref(resourceId: string) {
+  return `/dashboard/scratch-accounts?query=${encodeURIComponent(resourceId)}`;
 }
 
 export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Props) {
@@ -294,7 +299,12 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
         <span className="font-medium text-slate-700">{label}: </span>
         {assigned ? (
           <>
-            <span className="font-mono text-slate-900">{assigned}</span>
+            <Link
+              href={accountsSearchHref(assigned)}
+              className="font-mono text-sky-700 underline-offset-2 hover:underline"
+            >
+              {assigned}
+            </Link>
             {password && (
               <span className="ml-2 text-slate-500">pw {password}</span>
             )}
@@ -423,9 +433,15 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
             <h2 className="text-lg font-bold text-slate-900">Account & Device Prep</h2>
           </div>
           <p className="mt-1 text-sm text-slate-600">
-            {scopeLabel}. Dashboard-only prep for Scratch, Roblox, Unity, and laptops.
+            {scopeLabel}. Dashboard-only prep for Scratch, Roblox, and Unity laptops.
           </p>
         </div>
+        <Link
+          href="/dashboard/scratch-accounts"
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Open Accounts
+        </Link>
         <div className="grid grid-cols-3 gap-2 text-center text-xs">
           <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
             <div className="font-semibold text-slate-900">
