@@ -2218,6 +2218,7 @@ export async function fetchCampPrintableSchedule(
         ce.student_id::text AS student_id,
         s.name AS student_name,
         ce.assigned_seat_number,
+        COALESCE(seats.seat_assignments, '[]'::jsonb) AS seat_assignments,
         ce.course_id::text AS course_id,
         c.name AS course_name,
         cs.camp_type,
@@ -2235,6 +2236,19 @@ export async function fetchCampPrintableSchedule(
       JOIN students s ON s.id = ce.student_id
       LEFT JOIN customers cust ON cust.id = s.customer_id
       LEFT JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'date', sa.date::text,
+            'seat', sa.seat
+          )
+          ORDER BY sa.date ASC
+        ) AS seat_assignments
+        FROM seat_assignments sa
+        WHERE sa.enrolment_id = ce.id
+          AND sa.date >= ${startDate}::date
+          AND sa.date <= ${endDate}::date
+      ) seats ON TRUE
       LEFT JOIN LATERAL (
         SELECT ARRAY_TO_STRING(
           ARRAY_REMOVE(ARRAY[

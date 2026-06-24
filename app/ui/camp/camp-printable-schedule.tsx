@@ -62,6 +62,13 @@ function enumerateDays(startDate: string, endDate: string) {
   return days;
 }
 
+function getDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function isWeekday(date: Date) {
   const day = date.getDay();
   return day >= 1 && day <= 5;
@@ -111,9 +118,15 @@ function sessionLabel(row: CampPrintableScheduleRow) {
   return `${row.camp_type}${row.extended_care ? ' EX' : ''}`;
 }
 
-function assignedRoomLabel(row: CampPrintableScheduleRow) {
-  if (!row.assigned_seat_number) return '';
-  return row.assigned_seat_number >= 100 ? 'Front' : 'Back';
+function roomFromSeatNumber(seatNumber?: number | null) {
+  if (!seatNumber) return '';
+  return seatNumber >= 100 ? 'Front' : 'Back';
+}
+
+function assignedSeatForDate(row: CampPrintableScheduleRow, day: Date) {
+  const dateKey = getDateKey(day);
+  const datedSeat = (row.seat_assignments ?? []).find((assignment) => assignment.date === dateKey)?.seat;
+  return datedSeat ?? row.assigned_seat_number;
 }
 
 function uniqueCleanValues(values: Array<string | null | undefined>) {
@@ -156,7 +169,7 @@ function specialInstructionForRows(rows: CampPrintableScheduleRow[]) {
 }
 
 function roomDefaultForRows(rows: CampPrintableScheduleRow[]) {
-  const rooms = uniqueCleanValues(rows.map(assignedRoomLabel));
+  const rooms = uniqueCleanValues(rows.map((row) => roomFromSeatNumber(row.assigned_seat_number)));
   if (rooms.length <= 1) return rooms[0] ?? '';
   return rooms.join(' / ');
 }
@@ -179,6 +192,37 @@ function daysSummaryForRows(rows: CampPrintableScheduleRow[], days: WeekdaySched
     .filter(({ day }) => rows.some((row) => isActiveOnDate(row, day)))
     .map(({ day }) => dayAbbreviation(day))
     .join(', ');
+}
+
+function roomSummaryForRows(rows: CampPrintableScheduleRow[], days: WeekdaySchedule[]) {
+  const activeDayRooms = days
+    .map(({ day }) => {
+      const activeRows = rows.filter((row) => isActiveOnDate(row, day));
+      const rooms = uniqueCleanValues(
+        activeRows.map((row) => roomFromSeatNumber(assignedSeatForDate(row, day)))
+      );
+
+      return {
+        day,
+        rooms,
+      };
+    })
+    .filter(({ rooms }) => rooms.length > 0);
+
+  if (activeDayRooms.length === 0) {
+    return roomDefaultForRows(rows);
+  }
+
+  const activeDayCount = days.filter(({ day }) => rows.some((row) => isActiveOnDate(row, day))).length;
+  const uniqueRooms = uniqueCleanValues(activeDayRooms.flatMap(({ rooms }) => rooms));
+
+  if (activeDayRooms.length === activeDayCount && uniqueRooms.length === 1) {
+    return uniqueRooms[0];
+  }
+
+  return activeDayRooms
+    .map(({ day, rooms }) => `${dayAbbreviation(day)}: ${rooms.join(' / ')}`)
+    .join('\n');
 }
 
 function buildWeekdays(schedule: CampPrintableScheduleData): WeekdaySchedule[] {
@@ -214,7 +258,7 @@ function buildPrintableStudents(
         sessionSummary: sessionSummaryForRows(studentRows),
         campSummary: campSummaryForRows(studentRows),
         daysSummary: daysSummaryForRows(studentRows, days),
-        roomDefault: roomDefaultForRows(studentRows),
+        roomDefault: roomSummaryForRows(studentRows, days),
         medicalAlert: medicalAlertForRows(studentRows),
         specialInstruction: specialInstructionForRows(studentRows),
       };
@@ -248,25 +292,6 @@ function PacketHeader({
           <div className="text-xs font-bold uppercase text-slate-500">campers</div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function EditableRoomCell({
-  label,
-  defaultValue,
-}: {
-  label: string;
-  defaultValue: string;
-}) {
-  return (
-    <div
-      contentEditable
-      suppressContentEditableWarning
-      className="min-h-7 whitespace-pre-wrap rounded-sm border border-dashed border-slate-300 bg-white px-1 py-0.5 text-slate-900 outline-none"
-      aria-label={label}
-    >
-      {defaultValue}
     </div>
   );
 }
@@ -318,11 +343,8 @@ function StudentList({
               <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">
                 {student.daysSummary}
               </td>
-              <td className="border border-slate-400 p-1 text-[8.5px] leading-tight">
-                <EditableRoomCell
-                  label={`Room for ${student.studentName}`}
-                  defaultValue={student.roomDefault}
-                />
+              <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8.5px] font-bold leading-tight">
+                {student.roomDefault}
               </td>
               <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8px] leading-tight">
                 {student.medicalAlert}

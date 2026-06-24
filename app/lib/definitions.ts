@@ -472,6 +472,10 @@ export type CampPrintableScheduleRow = {
   student_id: string;
   student_name: string;
   assigned_seat_number: number | null;
+  seat_assignments: Array<{
+    date: string;
+    seat: number;
+  }>;
   course_id: string | null;
   course_name: string | null;
   camp_type: 'FD' | 'PM' | 'AM';
