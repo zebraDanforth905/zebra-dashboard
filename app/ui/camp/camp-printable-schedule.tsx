@@ -188,8 +188,13 @@ function dayAbbreviation(date: Date) {
 }
 
 function daysSummaryForRows(rows: CampPrintableScheduleRow[], days: WeekdaySchedule[]) {
-  return days
-    .filter(({ day }) => rows.some((row) => isActiveOnDate(row, day)))
+  const activeDays = days.filter(({ day }) => rows.some((row) => isActiveOnDate(row, day)));
+
+  if (activeDays.length === days.length) {
+    return 'All week';
+  }
+
+  return activeDays
     .map(({ day }) => dayAbbreviation(day))
     .join(', ');
 }
