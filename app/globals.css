@@ -58,6 +58,27 @@ body {
     break-inside: avoid;
   }
 
+  .camp-print-student-row {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .camp-print-packet-page {
+    page-break-after: always;
+    break-after: page;
+    min-height: 100vh;
+    padding: 0.2in 0;
+  }
+
+  .camp-print-packet-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .camp-print-packet-page thead {
+    display: table-header-group;
+  }
+
   .camp-schedule-print-day {
     page-break-after: always;
     break-after: page;
