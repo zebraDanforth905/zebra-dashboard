@@ -185,7 +185,6 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
       student_name: string;
       is_active: boolean;
       current_sessions: CurrentSessionSummary[] | null;
-      is_active: boolean;
       current_weekday: string | null;
       current_start_time: string | null;
       current_pickup_school: string | null;
