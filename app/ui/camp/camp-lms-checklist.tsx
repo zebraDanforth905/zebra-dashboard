@@ -9,13 +9,12 @@ import {
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import {
-  importCampLmsCourseMappings,
   refreshCampLmsWeek,
   runCampLmsCanvasTestAction,
-  saveCampLmsCourseMapping,
   syncCampLmsCanvasWeek,
   updateCampLmsStatus,
 } from '@/app/lib/actions';
+import Link from 'next/link';
 import type {
   CampLmsCanvasActionType,
   CampLmsCanvasIssue,
@@ -30,16 +29,6 @@ type Props = {
   startDate: string;
   endDate: string;
   checklist: CampLmsChecklistData;
-};
-
-type MappingDraft = {
-  lmsCourseName: string;
-  lmsCourseLink: string;
-  notes: string;
-  canvasCourseFamily: string;
-  canvasBeginnerCourseId: string;
-  canvasIntermediateCourseId: string;
-  canvasAdvancedCourseId: string;
 };
 
 const STATUS_OPTIONS: Array<{ value: CampLmsStatus; label: string; className: string }> = [
@@ -100,16 +89,8 @@ function makeInitialNotes(rows: CampLmsChecklistRow[]) {
   );
 }
 
-function blankMappingDraft(): MappingDraft {
-  return {
-    lmsCourseName: '',
-    lmsCourseLink: '',
-    notes: '',
-    canvasCourseFamily: '',
-    canvasBeginnerCourseId: '',
-    canvasIntermediateCourseId: '',
-    canvasAdvancedCourseId: '',
-  };
+function isManualDayCamp(row: CampLmsChecklistRow) {
+  return `${row.course_id ?? ''} ${row.course_name ?? ''}`.toLowerCase().includes('day camp');
 }
 
 function makeChecklistText(rows: CampLmsChecklistRow[]) {
@@ -119,7 +100,7 @@ function makeChecklistText(rows: CampLmsChecklistRow[]) {
     'Suggested Login',
     'Canvas User',
     'Camp Course',
-    'Expected Family',
+    'Expected Mapping',
     'Active Canvas Courses',
     'Inactive Canvas Courses',
     'Canvas Status',
@@ -189,6 +170,14 @@ function EnrollmentList({
 
 function ExpectedCourses({ row }: { row: CampLmsChecklistRow }) {
   if (row.expected_canvas_courses.length === 0) {
+    if (isManualDayCamp(row)) {
+      return (
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+          Manual
+        </span>
+      );
+    }
+
     return (
       <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-800">
         Unmapped
@@ -239,18 +228,16 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
-  const [importText, setImportText] = useState('');
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>(
     () => makeInitialNotes(checklist.rows)
   );
-  const [mappingDrafts, setMappingDrafts] = useState<Record<string, MappingDraft>>({});
   const [courseDrafts, setCourseDrafts] = useState<Record<string, string>>({});
 
   const unmappedCourses = useMemo(() => {
     const courses = new Map<string, { courseId: string; label: string; count: number }>();
 
     checklist.rows.forEach((row) => {
-      if (row.expected_canvas_course_ids.length > 0 || !row.course_id) return;
+      if (row.expected_canvas_course_ids.length > 0 || !row.course_id || isManualDayCamp(row)) return;
 
       const existing = courses.get(row.course_id);
       if (existing) {
@@ -300,20 +287,6 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
     });
   };
 
-  const handleImportMappings = () => {
-    setMessage(null);
-    startTransition(async () => {
-      const result = await importCampLmsCourseMappings({ tableText: importText });
-      if (!result.ok) {
-        setMessage(result.error ?? 'Mapping import failed.');
-        return;
-      }
-      setImportText('');
-      setMessage(`Imported ${result.imported} course mapping(s).`);
-      router.refresh();
-    });
-  };
-
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(makeChecklistText(checklist.rows));
@@ -321,34 +294,6 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
     } catch {
       setMessage('Could not copy checklist.');
     }
-  };
-
-  const handleSaveMapping = (courseId: string) => {
-    const draft = mappingDrafts[courseId] ?? blankMappingDraft();
-    if (!draft.canvasCourseFamily.trim() && !draft.canvasBeginnerCourseId.trim() && !draft.canvasIntermediateCourseId.trim() && !draft.canvasAdvancedCourseId.trim()) {
-      setMessage('Add a Canvas family or course ID before saving.');
-      return;
-    }
-
-    setMessage(null);
-    startTransition(async () => {
-      const result = await saveCampLmsCourseMapping({
-        courseId,
-        lmsCourseName: draft.lmsCourseName,
-        lmsCourseLink: draft.lmsCourseLink,
-        notes: draft.notes,
-        canvasCourseFamily: draft.canvasCourseFamily,
-        canvasBeginnerCourseId: draft.canvasBeginnerCourseId,
-        canvasIntermediateCourseId: draft.canvasIntermediateCourseId,
-        canvasAdvancedCourseId: draft.canvasAdvancedCourseId,
-      });
-      if (!result.ok) {
-        setMessage(result.error ?? 'Mapping save failed.');
-        return;
-      }
-      setMessage('Canvas course mapping saved.');
-      router.refresh();
-    });
   };
 
   const handleStatus = (row: CampLmsChecklistRow, status: CampLmsStatus | null) => {
@@ -493,6 +438,12 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
             <ClipboardDocumentIcon className="h-4 w-4" />
             Copy
           </button>
+          <Link
+            href="/dashboard/camp/lms-mappings"
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Edit Mappings
+          </Link>
         </div>
       </div>
 
@@ -549,110 +500,30 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         ))}
       </div>
 
-      <div className="mt-5 rounded-md border border-slate-200 bg-white p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="min-w-72 flex-1">
-            <span className="text-sm font-semibold text-slate-900">Wiki Mapping Import</span>
-            <textarea
-              value={importText}
-              onChange={(event) => setImportText(event.target.value)}
-              rows={3}
-              className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Portal course | Family | Beginner course | Intermediate course | Advanced course"
-              disabled={!checklist.schema_ready || isPending}
-            />
-          </label>
-          <button
-            type="button"
-            onClick={handleImportMappings}
-            disabled={!checklist.schema_ready || isPending || importText.trim().length === 0}
-            className="rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Import Mappings
-          </button>
-        </div>
-      </div>
-
       {(unmappedCourses.length > 0 || rowsWithoutCourseId > 0) && (
         <div className="mt-5 rounded-md border border-orange-200 bg-orange-50 p-4">
-          <h3 className="text-sm font-semibold text-orange-900">Unmapped Camp Courses</h3>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-orange-900">Unmapped Camp Courses</h3>
+            <Link
+              href="/dashboard/camp/lms-mappings"
+              className="rounded-md bg-orange-600 px-3 py-2 text-sm font-medium text-white hover:bg-orange-700"
+            >
+              Edit Mappings
+            </Link>
+          </div>
           {rowsWithoutCourseId > 0 && (
             <p className="mt-2 text-sm text-orange-800">
               {rowsWithoutCourseId} camper row(s) have no portal course id.
             </p>
           )}
           {unmappedCourses.length > 0 && (
-            <div className="mt-3 space-y-3">
-              {unmappedCourses.map((course) => {
-                const draft = mappingDrafts[course.courseId] ?? blankMappingDraft();
-
-                return (
-                  <div key={course.courseId} className="grid gap-2 rounded-md border border-orange-200 bg-white p-3 md:grid-cols-[1.3fr_1fr_0.8fr_0.8fr_0.8fr_1fr_auto]">
-                    <div>
-                      <div className="text-sm font-medium text-slate-900">{course.label}</div>
-                      <div className="text-xs text-slate-500">{course.count} camper row(s)</div>
-                    </div>
-                    <input
-                      value={draft.canvasCourseFamily}
-                      onChange={(event) => setMappingDrafts((current) => ({
-                        ...current,
-                        [course.courseId]: { ...draft, canvasCourseFamily: event.target.value },
-                      }))}
-                      placeholder="Family"
-                      className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      disabled={!checklist.schema_ready || isPending}
-                    />
-                    <input
-                      value={draft.canvasBeginnerCourseId}
-                      onChange={(event) => setMappingDrafts((current) => ({
-                        ...current,
-                        [course.courseId]: { ...draft, canvasBeginnerCourseId: event.target.value },
-                      }))}
-                      placeholder="Beginner ID"
-                      className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      disabled={!checklist.schema_ready || isPending}
-                    />
-                    <input
-                      value={draft.canvasIntermediateCourseId}
-                      onChange={(event) => setMappingDrafts((current) => ({
-                        ...current,
-                        [course.courseId]: { ...draft, canvasIntermediateCourseId: event.target.value },
-                      }))}
-                      placeholder="Inter. ID"
-                      className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      disabled={!checklist.schema_ready || isPending}
-                    />
-                    <input
-                      value={draft.canvasAdvancedCourseId}
-                      onChange={(event) => setMappingDrafts((current) => ({
-                        ...current,
-                        [course.courseId]: { ...draft, canvasAdvancedCourseId: event.target.value },
-                      }))}
-                      placeholder="Adv. ID"
-                      className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      disabled={!checklist.schema_ready || isPending}
-                    />
-                    <input
-                      value={draft.notes}
-                      onChange={(event) => setMappingDrafts((current) => ({
-                        ...current,
-                        [course.courseId]: { ...draft, notes: event.target.value },
-                      }))}
-                      placeholder="Notes"
-                      className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      disabled={!checklist.schema_ready || isPending}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleSaveMapping(course.courseId)}
-                      disabled={!checklist.schema_ready || isPending}
-                      className="rounded-md bg-orange-600 px-3 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Save
-                    </button>
-                  </div>
-                );
-              })}
+            <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+              {unmappedCourses.map((course) => (
+                <div key={course.courseId} className="rounded-md border border-orange-200 bg-white p-3">
+                  <div className="text-sm font-medium text-slate-900">{course.label}</div>
+                  <div className="text-xs text-slate-500">{course.count} camper row(s)</div>
+                </div>
+              ))}
             </div>
           )}
         </div>

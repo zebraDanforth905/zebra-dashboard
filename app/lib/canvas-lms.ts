@@ -166,6 +166,14 @@ export class CanvasClient {
     });
   }
 
+  async searchCourses(term: string) {
+    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    return this.requestAll<CanvasCourse>(`/api/v1/accounts/${accountId}/courses`, {
+      search_term: term,
+      per_page: 50,
+    });
+  }
+
   async getUserEnrollments(userId: string) {
     return this.requestAll<CanvasEnrollment>(`/api/v1/users/${encodeURIComponent(userId)}/enrollments`, {
       'type[]': 'StudentEnrollment',

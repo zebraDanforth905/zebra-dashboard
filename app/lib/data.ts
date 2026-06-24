@@ -25,6 +25,8 @@ import {
   CampLmsChecklistData,
   CampLmsChecklistRow,
   CampLmsChecklistSummary,
+  CampLmsCourseMappingsData,
+  CampLmsCourseMappingRow,
   CampLmsExpectedCourse,
   CampLmsSuggestedAction,
   CampAccountPrepChecklistData,
@@ -1294,6 +1296,7 @@ export async function fetchAllAccountsManagement(query: string, unassignedOnly: 
       LEFT JOIN students s ON s.id = scr.student_id
       WHERE 
         (scr.username ILIKE ${`%${query}%`}
+        OR 'scratch' ILIKE ${`%${query}%`}
         OR s.name ILIKE ${`%${query}%`})
         ${unassignedOnly ? sql`AND scr.student_id IS NULL` : sql``}
       
@@ -1309,6 +1312,7 @@ export async function fetchAllAccountsManagement(query: string, unassignedOnly: 
       LEFT JOIN students s ON s.id = rob.student_id
       WHERE 
         (rob.username ILIKE ${`%${query}%`}
+        OR 'roblox' ILIKE ${`%${query}%`}
         OR s.name ILIKE ${`%${query}%`})
         ${unassignedOnly ? sql`AND rob.student_id IS NULL` : sql``}
       
@@ -1324,6 +1328,7 @@ export async function fetchAllAccountsManagement(query: string, unassignedOnly: 
       LEFT JOIN students s ON s.id = lap.student_id
       WHERE 
         (lap.laptop_number ILIKE ${`%${query}%`}
+        OR 'laptop' ILIKE ${`%${query}%`}
         OR s.name ILIKE ${`%${query}%`})
         ${unassignedOnly ? sql`AND lap.student_id IS NULL` : sql``}
       
@@ -1345,6 +1350,7 @@ export async function fetchAccountsManagementPages(query: string, unassignedOnly
         LEFT JOIN students s ON s.id = scr.student_id
         WHERE 
           (scr.username ILIKE ${`%${query}%`}
+          OR 'scratch' ILIKE ${`%${query}%`}
           OR s.name ILIKE ${`%${query}%`})
           ${unassignedOnly ? sql`AND scr.student_id IS NULL` : sql``}
         
@@ -1354,6 +1360,7 @@ export async function fetchAccountsManagementPages(query: string, unassignedOnly
         LEFT JOIN students s ON s.id = rob.student_id
         WHERE 
           (rob.username ILIKE ${`%${query}%`}
+          OR 'roblox' ILIKE ${`%${query}%`}
           OR s.name ILIKE ${`%${query}%`})
           ${unassignedOnly ? sql`AND rob.student_id IS NULL` : sql``}
         
@@ -1363,6 +1370,7 @@ export async function fetchAccountsManagementPages(query: string, unassignedOnly
         LEFT JOIN students s ON s.id = lap.student_id
         WHERE 
           (lap.laptop_number ILIKE ${`%${query}%`}
+          OR 'laptop' ILIKE ${`%${query}%`}
           OR s.name ILIKE ${`%${query}%`})
           ${unassignedOnly ? sql`AND lap.student_id IS NULL` : sql``}
       ) AS combined;
@@ -2376,9 +2384,21 @@ function buildExpectedCanvasCourses(row: CampLmsChecklistDbRow): CampLmsExpected
       course_id: row.canvas_advanced_course_id ?? '',
       course_name: row.canvas_advanced_course_name,
     },
+    ...asStringArray(row.canvas_additional_course_ids).map((courseId) => ({
+      level: 'additional' as const,
+      course_id: courseId,
+      course_name: null,
+    })),
   ];
 
   return candidates.filter((course) => course.course_id.trim().length > 0);
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean);
 }
 
 function canvasStatusLabel(status: CampLmsCanvasIssue) {
@@ -2412,16 +2432,18 @@ function suggestedCanvasFix(params: {
   status: CampLmsCanvasIssue;
   login: string;
   family: string | null;
+  manualMapping: boolean;
   beginnerCourseId: string | null;
   activeExpected: CampLmsCanvasEnrollment[];
   inactiveExpected: CampLmsCanvasEnrollment[];
   extraActive: CampLmsCanvasEnrollment[];
 }) {
-  const { status, login, family, beginnerCourseId, activeExpected, inactiveExpected, extraActive } = params;
+  const { status, login, family, manualMapping, beginnerCourseId, activeExpected, inactiveExpected, extraActive } = params;
   const familyLabel = family ?? 'the expected Canvas family';
 
   if (status === 'not_synced') return 'Click Sync LMS to read current Canvas users and enrollments.';
-  if (status === 'unmapped_course') return 'Map this portal camp course to its Canvas course family and beginner/intermediate/advanced course IDs.';
+  if (status === 'unmapped_course') return 'Map this portal camp course to its beginner, intermediate, advanced, or additional Canvas course IDs.';
+  if (manualMapping) return 'Day Camp is handled manually by staff for each camper.';
   if (status === 'missing_canvas_user') return `Create or locate the Canvas user for ${login}, then sync again.`;
   if (status === 'missing_expected_course') {
     return beginnerCourseId
@@ -2445,6 +2467,10 @@ function suggestedCanvasFix(params: {
   }
 
   return 'Expected Canvas setup is active.';
+}
+
+function isManualCampLmsCourse(row: Pick<CampLmsChecklistDbRow, 'course_id' | 'course_name'>) {
+  return `${row.course_id ?? ''} ${row.course_name ?? ''}`.toLowerCase().includes('day camp');
 }
 
 function suggestedCanvasActions(params: {
@@ -2483,19 +2509,22 @@ function suggestedCanvasActions(params: {
 
 function buildCampLmsRows(rows: CampLmsChecklistDbRow[], allMappedCanvasCourseIds: Set<string>): CampLmsChecklistRow[] {
   return rows.map((row) => {
+    const manualMapping = isManualCampLmsCourse(row);
     const expectedCourses = buildExpectedCanvasCourses(row);
     const expectedCourseIds = new Set(expectedCourses.map((course) => course.course_id));
     const activeEnrollments = asCanvasEnrollments(row.active_canvas_enrollments);
     const inactiveEnrollments = asCanvasEnrollments(row.inactive_canvas_enrollments);
     const activeExpected = activeEnrollments.filter((enrollment) => expectedCourseIds.has(enrollment.course_id));
     const inactiveExpected = inactiveEnrollments.filter((enrollment) => expectedCourseIds.has(enrollment.course_id));
-    const extraActive = activeEnrollments.filter((enrollment) =>
-      allMappedCanvasCourseIds.has(enrollment.course_id) && !expectedCourseIds.has(enrollment.course_id)
-    );
+    const extraActive = manualMapping
+      ? []
+      : activeEnrollments.filter((enrollment) =>
+          allMappedCanvasCourseIds.has(enrollment.course_id) && !expectedCourseIds.has(enrollment.course_id)
+        );
 
     const issues: CampLmsCanvasIssue[] = [];
     if (row.canvas_sync_status !== 'synced') issues.push('not_synced');
-    if (expectedCourses.length === 0) issues.push('unmapped_course');
+    if (expectedCourses.length === 0 && !manualMapping) issues.push('unmapped_course');
     if (row.canvas_sync_status === 'synced' && !row.canvas_user_found) issues.push('missing_canvas_user');
     if (row.canvas_sync_status === 'synced' && row.canvas_user_found && expectedCourses.length > 0 && activeExpected.length === 0) {
       issues.push(inactiveExpected.length > 0 ? 'inactive_expected_course' : 'missing_expected_course');
@@ -2531,6 +2560,7 @@ function buildCampLmsRows(rows: CampLmsChecklistDbRow[], allMappedCanvasCourseId
         status: canvasStatus,
         login: row.suggested_lms_login,
         family: row.canvas_course_family,
+        manualMapping,
         beginnerCourseId: row.canvas_beginner_course_id,
         activeExpected,
         inactiveExpected,
@@ -2701,6 +2731,13 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         )
         AND EXISTS (
           SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_course_mappings'
+            AND column_name = 'canvas_additional_course_ids'
+        )
+        AND EXISTS (
+          SELECT 1
           FROM pg_constraint c
           JOIN pg_class t ON t.oid = c.conrelid
           JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -2737,6 +2774,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           NULL::text AS canvas_intermediate_course_name,
           NULL::text AS canvas_advanced_course_id,
           NULL::text AS canvas_advanced_course_name,
+          '[]'::jsonb AS canvas_additional_course_ids,
           NULL::text AS canvas_user_id,
           NULL::text AS canvas_user_name,
           NULL::text AS canvas_user_login,
@@ -2778,11 +2816,13 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       canvas_beginner_course_id: string | null;
       canvas_intermediate_course_id: string | null;
       canvas_advanced_course_id: string | null;
+      canvas_additional_course_ids: unknown;
     }>>`
       SELECT
         canvas_beginner_course_id,
         canvas_intermediate_course_id,
-        canvas_advanced_course_id
+        canvas_advanced_course_id,
+        canvas_additional_course_ids
       FROM camp_lms_course_mappings;
     `;
     const allMappedCanvasCourseIds = new Set(
@@ -2791,6 +2831,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           row.canvas_beginner_course_id,
           row.canvas_intermediate_course_id,
           row.canvas_advanced_course_id,
+          ...asStringArray(row.canvas_additional_course_ids),
         ])
         .filter((courseId): courseId is string => Boolean(courseId))
     );
@@ -2817,6 +2858,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         m.canvas_intermediate_course_name,
         m.canvas_advanced_course_id,
         m.canvas_advanced_course_name,
+        m.canvas_additional_course_ids,
         snap.canvas_user_id,
         snap.canvas_user_name,
         snap.canvas_user_login,
@@ -2868,6 +2910,69 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
   }
 }
 
+export async function fetchCampLmsCourseMappings(): Promise<CampLmsCourseMappingsData> {
+  try {
+    const [schema] = await sql<{ schema_ready: boolean }[]>`
+      SELECT (
+        to_regclass('public.camp_lms_course_mappings') IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_course_mappings'
+            AND column_name = 'canvas_beginner_course_id'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_course_mappings'
+            AND column_name = 'canvas_additional_course_ids'
+        )
+      ) AS schema_ready;
+    `;
+    const schemaReady = Boolean(schema?.schema_ready);
+
+    if (!schemaReady) {
+      return { schema_ready: false, rows: [] };
+    }
+
+    const rows = await sql<CampLmsCourseMappingRow[]>`
+      WITH camp_courses AS (
+        SELECT
+          ce.course_id::text AS course_id,
+          MAX(c.name) AS course_name,
+          COUNT(*)::int AS camper_count
+        FROM camp_enrolments ce
+        JOIN camp_sessions cs ON cs.id = ce.camp_session_id
+        LEFT JOIN courses c ON c.id = ce.course_id
+        WHERE ce.course_id IS NOT NULL
+        GROUP BY ce.course_id::text
+      )
+      SELECT
+        camp_courses.course_id,
+        camp_courses.course_name,
+        camp_courses.camper_count,
+        (m.course_id IS NOT NULL) AS mapped,
+        m.lms_course_name,
+        m.notes AS mapping_notes,
+        m.canvas_beginner_course_id,
+        m.canvas_intermediate_course_id,
+        m.canvas_advanced_course_id,
+        COALESCE(m.canvas_additional_course_ids, '[]'::jsonb) AS canvas_additional_course_ids
+      FROM camp_courses
+      LEFT JOIN camp_lms_course_mappings m ON m.course_id = camp_courses.course_id
+      WHERE LOWER(CONCAT_WS(' ', camp_courses.course_id, camp_courses.course_name)) NOT LIKE '%day camp%'
+      ORDER BY COALESCE(camp_courses.course_name, camp_courses.course_id), camp_courses.course_id;
+    `;
+
+    return { schema_ready: true, rows };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp LMS mappings.');
+  }
+}
+
 type CampPrepDbRow = {
   camp_enrolment_id: string;
   student_id: string;
@@ -2899,7 +3004,7 @@ function deriveCampPrepNeeds(courseId: string | null, courseName: string | null)
     needs_scratch: needsScratch,
     needs_roblox: needsRoblox,
     needs_unity: needsUnity,
-    needs_laptop: needsScratch || needsRoblox || needsUnity,
+    needs_laptop: needsUnity,
   };
 }
 
