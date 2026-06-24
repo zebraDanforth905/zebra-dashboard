@@ -1,24 +1,21 @@
 import PrintButton from '@/app/ui/print-button';
+import CampPrintableStudentList, {
+  type CampPrintableStudentListRow,
+} from '@/app/ui/camp/camp-printable-student-list';
 import type {
   CampPrintableScheduleData,
   CampPrintableScheduleRow,
+  CampPrintableStudentListField,
+  CampPrintableStudentListOverride,
 } from '@/app/lib/definitions';
 
 type WeekdaySchedule = {
   day: Date;
 };
 
-type PrintableStudent = {
-  key: string;
-  studentName: string;
+type PrintableStudent = CampPrintableStudentListRow & {
   parentName: string;
   parentPhone: string;
-  sessionSummary: string;
-  campSummary: string;
-  daysSummary: string;
-  roomDefault: string;
-  medicalAlert: string;
-  specialInstruction: string;
 };
 
 function parseLocalISODate(value: string) {
@@ -242,11 +239,21 @@ function buildWeekdays(schedule: CampPrintableScheduleData): WeekdaySchedule[] {
 
 function buildPrintableStudents(
   rows: CampPrintableScheduleRow[],
-  days: WeekdaySchedule[]
+  days: WeekdaySchedule[],
+  overrides: CampPrintableStudentListOverride[]
 ): PrintableStudent[] {
   const grouped = new Map<string, CampPrintableScheduleRow[]>();
   rows.forEach((row) => {
     grouped.set(row.student_id, [...(grouped.get(row.student_id) ?? []), row]);
+  });
+
+  const overridesByStudent = new Map<string, Map<CampPrintableStudentListField, string>>();
+  overrides.forEach((override) => {
+    const studentOverrides =
+      overridesByStudent.get(override.student_id) ??
+      new Map<CampPrintableStudentListField, string>();
+    studentOverrides.set(override.field, override.value);
+    overridesByStudent.set(override.student_id, studentOverrides);
   });
 
   return Array.from(grouped.entries())
@@ -254,159 +261,30 @@ function buildPrintableStudents(
       const firstRow = studentRows
         .slice()
         .sort((a, b) => a.student_name.localeCompare(b.student_name))[0];
+      const parentName = cleanText(firstRow.parent_name);
+      const parentPhone = cleanText(firstRow.parent_phone);
+      const studentOverrides = overridesByStudent.get(studentId);
+      const overrideValue = (
+        field: CampPrintableStudentListField,
+        fallback: string
+      ) => studentOverrides?.get(field) ?? fallback;
 
       return {
         key: studentId,
-        studentName: firstRow.student_name,
-        parentName: cleanText(firstRow.parent_name),
-        parentPhone: cleanText(firstRow.parent_phone),
-        sessionSummary: sessionSummaryForRows(studentRows),
-        campSummary: campSummaryForRows(studentRows),
-        daysSummary: daysSummaryForRows(studentRows, days),
-        roomDefault: roomSummaryForRows(studentRows, days),
-        medicalAlert: medicalAlertForRows(studentRows),
-        specialInstruction: specialInstructionForRows(studentRows),
+        studentId,
+        studentName: overrideValue('student', firstRow.student_name),
+        parentName,
+        parentPhone,
+        parentSummary: overrideValue('parent', [parentName, parentPhone].filter(Boolean).join('\n')),
+        sessionSummary: overrideValue('type', sessionSummaryForRows(studentRows)),
+        campSummary: overrideValue('camp', campSummaryForRows(studentRows)),
+        daysSummary: overrideValue('days', daysSummaryForRows(studentRows, days)),
+        roomDefault: overrideValue('room', roomSummaryForRows(studentRows, days)),
+        medicalAlert: overrideValue('medical', medicalAlertForRows(studentRows)),
+        specialInstruction: overrideValue('notes', specialInstructionForRows(studentRows)),
       };
     })
     .sort((a, b) => a.studentName.localeCompare(b.studentName));
-}
-
-function PacketHeader({
-  title,
-  subtitle,
-  count,
-  accent = 'blue',
-}: {
-  title: string;
-  subtitle: string;
-  count?: string;
-  accent?: 'blue' | 'red';
-}) {
-  const titleColor = accent === 'red' ? 'text-red-500' : 'text-slate-950';
-
-  return (
-    <div className="mb-4 flex items-start justify-between gap-4">
-      <div>
-        <div className="text-xs font-bold uppercase text-slate-500">Zebra Robotics</div>
-        <h2 className={`text-3xl font-bold leading-tight ${titleColor}`}>{title}</h2>
-        <p className="text-base font-semibold text-slate-700">{subtitle}</p>
-      </div>
-      {count ? (
-        <div className="text-right">
-          <div className="text-3xl font-bold">{count}</div>
-          <div className="text-xs font-bold uppercase text-slate-500">campers</div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function EditablePrintField({
-  label,
-  value,
-  className = '',
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <div
-      aria-label={label}
-      className={`min-h-5 whitespace-pre-wrap outline-none focus:bg-yellow-50 ${className}`}
-      contentEditable
-      suppressContentEditableWarning
-    >
-      {value}
-    </div>
-  );
-}
-
-function StudentList({
-  students,
-  schedule,
-}: {
-  students: PrintableStudent[];
-  schedule: CampPrintableScheduleData;
-}) {
-  return (
-    <section className="camp-print-packet-page bg-white text-black">
-      <PacketHeader
-        title="Student List"
-        subtitle={`Week of ${formatDateRange(schedule.start_date, schedule.end_date)}`}
-        count={String(students.length)}
-      />
-
-      <table className="w-full border-collapse text-left">
-        <thead>
-          <tr className="bg-[#234f8f] text-white">
-            <th className="w-[15%] border border-slate-700 p-1.5 text-[9px] uppercase">Student</th>
-            <th className="w-[16%] border border-slate-700 p-1.5 text-[9px] uppercase">Parent</th>
-            <th className="w-[8%] border border-slate-700 p-1.5 text-[9px] uppercase">Type</th>
-            <th className="w-[17%] border border-slate-700 p-1.5 text-[9px] uppercase">Camp</th>
-            <th className="w-[10%] border border-slate-700 p-1.5 text-[9px] uppercase">Days</th>
-            <th className="w-[9%] border border-slate-700 p-1.5 text-[9px] uppercase">Room F/B</th>
-            <th className="w-[13%] border border-slate-700 p-1.5 text-[9px] uppercase">Allergy / Medical</th>
-            <th className="w-[12%] border border-slate-700 p-1.5 text-[9px] uppercase">Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          {students.map((student) => (
-            <tr key={student.key} className="camp-print-student-row align-top">
-              <td className="border border-slate-400 p-1.5 text-[9px] font-bold leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} student name`}
-                  value={student.studentName}
-                />
-              </td>
-              <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} parent`}
-                  value={[student.parentName, student.parentPhone].filter(Boolean).join('\n')}
-                />
-              </td>
-              <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8.5px] font-bold leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} camp type`}
-                  value={student.sessionSummary}
-                />
-              </td>
-              <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8.5px] leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} camp`}
-                  value={student.campSummary}
-                />
-              </td>
-              <td className="border border-slate-400 p-1.5 text-[8.5px] leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} days`}
-                  value={student.daysSummary}
-                />
-              </td>
-              <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8.5px] font-bold leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} room`}
-                  value={student.roomDefault}
-                />
-              </td>
-              <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8px] leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} allergy or medical`}
-                  value={student.medicalAlert}
-                />
-              </td>
-              <td className="whitespace-pre-wrap border border-slate-400 p-1.5 text-[8px] leading-tight">
-                <EditablePrintField
-                  label={`${student.studentName} notes`}
-                  value={student.specialInstruction}
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
 }
 
 function paddedRows<T>(rows: T[], minimumRows: number): Array<T | null> {
@@ -537,7 +415,12 @@ export default function CampPrintableSchedule({
   const activeRows = schedule.rows.filter((row) =>
     days.some(({ day }) => isActiveOnDate(row, day))
   );
-  const students = buildPrintableStudents(activeRows, days);
+  const students = buildPrintableStudents(
+    activeRows,
+    days,
+    schedule.student_list_overrides
+  );
+  const weekLabel = formatDateRange(schedule.start_date, schedule.end_date);
 
   return (
     <div className="bg-slate-700 px-3 py-4 print:bg-white print:p-0">
@@ -559,7 +442,12 @@ export default function CampPrintableSchedule({
             </div>
           ) : (
             <>
-              <StudentList students={students} schedule={schedule} />
+              <CampPrintableStudentList
+                students={students}
+                weekStart={schedule.start_date}
+                weekEnd={schedule.end_date}
+                weekLabel={weekLabel}
+              />
               <SignInSpecialInstructions students={students} schedule={schedule} />
               <MedicalAlertSheet students={students} schedule={schedule} />
             </>
