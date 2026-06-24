@@ -421,6 +421,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       last_seen_active_at: Date | null;
       export_count: number;
       student_names: string[];
+      snapshot_student_names: string[];
       student_courses: StudentCourseEntry[];
       student_count: number;
       active_student_count: number;
@@ -474,7 +475,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           LIMIT 1
         ) cp ON true
       ),
-      recent_snapshot_slots AS (
+      snapshot_slots AS (
         SELECT
           tb.token_id,
           tb.customer_uuid,
@@ -486,12 +487,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           NULLIF(snapshot.pickup_school, '') AS pickup_school,
           FALSE AS is_active
         FROM token_base tb
-        CROSS JOIN LATERAL jsonb_to_recordset(
-          CASE
-            WHEN tb.last_seen_active_at >= ${RECENT_ACTIVE_CUTOFF}::date THEN tb.last_active_snapshot
-            ELSE '[]'::jsonb
-          END
-        ) AS snapshot(
+        CROSS JOIN LATERAL jsonb_to_recordset(tb.last_active_snapshot) AS snapshot(
           student_id TEXT,
           student_name TEXT,
           course_name TEXT,
@@ -507,7 +503,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       expected_slots AS (
         SELECT * FROM active_slots
         UNION ALL
-        SELECT * FROM recent_snapshot_slots
+        SELECT * FROM snapshot_slots
       ),
       expected_students AS (
         SELECT
@@ -518,6 +514,22 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           BOOL_OR(is_active) AS is_active
         FROM expected_slots
         GROUP BY token_id, customer_uuid, student_id
+      ),
+      snapshot_students AS (
+        SELECT
+          token_id,
+          customer_uuid,
+          student_id,
+          MAX(student_name) AS student_name
+        FROM snapshot_slots
+        GROUP BY token_id, customer_uuid, student_id
+      ),
+      snapshot_student_summary AS (
+        SELECT
+          token_id,
+          ARRAY_AGG(student_name ORDER BY student_name) AS snapshot_student_names
+        FROM snapshot_students
+        GROUP BY token_id
       ),
       student_summary AS (
         SELECT
@@ -559,6 +571,21 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           AND pr.removed_at IS NULL
           AND pr.request_type IN ('summer_scheduling', 'other')
         GROUP BY es.token_id
+      ),
+      snapshot_response_summary AS (
+        SELECT
+          ss.token_id,
+          COUNT(*)::int AS snapshot_student_count,
+          COUNT(pr.id)::int AS latest_snapshot_response_count,
+          COUNT(pr.id) FILTER (WHERE pr.payload->>'fall_status' = 'not_returning')::int AS fall_not_returning_count
+        FROM snapshot_students ss
+        LEFT JOIN parent_requests pr
+          ON pr.student_id::text = ss.student_id
+          AND pr.token_id = ss.token_id::uuid
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        GROUP BY ss.token_id
       )
       SELECT
         tb.token_id,
@@ -576,22 +603,25 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         tb.last_seen_active_at,
         tb.export_count,
         COALESCE(ss.student_names, '{}') AS student_names,
+        COALESCE(sns.snapshot_student_names, '{}') AS snapshot_student_names,
         COALESCE(ss.student_count, 0)::int AS student_count,
         COALESCE(ss.active_student_count, 0)::int AS active_student_count,
         COALESCE(scs.student_courses, '[]'::jsonb) AS student_courses,
         (
-          COALESCE(rs.expected_student_count, 0) > 0
+          COALESCE(srs.snapshot_student_count, 0) > 0
           AND NOT (
-            COALESCE(rs.latest_response_count, 0) = COALESCE(rs.expected_student_count, 0)
-            AND COALESCE(rs.fall_not_returning_count, 0) = COALESCE(rs.expected_student_count, 0)
+            COALESCE(srs.latest_snapshot_response_count, 0) = COALESCE(srs.snapshot_student_count, 0)
+            AND COALESCE(srs.fall_not_returning_count, 0) = COALESCE(srs.snapshot_student_count, 0)
           )
         ) AS fall_confirmation_eligible,
         COALESCE(rs.latest_response_count, 0) > 0 AS has_responded,
         COALESCE(rs.latest_staff_response_count, 0) > 0 AS has_internal_response
       FROM token_base tb
       LEFT JOIN student_summary ss ON ss.token_id = tb.token_id
+      LEFT JOIN snapshot_student_summary sns ON sns.token_id = tb.token_id
       LEFT JOIN student_course_summary scs ON scs.token_id = tb.token_id
       LEFT JOIN response_summary rs ON rs.token_id = tb.token_id
+      LEFT JOIN snapshot_response_summary srs ON srs.token_id = tb.token_id
       ORDER BY tb.customer_name
     `;
     return rows;
