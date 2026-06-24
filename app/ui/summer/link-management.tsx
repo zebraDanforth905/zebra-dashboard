@@ -61,6 +61,7 @@ function matchesSearch(row: ParentLinkRow, search: string): boolean {
     row.customer_name,
     row.alternate_name,
     ...row.student_names,
+    ...row.snapshot_student_names,
   ]
     .filter(Boolean)
     .join(' ')

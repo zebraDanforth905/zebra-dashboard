@@ -19,6 +19,10 @@ import {
   SummerStats,
 } from './definitions';
 import { normalizeSessionSelection } from './session-selection';
+import {
+  LAST_TWO_SCHOOL_YEARS_END,
+  LAST_TWO_SCHOOL_YEARS_START,
+} from './summer-snapshot-policy';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -643,6 +647,18 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
           COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
         FROM parent_tokens pt
         JOIN customers c ON c.id = pt.customer_id
+      ),
+      candidate_students AS (
+        SELECT DISTINCT
+          tb.token_id,
+          s.id AS student_id
+        FROM token_base tb
+        JOIN students s ON s.customer_id = tb.customer_uuid
+        JOIN enrolments e ON e.student_id = s.id
+        JOIN sessions se ON se.id = e.session_id
+        WHERE se.is_summer = FALSE
+          AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_TWO_SCHOOL_YEARS_END}::date
+          AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_TWO_SCHOOL_YEARS_START}::date
       )
       SELECT
         tb.token_id,
@@ -661,7 +677,27 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
         ) AS is_active,
         COALESCE(cs.current_sessions, '[]'::jsonb) AS current_sessions
       FROM token_base tb
-      LEFT JOIN students s ON s.customer_id = tb.customer_uuid
+      LEFT JOIN students s
+        ON s.customer_id = tb.customer_uuid
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM candidate_students cs2
+            WHERE cs2.token_id = tb.token_id
+              AND cs2.student_id = s.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM enrolments e
+            WHERE e.student_id = s.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(tb.last_active_snapshot) snapshot
+            WHERE snapshot->>'student_id' ~ '^[0-9]+(\\.[0-9]+)?$'
+              AND (snapshot->>'student_id')::numeric = s.id::numeric
+          )
+        )
       LEFT JOIN LATERAL (
         SELECT
           JSONB_AGG(
@@ -695,6 +731,11 @@ export async function fetchSummerSnapshotRows(): Promise<SummerSnapshotFamilyRow
           JOIN sessions se ON se.id = e.session_id
           LEFT JOIN courses co ON co.id = e.course_id
           WHERE e.student_id = s.id
+            AND (
+              se.is_summer = FALSE
+              AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_TWO_SCHOOL_YEARS_END}::date
+              AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_TWO_SCHOOL_YEARS_START}::date
+            )
         ) slots
       ) cs ON true
       ORDER BY tb.customer_name, s.name

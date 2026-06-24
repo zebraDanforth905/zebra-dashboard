@@ -6,6 +6,10 @@ import { redirect } from 'next/navigation';
 import { randomBytes } from 'crypto';
 import { auth } from '@/auth';
 import { normalizeSessionSelection } from '@/app/lib/session-selection';
+import {
+  LAST_SCHOOL_YEAR_END,
+  LAST_SCHOOL_YEAR_START,
+} from '@/app/lib/summer-snapshot-policy';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 type PostgresJsonValue = Parameters<typeof sql.json>[0];
@@ -79,6 +83,9 @@ export async function generateParentToken(customerId: string): Promise<string> {
       JOIN sessions se ON se.id = e.session_id
       LEFT JOIN courses co ON co.id = e.course_id
       WHERE s.customer_id = ${customerId}::uuid
+        AND se.is_summer = FALSE
+        AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+        AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
     `;
     activeSnapshot = activeSnapshotRows[0]?.last_active_snapshot ?? [];
     activeCount = activeSnapshotRows[0]?.active_count ?? 0;
@@ -137,6 +144,9 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
     WHERE NOT EXISTS (
       SELECT 1 FROM parent_tokens pt WHERE pt.customer_id = c.id
     )
+      AND se.is_summer = FALSE
+      AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+      AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
     GROUP BY c.id
   `;
   if (eligible.length === 0) {
@@ -960,6 +970,76 @@ export async function removeStudentFromParentSnapshot(
   revalidateTag('summer-tokens', 'max');
   revalidateTag('summer-responses', 'max');
   return { updated: true };
+}
+
+export async function backfillLastSchoolYearSnapshotStudents(): Promise<{
+  updatedFamilies: number;
+  addedStudents: number;
+}> {
+  await requireAdmin();
+
+  const rows = await sql<{
+    token_id: string;
+    last_active_snapshot: unknown;
+    school_year_snapshot: unknown;
+  }[]>`
+    SELECT
+      pt.id::text AS token_id,
+      COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot,
+      COALESCE(
+        JSONB_AGG(
+          DISTINCT JSONB_BUILD_OBJECT(
+            'student_id', s.id::text,
+            'student_name', s.name,
+            'course_name', co.name,
+            'weekday', se.weekday,
+            'start_time', se.start_time,
+            'end_date', e.end_date::text,
+            'pickup_school', NULL
+          )
+        ) FILTER (WHERE s.id IS NOT NULL),
+        '[]'::jsonb
+      ) AS school_year_snapshot
+    FROM parent_tokens pt
+    JOIN students s ON s.customer_id = pt.customer_id
+    JOIN enrolments e ON e.student_id = s.id
+    JOIN sessions se ON se.id = e.session_id
+    LEFT JOIN courses co ON co.id = e.course_id
+    WHERE se.is_summer = FALSE
+      AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+      AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
+    GROUP BY pt.id
+  `;
+
+  let updatedFamilies = 0;
+  let addedStudents = 0;
+
+  for (const row of rows) {
+    const existing = normalizeParentTokenSnapshot(row.last_active_snapshot);
+    const candidates = normalizeParentTokenSnapshot(row.school_year_snapshot);
+    const missing = candidates.filter(candidate => (
+      !existing.some(entry => snapshotStudentIdMatches(entry.student_id, Number(candidate.student_id)))
+    ));
+    if (missing.length === 0) continue;
+
+    updatedFamilies += 1;
+    addedStudents += new Set(missing.map(entry => entry.student_id)).size;
+
+    await sql`
+      UPDATE parent_tokens
+      SET
+        last_active_snapshot = ${sql.json([...existing, ...missing])}::jsonb,
+        last_seen_active_at = COALESCE(last_seen_active_at, NOW())
+      WHERE id = ${row.token_id}::uuid
+    `;
+  }
+
+  if (updatedFamilies > 0) {
+    revalidateTag('summer-tokens', 'max');
+    revalidateTag('summer-responses', 'max');
+  }
+
+  return { updatedFamilies, addedStudents };
 }
 
 async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[]): Promise<Map<number, CurrentSessionSnapshot[]>> {
