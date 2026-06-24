@@ -2,7 +2,11 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { saveCampLmsCourseMapping, searchCampLmsCanvasCourses } from '@/app/lib/actions';
+import {
+  importCampLmsCourseMappings,
+  saveCampLmsCourseMapping,
+  searchCampLmsCanvasCourses,
+} from '@/app/lib/actions';
 import type { CampLmsCanvasCourseSearchResult, CampLmsCourseMappingRow } from '@/app/lib/definitions';
 
 type Draft = {
@@ -36,10 +40,12 @@ export default function CampLmsMappingsTable({ rows, schemaReady }: Props) {
   const router = useRouter();
   const [isSavePending, startSaveTransition] = useTransition();
   const [isSearchPending, startSearchTransition] = useTransition();
+  const [isImportPending, startImportTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchMessage, setSearchMessage] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<CampLmsCanvasCourseSearchResult[]>([]);
+  const [importTableText, setImportTableText] = useState('');
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
     Object.fromEntries(rows.map((row) => [row.course_id, initialDraft(row)]))
   );
@@ -127,6 +133,28 @@ export default function CampLmsMappingsTable({ rows, schemaReady }: Props) {
     });
   };
 
+  const handleImport = () => {
+    const tableText = importTableText.trim();
+    if (!tableText) {
+      setMessage('Paste a mapping table before importing.');
+      return;
+    }
+
+    setMessage(null);
+    startImportTransition(async () => {
+      const result = await importCampLmsCourseMappings({ tableText });
+
+      if (!result.ok) {
+        setMessage(result.error ?? 'Mapping import failed.');
+        return;
+      }
+
+      setImportTableText('');
+      setMessage(`Imported ${result.imported} mapping row(s).`);
+      router.refresh();
+    });
+  };
+
   return (
     <section className="mt-5">
       <div className="mb-4 rounded-md border border-slate-200 bg-white p-4">
@@ -201,6 +229,40 @@ export default function CampLmsMappingsTable({ rows, schemaReady }: Props) {
             </table>
           </div>
         )}
+      </div>
+
+      <div className="mb-4 rounded-md border border-slate-200 bg-white p-4">
+        <label htmlFor="lms-mapping-import" className="text-sm font-medium text-slate-700">
+          Import mappings
+        </label>
+        <p className="mt-1 text-xs text-slate-500">
+          Paste a table with columns: &quot;Portal Camp&quot;, &quot;General/Beginner ID&quot;, &quot;Intermediate ID&quot;, &quot;Advanced ID&quot;, and optional &quot;Additional IDs&quot; (comma-separated).
+        </p>
+        <p className="mt-1 text-xs text-slate-500">
+          Example accepted format:&nbsp;
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
+            Build. Enthusiasts,521,,
+          </code>
+        </p>
+        <textarea
+          id="lms-mapping-import"
+          value={importTableText}
+          onChange={(event) => setImportTableText(event.target.value)}
+          disabled={!schemaReady || isImportPending}
+          rows={5}
+          className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono"
+          placeholder="Portal Camp,General/Beginner ID,Intermediate ID,Advanced ID,Additional IDs"
+        />
+        <div className="mt-2 flex justify-end">
+          <button
+            type="button"
+            onClick={handleImport}
+            disabled={!schemaReady || isImportPending}
+            className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Import mapping table
+          </button>
+        </div>
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3">

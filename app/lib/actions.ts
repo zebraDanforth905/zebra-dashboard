@@ -2918,6 +2918,8 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
     const beginnerIndex = hasHeader ? columnIndex(headers, ['beginner', 'general']) : 1;
     const intermediateIndex = hasHeader ? columnIndex(headers, ['intermediate']) : 2;
     const advancedIndex = hasHeader ? columnIndex(headers, ['advanced']) : 3;
+    const additionalIndex = hasHeader ? columnIndex(headers, ['additional', 'additional ids', 'additional id']) : -1;
+    const hasAdditionalColumn = hasHeader && additionalIndex >= 0;
 
     let imported = 0;
     for (const line of rows) {
@@ -2928,9 +2930,58 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
       const beginnerCell = cells[beginnerIndex]?.trim();
       const intermediateCell = cells[intermediateIndex]?.trim();
       const advancedCell = cells[advancedIndex]?.trim();
+      const additionalCell = hasAdditionalColumn ? cells[additionalIndex]?.trim() : undefined;
       const beginnerId = extractCanvasCourseId(beginnerCell);
       const intermediateId = extractCanvasCourseId(intermediateCell);
       const advancedId = extractCanvasCourseId(advancedCell);
+      const additionalIds = hasAdditionalColumn ? parseCanvasCourseIdList(additionalCell) : null;
+
+      if (hasAdditionalColumn) {
+        await sql`
+          INSERT INTO camp_lms_course_mappings (
+            course_id,
+            lms_course_name,
+            lms_course_link,
+            canvas_course_family,
+            canvas_beginner_course_id,
+            canvas_beginner_course_name,
+            canvas_intermediate_course_id,
+            canvas_intermediate_course_name,
+            canvas_advanced_course_id,
+            canvas_advanced_course_name,
+            canvas_additional_course_ids,
+            updated_at
+          )
+          VALUES (
+            ${portalCourse},
+            ${portalCourse},
+            ${beginnerCell?.startsWith('http') ? beginnerCell : null},
+            NULL,
+            ${beginnerId},
+            ${extractCourseName(beginnerCell, beginnerId)},
+            ${intermediateId},
+            ${extractCourseName(intermediateCell, intermediateId)},
+            ${advancedId},
+            ${extractCourseName(advancedCell, advancedId)},
+            ${sql.json(additionalIds as PostgresJsonValue)}::jsonb,
+            NOW()
+          )
+          ON CONFLICT (course_id) DO UPDATE
+          SET lms_course_name = EXCLUDED.lms_course_name,
+              lms_course_link = COALESCE(EXCLUDED.lms_course_link, camp_lms_course_mappings.lms_course_link),
+              canvas_course_family = NULL,
+              canvas_beginner_course_id = EXCLUDED.canvas_beginner_course_id,
+              canvas_beginner_course_name = EXCLUDED.canvas_beginner_course_name,
+              canvas_intermediate_course_id = EXCLUDED.canvas_intermediate_course_id,
+              canvas_intermediate_course_name = EXCLUDED.canvas_intermediate_course_name,
+              canvas_advanced_course_id = EXCLUDED.canvas_advanced_course_id,
+              canvas_advanced_course_name = EXCLUDED.canvas_advanced_course_name,
+              canvas_additional_course_ids = EXCLUDED.canvas_additional_course_ids,
+              updated_at = NOW();
+        `;
+        imported += 1;
+        continue;
+      }
 
       await sql`
         INSERT INTO camp_lms_course_mappings (
