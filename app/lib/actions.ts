@@ -2235,7 +2235,6 @@ const CampLmsCourseMappingSchema = z.object({
   lmsCourseName: optionalTrimmedString,
   lmsCourseLink: optionalTrimmedString,
   notes: optionalTrimmedString,
-  canvasCourseFamily: optionalTrimmedString,
   canvasBeginnerCourseId: optionalTrimmedString,
   canvasBeginnerCourseName: optionalTrimmedString,
   canvasIntermediateCourseId: optionalTrimmedString,
@@ -2748,7 +2747,6 @@ export async function saveCampLmsCourseMapping(input: {
   lmsCourseName?: string;
   lmsCourseLink?: string;
   notes?: string;
-  canvasCourseFamily?: string;
   canvasBeginnerCourseId?: string;
   canvasBeginnerCourseName?: string;
   canvasIntermediateCourseId?: string;
@@ -2772,7 +2770,6 @@ export async function saveCampLmsCourseMapping(input: {
     lmsCourseName,
     lmsCourseLink,
     notes,
-    canvasCourseFamily,
     canvasBeginnerCourseId,
     canvasBeginnerCourseName,
     canvasIntermediateCourseId,
@@ -2781,7 +2778,7 @@ export async function saveCampLmsCourseMapping(input: {
     canvasAdvancedCourseName,
     canvasAdditionalCourseIds,
   } = parsed.data;
-  const storedCourseName = lmsCourseName || canvasCourseFamily || courseId;
+  const storedCourseName = lmsCourseName || courseId;
   const additionalIds = parseCanvasCourseIdList(canvasAdditionalCourseIds);
 
   try {
@@ -2810,7 +2807,7 @@ export async function saveCampLmsCourseMapping(input: {
         ${storedCourseName},
         ${lmsCourseLink || null},
         ${notes || null},
-        ${canvasCourseFamily || null},
+        NULL,
         ${canvasBeginnerCourseId || null},
         ${canvasBeginnerCourseName || null},
         ${canvasIntermediateCourseId || null},
@@ -2824,7 +2821,7 @@ export async function saveCampLmsCourseMapping(input: {
       SET lms_course_name = EXCLUDED.lms_course_name,
           lms_course_link = EXCLUDED.lms_course_link,
           notes = EXCLUDED.notes,
-          canvas_course_family = EXCLUDED.canvas_course_family,
+          canvas_course_family = NULL,
           canvas_beginner_course_id = EXCLUDED.canvas_beginner_course_id,
           canvas_beginner_course_name = EXCLUDED.canvas_beginner_course_name,
           canvas_intermediate_course_id = EXCLUDED.canvas_intermediate_course_id,
@@ -2918,10 +2915,9 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
     const headers = hasHeader ? firstHeaders : [];
 
     const portalIndex = hasHeader ? columnIndex(headers, ['portal', 'camp course', 'course id']) : 0;
-    const familyIndex = hasHeader ? columnIndex(headers, ['family', 'canvas family', 'lms course']) : 1;
-    const beginnerIndex = hasHeader ? columnIndex(headers, ['beginner']) : 2;
-    const intermediateIndex = hasHeader ? columnIndex(headers, ['intermediate']) : 3;
-    const advancedIndex = hasHeader ? columnIndex(headers, ['advanced']) : 4;
+    const beginnerIndex = hasHeader ? columnIndex(headers, ['beginner', 'general']) : 1;
+    const intermediateIndex = hasHeader ? columnIndex(headers, ['intermediate']) : 2;
+    const advancedIndex = hasHeader ? columnIndex(headers, ['advanced']) : 3;
 
     let imported = 0;
     for (const line of rows) {
@@ -2929,7 +2925,6 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
       const portalCourse = cells[portalIndex]?.trim();
       if (!portalCourse) continue;
 
-      const family = cells[familyIndex]?.trim() || portalCourse;
       const beginnerCell = cells[beginnerIndex]?.trim();
       const intermediateCell = cells[intermediateIndex]?.trim();
       const advancedCell = cells[advancedIndex]?.trim();
@@ -2953,9 +2948,9 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
         )
         VALUES (
           ${portalCourse},
-          ${family},
+          ${portalCourse},
           ${beginnerCell?.startsWith('http') ? beginnerCell : null},
-          ${family},
+          NULL,
           ${beginnerId},
           ${extractCourseName(beginnerCell, beginnerId)},
           ${intermediateId},
@@ -2967,7 +2962,7 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
         ON CONFLICT (course_id) DO UPDATE
         SET lms_course_name = EXCLUDED.lms_course_name,
             lms_course_link = COALESCE(EXCLUDED.lms_course_link, camp_lms_course_mappings.lms_course_link),
-            canvas_course_family = EXCLUDED.canvas_course_family,
+            canvas_course_family = NULL,
             canvas_beginner_course_id = EXCLUDED.canvas_beginner_course_id,
             canvas_beginner_course_name = EXCLUDED.canvas_beginner_course_name,
             canvas_intermediate_course_id = EXCLUDED.canvas_intermediate_course_id,

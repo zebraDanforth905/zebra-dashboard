@@ -2431,15 +2431,13 @@ function primaryCanvasStatus(issues: CampLmsCanvasIssue[]): CampLmsCanvasIssue {
 function suggestedCanvasFix(params: {
   status: CampLmsCanvasIssue;
   login: string;
-  family: string | null;
   manualMapping: boolean;
   beginnerCourseId: string | null;
   activeExpected: CampLmsCanvasEnrollment[];
   inactiveExpected: CampLmsCanvasEnrollment[];
   extraActive: CampLmsCanvasEnrollment[];
 }) {
-  const { status, login, family, manualMapping, beginnerCourseId, activeExpected, inactiveExpected, extraActive } = params;
-  const familyLabel = family ?? 'the expected Canvas family';
+  const { status, login, manualMapping, beginnerCourseId, activeExpected, inactiveExpected, extraActive } = params;
 
   if (status === 'not_synced') return 'Click Sync LMS to read current Canvas users and enrollments.';
   if (status === 'unmapped_course') return 'Map this portal camp course to one shared Canvas course or multiple acceptable Canvas course IDs.';
@@ -2447,14 +2445,14 @@ function suggestedCanvasFix(params: {
   if (status === 'missing_canvas_user') return `Create or locate the Canvas user for ${login}, then sync again.`;
   if (status === 'missing_expected_course') {
     return beginnerCourseId
-      ? `Test-add this camper to ${familyLabel} beginner course ${beginnerCourseId}.`
-      : `Add this camper to an active course in ${familyLabel}.`;
+      ? `Test-add this camper to expected Canvas course ${beginnerCourseId}.`
+      : 'Add this camper to one of the mapped Canvas courses.';
   }
   if (status === 'inactive_expected_course') {
     const course = inactiveExpected[0];
     return course
       ? `Reactivate or re-enroll the camper in ${course.course_name ?? course.course_id}.`
-      : `Reactivate an enrollment in ${familyLabel}.`;
+      : 'Reactivate one of the mapped Canvas course enrollments.';
   }
   if (status === 'extra_active_course') {
     const courseNames = extraActive
@@ -2462,7 +2460,7 @@ function suggestedCanvasFix(params: {
       .join(', ');
     const suffix = activeExpected.length > 0
       ? ''
-      : ` and add ${familyLabel}${beginnerCourseId ? ` beginner course ${beginnerCourseId}` : ''}`;
+      : ` and add an expected Canvas course${beginnerCourseId ? ` ${beginnerCourseId}` : ''}`;
     return `Set extra active enrollment(s) inactive: ${courseNames}${suffix}.`;
   }
 
@@ -2559,7 +2557,6 @@ function buildCampLmsRows(rows: CampLmsChecklistDbRow[], allMappedCanvasCourseId
       suggested_fix: suggestedCanvasFix({
         status: canvasStatus,
         login: row.suggested_lms_login,
-        family: row.canvas_course_family,
         manualMapping,
         beginnerCourseId: row.canvas_beginner_course_id,
         activeExpected,

@@ -93,6 +93,15 @@ function isManualDayCamp(row: CampLmsChecklistRow) {
   return `${row.course_id ?? ''} ${row.course_name ?? ''}`.toLowerCase().includes('day camp');
 }
 
+function expectedMappingLabel(row: CampLmsChecklistRow) {
+  if (isManualDayCamp(row)) return 'Manual';
+  if (row.expected_canvas_courses.length === 0) return 'UNMAPPED';
+
+  return row.expected_canvas_courses
+    .map((course) => course.course_name ? `${course.course_name} (#${course.course_id})` : `#${course.course_id}`)
+    .join(', ');
+}
+
 function makeChecklistText(rows: CampLmsChecklistRow[]) {
   const header = [
     'Student',
@@ -115,7 +124,7 @@ function makeChecklistText(rows: CampLmsChecklistRow[]) {
     row.suggested_lms_login,
     row.canvas_user_login ?? row.canvas_user_name ?? 'NOT FOUND',
     courseLabel(row),
-    row.canvas_course_family ?? 'UNMAPPED',
+    expectedMappingLabel(row),
     row.active_canvas_enrollments.map((enrollment) => enrollment.course_name ?? enrollment.course_id).join(', '),
     row.inactive_canvas_enrollments.map((enrollment) => enrollment.course_name ?? enrollment.course_id).join(', '),
     row.canvas_status_label,
@@ -187,7 +196,7 @@ function ExpectedCourses({ row }: { row: CampLmsChecklistRow }) {
 
   return (
     <div className="space-y-1 text-xs text-slate-700">
-      <div className="font-medium text-slate-900">{row.canvas_course_family ?? row.lms_course_name ?? 'Mapped family'}</div>
+      <div className="font-medium text-slate-900">{row.lms_course_name ?? row.course_name ?? 'Mapped Canvas course'}</div>
       {row.expected_canvas_courses.map((course) => (
         <div key={`${course.level}-${course.course_id}`}>
           <span className="capitalize">{course.level}</span>
