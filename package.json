@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "camp:picture-qrs": "node scripts/generate-camp-picture-qrs.mjs",
     "start": "next start",
     "lint": "eslint"
   },
@@ -33,6 +34,9 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.0.0",
+    "jsqr": "^1.4.0",
+    "pngjs": "^5.0.0",
+    "qrcode": "^1.5.4",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
