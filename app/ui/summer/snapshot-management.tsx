@@ -1,11 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { Course, SummerSnapshotFamilyRow, SummerSnapshotStudentRow } from '@/app/lib/definitions';
 import {
   addStudentToParentSnapshot,
-  backfillLastSchoolYearSnapshotStudents,
   removeStudentFromParentSnapshot,
 } from '@/app/lib/summer-actions';
 
@@ -71,7 +69,6 @@ export default function SnapshotManagement({
   rows: SummerSnapshotFamilyRow[];
   courseOptions: Course[];
 }) {
-  const router = useRouter();
   const [snapshotRows, setSnapshotRows] = useState(rows);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SnapshotFilter>('snapshot');
@@ -79,7 +76,6 @@ export default function SnapshotManagement({
   const [message, setMessage] = useState<string | null>(null);
   const [addSelection, setAddSelection] = useState<AddSnapshotSelection | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [isBackfillPending, startBackfillTransition] = useTransition();
   const normalizedSearch = search.trim().toLowerCase();
 
   useEffect(() => {
@@ -199,23 +195,6 @@ export default function SnapshotManagement({
     });
   }
 
-  function backfillSchoolYearSnapshot() {
-    setMessage(null);
-    startBackfillTransition(async () => {
-      try {
-        const result = await backfillLastSchoolYearSnapshotStudents();
-        setMessage(
-          result.addedStudents === 0
-            ? 'Last school year snapshot already covered.'
-            : `Added ${result.addedStudents} students across ${result.updatedFamilies} families.`,
-        );
-        router.refresh();
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Snapshot backfill failed.');
-      }
-    });
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -245,14 +224,6 @@ export default function SnapshotManagement({
             Clear
           </button>
         )}
-        <button
-          type="button"
-          onClick={backfillSchoolYearSnapshot}
-          disabled={isBackfillPending}
-          className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isBackfillPending ? 'Backfilling...' : 'Backfill school-year snapshot'}
-        </button>
         <div className="ml-auto flex flex-wrap gap-4 text-sm text-slate-600">
           <span><span className="font-semibold text-slate-800">{snapshotRows.length}</span> families</span>
           <span><span className="font-semibold text-sky-700">{visibleStudents}</span> visible students</span>
