@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
-import { createIncidentReport } from '@/app/lib/actions';
+import { createIncidentReport } from '@/app/dashboard/actions';
 import { ExclamationTriangleIcon, XMarkIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 function SubmitButton() {

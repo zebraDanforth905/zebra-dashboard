@@ -2002,23 +2002,102 @@ export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Dat
   }
 }
 
-export async function fetchSeatAssignments(date: Date) {
+function toLocalDateKey(value: Date | string): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    throw new Error('Invalid seat assignments date string');
+  }
+
+  if (Number.isNaN(value.getTime())) {
+    throw new Error('Invalid seat assignments date');
+  }
+
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export async function fetchSeatAssignments(date: Date | string) {
   'use cache'
   cacheTag('camps');
   try {
+    const dateKey = toLocalDateKey(date);
+
     const rows = await sql<Array<{
       enrolment_id: string;
       seat: number;
     }>>`
       SELECT enrolment_id, seat
       FROM seat_assignments
-      WHERE date = ${date}
+      WHERE date = ${dateKey}::date
     `;
 
     return rows;
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch seat assignments.');
+  }
+}
+
+export async function fetchMostRecentSeatAssignmentsInWeek(
+  enrolmentIds: string[],
+  targetDate: Date | string,
+) {
+  'use cache'
+  cacheTag('camps');
+
+  if (enrolmentIds.length === 0) return [];
+
+  try {
+    const targetDateKey = toLocalDateKey(targetDate);
+    const [year, month, day] = targetDateKey.split('-').map(Number);
+    const localTargetDate = new Date(year, month - 1, day);
+    const dayOfWeek = localTargetDate.getDay();
+    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const weekStartDate = new Date(localTargetDate);
+    weekStartDate.setDate(localTargetDate.getDate() - daysFromMonday);
+    const weekStartKey = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
+
+    const rows = await sql<Array<{
+      enrolment_id: string;
+      seat: number;
+      assigned_date: Date;
+    }>>`
+      WITH ranked AS (
+        SELECT
+          sa.enrolment_id,
+          sa.seat,
+          sa.date AS assigned_date,
+          ROW_NUMBER() OVER (
+            PARTITION BY sa.enrolment_id
+            ORDER BY sa.date DESC
+          ) AS rn
+        FROM seat_assignments sa
+        WHERE sa.enrolment_id = ANY(${enrolmentIds}::uuid[])
+          AND sa.date >= ${weekStartKey}::date
+          AND sa.date < ${targetDateKey}::date
+      )
+      SELECT enrolment_id, seat, assigned_date
+      FROM ranked
+      WHERE rn = 1
+    `;
+
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch recent seat assignments for week.');
   }
 }
 
