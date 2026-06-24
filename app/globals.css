@@ -27,6 +27,7 @@ body {
   }
   
   @page {
+    size: letter;
     margin: 0.5cm;
   }
   
@@ -40,5 +41,31 @@ body {
   form {
     page-break-inside: avoid;
     break-inside: avoid;
+  }
+
+  .camp-print-room {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .camp-print-room:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .camp-print-roster-row {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .camp-schedule-print-day {
+    page-break-after: always;
+    break-after: page;
+    min-height: 100vh;
+  }
+
+  .camp-schedule-print-day:last-child {
+    page-break-after: auto;
+    break-after: auto;
   }
 }

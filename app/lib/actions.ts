@@ -9,7 +9,7 @@ import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized } from './insert_from_portal';
-import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, RecurringInvoice } from './definitions';
+import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice } from './definitions';
 import {
   CanvasConfigError,
   CanvasUser,
@@ -27,6 +27,27 @@ import { auth } from '@/auth';
 import { userAgent } from 'next/server';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+
+type SessionUserWithRole = {
+  id?: string;
+  user_type?: string;
+};
+
+function getSessionUser(session: unknown) {
+  return (session as { user?: SessionUserWithRole } | null | undefined)?.user;
+}
+
+function getSessionUserId(session: unknown) {
+  return getSessionUser(session)?.id;
+}
+
+function getSessionUserType(session: unknown) {
+  return getSessionUser(session)?.user_type;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 const IncidentReportFormSchema = z.object({
   incident_date: z.string().min(1, 'Date is required'),
@@ -842,7 +863,7 @@ export async function assignStudentToScratchAccount(scratchUsername: string, stu
       SET student_id = ${studentId}
       WHERE username = ${scratchUsername};
     `;
-    revalidatePath('/dashboard/scratch-accounts');
+    revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error assigning student to scratch account:', error);
     throw new Error('Failed to assign student to scratch account.');
@@ -856,7 +877,7 @@ export async function assignStudentToRobloxAccount(robloxUsername: string, stude
       SET student_id = ${studentId}
       WHERE username = ${robloxUsername};
     `;
-    revalidatePath('/dashboard/scratch-accounts');
+    revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error assigning student to roblox account:', error);
     throw new Error('Failed to assign student to roblox account.');
@@ -870,7 +891,7 @@ export async function assignStudentToLaptop(laptopNumber: string, studentId: str
       SET student_id = ${studentId}
       WHERE laptop_number = ${laptopNumber};
     `;
-    revalidatePath('/dashboard/scratch-accounts');
+    revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error assigning student to laptop:', error);
     throw new Error('Failed to assign student to laptop.');
@@ -883,7 +904,7 @@ export async function createScratchAccount(username: string, password: string, s
       INSERT INTO scratch_accounts (username, password, student_id)
       VALUES (${username}, ${password}, ${studentId});
     `;
-    revalidatePath('/dashboard/scratch-accounts');
+    revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error creating scratch account:', error);
     throw new Error('Failed to create scratch account.');
@@ -896,7 +917,7 @@ export async function createRobloxAccount(username: string, password: string, st
       INSERT INTO roblox_accounts (username, password, student_id)
       VALUES (${username}, ${password}, ${studentId});
     `;
-    revalidatePath('/dashboard/scratch-accounts');
+    revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error creating roblox account:', error);
     throw new Error('Failed to create roblox account.');
@@ -909,10 +930,303 @@ export async function createLaptopAssignment(laptopNumber: string, studentId: st
       INSERT INTO laptop_assignments (laptop_number, student_id)
       VALUES (${laptopNumber}, ${studentId});
     `;
-    revalidatePath('/dashboard/scratch-accounts');
+    revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error creating laptop assignment:', error);
     throw new Error('Failed to create laptop assignment.');
+  }
+}
+
+const CampPrepResourceSchema = z.enum(['scratch', 'roblox', 'laptop']);
+
+const CampPrepResourceAssignmentSchema = z.object({
+  resourceKind: CampPrepResourceSchema,
+  resourceId: z.string().trim().min(1),
+  studentId: z.string().trim().min(1),
+});
+
+const CampPrepResourceCreateOrAssignSchema = z.object({
+  resourceKind: CampPrepResourceSchema,
+  identifier: z.string().trim().min(1),
+  password: z.string().trim().optional(),
+  studentId: z.string().trim().min(1),
+});
+
+const CAMP_ACCOUNT_DEFAULT_PASSWORD = 'zebra123';
+
+function revalidateAccountPrepViews() {
+  revalidatePath('/dashboard/scratch-accounts');
+  revalidatePath('/dashboard/camp');
+  revalidatePath('/dashboard/camp/[startDate]/[endDate]', 'page');
+  revalidateTag('camps', 'max');
+}
+
+export async function assignCampPrepResource(input: {
+  resourceKind: CampPrepResourceKind;
+  resourceId: string;
+  studentId: string;
+}) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampPrepResourceAssignmentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Choose a valid resource and camper' };
+  }
+
+  const { resourceKind, resourceId, studentId } = parsed.data;
+
+  try {
+    let updated: { resource_id: string }[] = [];
+
+    if (resourceKind === 'scratch') {
+      updated = await sql<{ resource_id: string }[]>`
+        UPDATE scratch_accounts
+        SET student_id = ${studentId}
+        WHERE username = ${resourceId}
+          AND (student_id IS NULL OR student_id = ${studentId})
+        RETURNING username AS resource_id;
+      `;
+    } else if (resourceKind === 'roblox') {
+      updated = await sql<{ resource_id: string }[]>`
+        UPDATE roblox_accounts
+        SET student_id = ${studentId}
+        WHERE username = ${resourceId}
+          AND (student_id IS NULL OR student_id = ${studentId})
+        RETURNING username AS resource_id;
+      `;
+    } else {
+      updated = await sql<{ resource_id: string }[]>`
+        UPDATE laptop_assignments
+        SET student_id = ${studentId}
+        WHERE laptop_number = ${resourceId}
+          AND (student_id IS NULL OR student_id = ${studentId})
+        RETURNING laptop_number AS resource_id;
+      `;
+    }
+
+    if (updated.length === 0) {
+      return { ok: false, error: 'That resource is no longer available' };
+    }
+
+    revalidateAccountPrepViews();
+    return { ok: true };
+  } catch (error) {
+    console.error('Error assigning camp prep resource:', error);
+    return { ok: false, error: 'Failed to assign camp prep resource' };
+  }
+}
+
+export async function createOrAssignCampPrepResource(input: {
+  resourceKind: CampPrepResourceKind;
+  identifier: string;
+  password?: string;
+  studentId: string;
+}) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampPrepResourceCreateOrAssignSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Enter a valid resource and camper' };
+  }
+
+  const { resourceKind, identifier, studentId } = parsed.data;
+  const password = parsed.data.password?.trim() || CAMP_ACCOUNT_DEFAULT_PASSWORD;
+
+  try {
+    if (resourceKind === 'scratch') {
+      const existing = await sql<{
+        resource_id: string;
+        student_id: string | null;
+        student_name: string | null;
+      }[]>`
+        SELECT scr.username AS resource_id, scr.student_id, s.name AS student_name
+        FROM scratch_accounts scr
+        LEFT JOIN students s ON s.id = scr.student_id
+        WHERE scr.username = ${identifier}
+        LIMIT 1;
+      `;
+
+      if (existing.length > 0) {
+        const current = existing[0];
+        if (current.student_id && String(current.student_id) !== studentId) {
+          return {
+            ok: false,
+            error: `Scratch account ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
+          };
+        }
+
+        if (!current.student_id) {
+          const updated = await sql<{ resource_id: string }[]>`
+            UPDATE scratch_accounts
+            SET student_id = ${studentId}
+            WHERE username = ${identifier}
+              AND student_id IS NULL
+            RETURNING username AS resource_id;
+          `;
+
+          if (updated.length === 0) {
+            return { ok: false, error: 'That Scratch account is no longer available' };
+          }
+        }
+      } else {
+        await sql`
+          INSERT INTO scratch_accounts (username, password, student_id)
+          VALUES (${identifier}, ${password}, ${studentId});
+        `;
+      }
+    } else if (resourceKind === 'roblox') {
+      const existing = await sql<{
+        resource_id: string;
+        student_id: string | null;
+        student_name: string | null;
+      }[]>`
+        SELECT rob.username AS resource_id, rob.student_id, s.name AS student_name
+        FROM roblox_accounts rob
+        LEFT JOIN students s ON s.id = rob.student_id
+        WHERE rob.username = ${identifier}
+        LIMIT 1;
+      `;
+
+      if (existing.length > 0) {
+        const current = existing[0];
+        if (current.student_id && String(current.student_id) !== studentId) {
+          return {
+            ok: false,
+            error: `Roblox account ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
+          };
+        }
+
+        if (!current.student_id) {
+          const updated = await sql<{ resource_id: string }[]>`
+            UPDATE roblox_accounts
+            SET student_id = ${studentId}
+            WHERE username = ${identifier}
+              AND student_id IS NULL
+            RETURNING username AS resource_id;
+          `;
+
+          if (updated.length === 0) {
+            return { ok: false, error: 'That Roblox account is no longer available' };
+          }
+        }
+      } else {
+        await sql`
+          INSERT INTO roblox_accounts (username, password, student_id)
+          VALUES (${identifier}, ${password}, ${studentId});
+        `;
+      }
+    } else {
+      const existing = await sql<{
+        resource_id: string;
+        student_id: string | null;
+        student_name: string | null;
+      }[]>`
+        SELECT lap.laptop_number AS resource_id, lap.student_id, s.name AS student_name
+        FROM laptop_assignments lap
+        LEFT JOIN students s ON s.id = lap.student_id
+        WHERE lap.laptop_number = ${identifier}
+        LIMIT 1;
+      `;
+
+      if (existing.length > 0) {
+        const current = existing[0];
+        if (current.student_id && String(current.student_id) !== studentId) {
+          return {
+            ok: false,
+            error: `Laptop ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
+          };
+        }
+
+        if (!current.student_id) {
+          const updated = await sql<{ resource_id: string }[]>`
+            UPDATE laptop_assignments
+            SET student_id = ${studentId}
+            WHERE laptop_number = ${identifier}
+              AND student_id IS NULL
+            RETURNING laptop_number AS resource_id;
+          `;
+
+          if (updated.length === 0) {
+            return { ok: false, error: 'That laptop is no longer available' };
+          }
+        }
+      } else {
+        await sql`
+          INSERT INTO laptop_assignments (laptop_number, student_id)
+          VALUES (${identifier}, ${studentId});
+        `;
+      }
+    }
+
+    revalidateAccountPrepViews();
+    return { ok: true };
+  } catch (error) {
+    console.error('Error creating or assigning camp prep resource:', error);
+    return { ok: false, error: 'Failed to save camp prep resource' };
+  }
+}
+
+export async function unassignCampPrepResource(input: {
+  resourceKind: CampPrepResourceKind;
+  resourceId: string;
+  studentId: string;
+}) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampPrepResourceAssignmentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Choose a valid resource and camper' };
+  }
+
+  const { resourceKind, resourceId, studentId } = parsed.data;
+
+  try {
+    let updated: { resource_id: string }[] = [];
+
+    if (resourceKind === 'scratch') {
+      updated = await sql<{ resource_id: string }[]>`
+        UPDATE scratch_accounts
+        SET student_id = NULL
+        WHERE username = ${resourceId}
+          AND student_id = ${studentId}
+        RETURNING username AS resource_id;
+      `;
+    } else if (resourceKind === 'roblox') {
+      updated = await sql<{ resource_id: string }[]>`
+        UPDATE roblox_accounts
+        SET student_id = NULL
+        WHERE username = ${resourceId}
+          AND student_id = ${studentId}
+        RETURNING username AS resource_id;
+      `;
+    } else {
+      updated = await sql<{ resource_id: string }[]>`
+        UPDATE laptop_assignments
+        SET student_id = NULL
+        WHERE laptop_number = ${resourceId}
+          AND student_id = ${studentId}
+        RETURNING laptop_number AS resource_id;
+      `;
+    }
+
+    if (updated.length === 0) {
+      return { ok: false, error: 'That resource is not assigned to this camper' };
+    }
+
+    revalidateAccountPrepViews();
+    return { ok: true };
+  } catch (error) {
+    console.error('Error unassigning camp prep resource:', error);
+    return { ok: false, error: 'Failed to unassign camp prep resource' };
   }
 }
 
@@ -1051,7 +1365,7 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
       let currentValue = '';
       let insideQuotes = false;
       
-      for (let char of lines[i]) {
+      for (const char of lines[i]) {
         if (char === '"') {
           insideQuotes = !insideQuotes;
         } else if (char === ',' && !insideQuotes) {
@@ -1064,7 +1378,7 @@ export async function uploadRecurringPaymentsCSV(csvContent: string): Promise<{ 
       values.push(currentValue.trim()); // Add last value
 
       // Create row object
-      const row: any = {};
+      const row: Record<string, string> = {};
       headers.forEach((header, idx) => {
         row[header] = values[idx] || '';
       });
@@ -1568,10 +1882,10 @@ export async function currentDateCheckRecurringInvoices() {
             description: invoice.description,
             amount: invoice.amount
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           errors.push({
             id: invoice.id,
-            error: String(error?.message ?? error)
+            error: errorMessage(error)
           });
         }
       }
@@ -1587,8 +1901,8 @@ export async function currentDateCheckRecurringInvoices() {
         }
       });
       
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message ?? e) }
+    } catch (e: unknown) {
+      return { ok: false, error: errorMessage(e) }
     }
 }
 
@@ -1614,7 +1928,7 @@ const UpdatePasswordSchema = z.object({
 export async function getAllUsers() {
   try {
     const session = await auth();
-    if ((session?.user as any)?.user_type !== 'admin') {
+    if (getSessionUserType(session) !== 'admin') {
       return { ok: false, error: 'Unauthorized: Admin access required' };
     }
 
@@ -1630,8 +1944,8 @@ export async function getAllUsers() {
     `;
 
     return { ok: true, users };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message ?? e) };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -1641,7 +1955,7 @@ export async function getAllUsers() {
 export async function createUser(formData: FormData) {
   try {
     const session = await auth();
-    if ((session?.user as any)?.user_type !== 'admin') {
+    if (getSessionUserType(session) !== 'admin') {
       return { ok: false, error: 'Unauthorized: Admin access required' };
     }
 
@@ -1687,8 +2001,8 @@ export async function createUser(formData: FormData) {
     revalidatePath('/dashboard/admin/users');
     revalidatePath('/dashboard/staff-schedule');
     return { ok: true, message: 'User created successfully' };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message ?? e) };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -1698,7 +2012,7 @@ export async function createUser(formData: FormData) {
 export async function deleteUser(formData: FormData) {
   try {
     const session = await auth();
-    if ((session?.user as any)?.user_type !== 'admin') {
+    if (getSessionUserType(session) !== 'admin') {
       return { ok: false, error: 'Unauthorized: Admin access required' };
     }
 
@@ -1729,8 +2043,8 @@ export async function deleteUser(formData: FormData) {
     revalidatePath('/dashboard/admin/users');
     revalidatePath('/dashboard/staff-schedule');
     return { ok: true, message: 'User deleted successfully' };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message ?? e) };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -1740,7 +2054,7 @@ export async function deleteUser(formData: FormData) {
 export async function updatePassword(formData: FormData) {
   try {
     const session = await auth();
-    const userId = (session?.user as any)?.id;
+    const userId = getSessionUserId(session);
 
     if (!userId) {
       return { ok: false, error: 'Unauthorized: Please log in' };
@@ -1786,8 +2100,8 @@ export async function updatePassword(formData: FormData) {
     `;
 
     return { ok: true, message: 'Password updated successfully' };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message ?? e) };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
   }
 }
 
@@ -2768,6 +3082,11 @@ export async function updateCampSeatAssignment(
   date?: Date | string
 ) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
     if (date) {
       const dateKey = toLocalDateKey(date);
 
@@ -2811,10 +3130,15 @@ export async function updateCampEnrolmentNote(
   note: string
 ) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
     const trimmedNote = note.trim();
 
     if (!(await campEnrolmentNoteColumnExists())) {
-      return { ok: false, error: 'Apply migration 025_lms_camp_checklist.sql before saving camp notes' };
+      return { ok: false, error: 'Apply migration 028_add_camp_roster_contact_fields.sql before saving camp notes' };
     }
 
     await sql`
@@ -2834,7 +3158,7 @@ export async function updateCampEnrolmentNote(
 export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent[]) {
   try {
     const session = await auth();
-    const userId = (session?.user as any)?.id;
+    const userId = session?.user?.id;
 
     if (!userId) {
       return { ok: false, error: 'Unauthorized: Please log in' };
@@ -2890,6 +3214,7 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
           other_fields = null;
         }
       }
+      const otherFieldsValue = other_fields ? sql`${sql.json(other_fields)}::jsonb` : sql`NULL`;
 
       const sessionLabel = enrolment.extended_care && (enrolment.session === 'FD' || enrolment.session === 'PM')
         ? `${enrolment.session}-EX`
@@ -2910,7 +3235,7 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
           ${Number(enrolment.student_id) + '@zebrarobotics.com'},
           '',
           ${`${enrolment.course} ${sessionLabel}`},
-          ${other_fields as any}
+          ${otherFieldsValue}
         );
       `;
     }
@@ -2923,7 +3248,7 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
   }
 }
 
-export async function createIncidentReport(prevState: any, formData: FormData) {
+export async function createIncidentReport(_prevState: unknown, formData: FormData) {
   const session = await auth();
   
   if (!session?.user?.id) {
@@ -3009,9 +3334,9 @@ export async function createIncidentReport(prevState: any, formData: FormData) {
   }
 }
 
-export async function updateIncidentReportStatus(prevState: any, formData: FormData) {
+export async function updateIncidentReportStatus(_prevState: unknown, formData: FormData) {
   const session = await auth();
-  const userType = (session?.user as any)?.user_type;
+  const userType = getSessionUserType(session);
 
   if (userType !== 'admin') {
     return { 
@@ -3085,11 +3410,15 @@ const ALLOWED_SHIFT_TYPES = [
   'pickup_jackman',
 ] as const;
 
+function isAllowedShiftType(value: string): value is typeof ALLOWED_SHIFT_TYPES[number] {
+  return ALLOWED_SHIFT_TYPES.includes(value as typeof ALLOWED_SHIFT_TYPES[number]);
+}
+
 function parseShiftTypes(formData: FormData): string[] {
   const values = formData
     .getAll('shiftTypes')
     .map((v) => String(v))
-    .filter((v) => ALLOWED_SHIFT_TYPES.includes(v as any));
+    .filter(isAllowedShiftType);
   const deduped = Array.from(new Set(values));
   return deduped.length > 0 ? deduped : ['coach'];
 }
@@ -3582,7 +3911,7 @@ export async function updateCoachQualifications(formData: FormData) {
 
 export async function saveMyAvailability(formData: FormData) {
   const session = await auth();
-  const userId = (session?.user as any)?.id;
+  const userId = getSessionUserId(session);
   if (!userId) {
     throw new Error('Unauthorized');
   }
@@ -3657,7 +3986,7 @@ export async function saveMyAvailability(formData: FormData) {
 
 export async function createMyAbsenceRequest(formData: FormData) {
   const session = await auth();
-  const userId = (session?.user as any)?.id;
+  const userId = getSessionUserId(session);
   if (!userId) {
     throw new Error('Unauthorized');
   }
@@ -3684,7 +4013,7 @@ export async function createMyAbsenceRequest(formData: FormData) {
 
 export async function updateMyAbsenceRequest(formData: FormData) {
   const session = await auth();
-  const userId = (session?.user as any)?.id;
+  const userId = getSessionUserId(session);
   if (!userId) {
     throw new Error('Unauthorized');
   }
@@ -3719,7 +4048,7 @@ export async function updateMyAbsenceRequest(formData: FormData) {
 
 export async function deleteMyAbsenceRequest(formData: FormData) {
   const session = await auth();
-  const userId = (session?.user as any)?.id;
+  const userId = getSessionUserId(session);
   if (!userId) {
     throw new Error('Unauthorized');
   }
