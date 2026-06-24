@@ -157,12 +157,6 @@ export default async function CampPage() {
           >
             View Past Weeks
           </Link>
-          <Link
-            href="/dashboard/camp/lms-mappings"
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
-          >
-            LMS Mappings
-          </Link>
           <ScrapeCampsButton />
         </div>
       </div>
