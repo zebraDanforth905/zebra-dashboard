@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CampSessionWithEnrolments } from '@/app/lib/definitions';
+import { CampSeatAssignmentGroup, CampSessionWithEnrolments } from '@/app/lib/definitions';
 import { createSlipsForCampers, updateCampEnrolmentNote, updateCampSeatAssignment } from '@/app/lib/actions';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent, DragOverlay, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
@@ -425,14 +425,19 @@ export default function CampSessionDetail({
   seatAssignmentsDate
 }: {
   session: CampSessionWithEnrolments;
-  seatAssignments?: Map<number, string[]>;
-  seatAssignmentsDate?: Date;
+  seatAssignments?: CampSeatAssignmentGroup[];
+  seatAssignmentsDate?: Date | string;
 }) {
   const seatAssignmentsDateValue = seatAssignmentsDate; // may be undefined
 
   const seatAssignmentsDateKey = seatAssignmentsDateValue
-    ? `${seatAssignmentsDateValue.getFullYear()}-${String(seatAssignmentsDateValue.getMonth() + 1).padStart(2, '0')}-${String(seatAssignmentsDateValue.getDate()).padStart(2, '0')}`
+    ? typeof seatAssignmentsDateValue === 'string'
+      ? seatAssignmentsDateValue
+      : `${seatAssignmentsDateValue.getFullYear()}-${String(seatAssignmentsDateValue.getMonth() + 1).padStart(2, '0')}-${String(seatAssignmentsDateValue.getDate()).padStart(2, '0')}`
     : undefined;
+  const seatAssignmentsBySeat = new Map(
+    (seatAssignments ?? []).map((assignment) => [assignment.seat, assignment.enrolmentIds])
+  );
   // Room configurations
   const ROOM_1_CONFIG = {
     name: 'Back Room',
@@ -479,7 +484,7 @@ export default function CampSessionDetail({
         // Only create seats that should be visible for THIS room
         if (!roomConfig.visibleSeats.has(relativeSeatNumber)) continue;
         
-        const assignedIds = seatAssignments?.get(absoluteSeatNumber) ?? [];
+        const assignedIds = seatAssignmentsBySeat.get(absoluteSeatNumber) ?? [];
 
         const amEnrolment = (assignedIds.length > 0
           ? session.enrolments.find(e => assignedIds.includes(e.id) && e.camp_type === 'AM')
@@ -974,9 +979,10 @@ export default function CampSessionDetail({
         </nav>
       </div>
 
-      <DndContext 
-        sensors={sensors} 
-        collisionDetection={closestCenter} 
+      <DndContext
+        id="camp-seating-chart"
+        sensors={sensors}
+        collisionDetection={closestCenter}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >

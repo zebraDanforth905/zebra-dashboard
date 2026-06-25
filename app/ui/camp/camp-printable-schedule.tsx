@@ -111,6 +111,19 @@ function cleanText(value?: string | null) {
   return value?.trim() || '';
 }
 
+function formatBirthday(value: Date | string | null) {
+  if (!value) return '';
+
+  const date = getLocalDateFromDb(value);
+  if (!date) return '';
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function sessionLabel(row: CampPrintableScheduleRow) {
   return `${row.camp_type}${row.extended_care ? ' EX' : ''}`;
 }
@@ -118,6 +131,11 @@ function sessionLabel(row: CampPrintableScheduleRow) {
 function roomFromSeatNumber(seatNumber?: number | null) {
   if (!seatNumber) return '';
   return seatNumber >= 100 ? 'Front' : 'Back';
+}
+
+function seatLabelFromNumber(seatNumber?: number | null) {
+  if (!seatNumber) return '';
+  return `${roomFromSeatNumber(seatNumber)} ${seatNumber}`;
 }
 
 function normalizeRoomLabel(value: string) {
@@ -172,10 +190,10 @@ function specialInstructionForRows(rows: CampPrintableScheduleRow[]) {
   ]).join('\n');
 }
 
-function roomDefaultForRows(rows: CampPrintableScheduleRow[]) {
-  const rooms = uniqueCleanValues(rows.map((row) => roomFromSeatNumber(row.assigned_seat_number)));
-  if (rooms.length <= 1) return rooms[0] ?? '';
-  return rooms.join(' / ');
+function seatDefaultForRows(rows: CampPrintableScheduleRow[]) {
+  const seats = uniqueCleanValues(rows.map((row) => seatLabelFromNumber(row.assigned_seat_number)));
+  if (seats.length <= 1) return seats[0] ?? '';
+  return seats.join(' / ');
 }
 
 function sessionSummaryForRows(rows: CampPrintableScheduleRow[]) {
@@ -203,34 +221,34 @@ function daysSummaryForRows(rows: CampPrintableScheduleRow[], days: WeekdaySched
     .join(', ');
 }
 
-function roomSummaryForRows(rows: CampPrintableScheduleRow[], days: WeekdaySchedule[]) {
-  const activeDayRooms = days
+function seatSummaryForRows(rows: CampPrintableScheduleRow[], days: WeekdaySchedule[]) {
+  const activeDaySeats = days
     .map(({ day }) => {
       const activeRows = rows.filter((row) => isActiveOnDate(row, day));
-      const rooms = uniqueCleanValues(
-        activeRows.map((row) => roomFromSeatNumber(assignedSeatForDate(row, day)))
+      const seats = uniqueCleanValues(
+        activeRows.map((row) => seatLabelFromNumber(assignedSeatForDate(row, day)))
       );
 
       return {
         day,
-        rooms,
+        seats,
       };
     })
-    .filter(({ rooms }) => rooms.length > 0);
+    .filter(({ seats }) => seats.length > 0);
 
-  if (activeDayRooms.length === 0) {
-    return roomDefaultForRows(rows);
+  if (activeDaySeats.length === 0) {
+    return seatDefaultForRows(rows);
   }
 
   const activeDayCount = days.filter(({ day }) => rows.some((row) => isActiveOnDate(row, day))).length;
-  const uniqueRooms = uniqueCleanValues(activeDayRooms.flatMap(({ rooms }) => rooms));
+  const uniqueSeats = uniqueCleanValues(activeDaySeats.flatMap(({ seats }) => seats));
 
-  if (activeDayRooms.length === activeDayCount && uniqueRooms.length === 1) {
-    return uniqueRooms[0];
+  if (activeDaySeats.length === activeDayCount && uniqueSeats.length === 1) {
+    return uniqueSeats[0];
   }
 
-  return activeDayRooms
-    .map(({ day, rooms }) => `${dayAbbreviation(day)}: ${rooms.join(' / ')}`)
+  return activeDaySeats
+    .map(({ day, seats }) => `${dayAbbreviation(day)}: ${seats.join(' / ')}`)
     .join('\n');
 }
 
@@ -275,12 +293,13 @@ function buildPrintableStudents(
         field: CampPrintableStudentListField,
         fallback: string
       ) => studentOverrides?.get(field) ?? fallback;
-      const roomValue = normalizeRoomLabel(overrideValue('room', roomSummaryForRows(studentRows, days)));
+      const roomValue = normalizeRoomLabel(overrideValue('room', seatSummaryForRows(studentRows, days)));
 
       return {
         key: studentId,
         studentId,
         studentName: overrideValue('student', firstRow.student_name),
+        birthday: overrideValue('birthday', formatBirthday(firstRow.dob)),
         parentName,
         parentPhone,
         parentSummary: overrideValue('parent', [parentName, parentPhone].filter(Boolean).join('\n')),

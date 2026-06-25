@@ -12,9 +12,12 @@ Source: June 2026 staff checklist screenshot.
 ## Backlog
 
 - [ ] Scratch/Roblox/Unity accounts and laptop assignment.
+- [x] Test slips with account number in camp slip creation.
 - [ ] Add extended care to camp slips as `EX`.
 - [ ] Student/camper list, front and back room, for printing.
-  - Fields: name, room, FD/AM/PM, EX add-on, parent name, phone number, allergies/special notes, September grade, camp program/course.
+  - Fields: name, room, FD/AM/PM, EX add-on, parent name, phone number, birthday, allergies/special notes, September grade, camp program/course.
+  - [x] Add birthday to the printable student list.
+  - [x] Make this printable as a single landscape page per week to fit more names.
   - Special notes may be stale from prior years, so staff need manual adjustment.
   - Verify fields against previous student list.
 - [ ] QR codes for pictures to print on paper.

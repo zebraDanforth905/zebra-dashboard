@@ -2592,6 +2592,7 @@ export async function fetchCampPrintableSchedule(
         ce.id::text AS camp_enrolment_id,
         ce.student_id::text AS student_id,
         s.name AS student_name,
+        s.dob,
         ce.assigned_seat_number,
         COALESCE(seats.seat_assignments, '[]'::jsonb) AS seat_assignments,
         ce.course_id::text AS course_id,

@@ -2,15 +2,13 @@ import {
   fetchMostRecentSeatAssignmentsInWeek,
   fetchUpcomingCampSessionsWithEnrolments,
   fetchSeatAssignments,
-  fetchCampAccountPrepChecklist,
 } from '@/app/lib/data';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import CampDayDetail from '@/app/ui/camp/camp-day-detail';
-import CampAccountPrepChecklist from '@/app/ui/camp/camp-account-prep-checklist';
 import { connection } from 'next/server';
-import { CampEnrolmentWithStudent } from '@/app/lib/definitions';
+import { CampEnrolmentWithStudent, CampSeatAssignmentGroup } from '@/app/lib/definitions';
 
 const parseLocalISODate = (value: string) => {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -86,14 +84,9 @@ export default async function CampDayPage({
   const weekEnd = getWeekEnd(weekStart);
   const weekHref = `/dashboard/camp/${getDateKey(weekStart)}/${getDateKey(weekEnd)}`;
   
-  const [sessions, seatRows, accountPrepChecklist] = await Promise.all([
+  const [sessions, seatRows] = await Promise.all([
     fetchUpcomingCampSessionsWithEnrolments(),
     fetchSeatAssignments(dayDate),
-    fetchCampAccountPrepChecklist(
-      getDateKey(weekStart),
-      getDateKey(weekEnd),
-      date
-    ),
   ]);
 
   // Find all sessions that span this date and collect their enrolments
@@ -190,6 +183,10 @@ export default async function CampDayPage({
     seatOccupancy.set(previousSeat, occupancy);
   }
 
+  const seatAssignmentGroups: CampSeatAssignmentGroup[] = Array.from(seatMap.entries())
+    .map(([seat, enrolmentIds]) => ({ seat, enrolmentIds }))
+    .sort((a, b) => a.seat - b.seat);
+
   const formatDate = (date: Date) => {
     return new Date(date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   };
@@ -212,15 +209,10 @@ export default async function CampDayPage({
         </div>
       </div>
 
-      <CampAccountPrepChecklist
-        scopeLabel={formatDate(dayDate)}
-        checklist={accountPrepChecklist}
-      />
-
       <CampDayDetail
-        dayDate={dayDate}
-        dayEnrolments={dayEnrolments}
-        seatAssignments={seatMap}
+        dayDate={date}
+        enrolments={allEnrolments}
+        seatAssignments={seatAssignmentGroups}
       />
 
     </div>

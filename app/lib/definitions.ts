@@ -604,6 +604,7 @@ export type CampPrintableScheduleRow = {
   camp_enrolment_id: string;
   student_id: string;
   student_name: string;
+  dob: Date | null;
   assigned_seat_number: number | null;
   seat_assignments: Array<{
     date: string;
@@ -625,6 +626,7 @@ export type CampPrintableScheduleRow = {
 
 export type CampPrintableStudentListField =
   | 'student'
+  | 'birthday'
   | 'parent'
   | 'type'
   | 'camp'
@@ -649,6 +651,11 @@ export type CampPrintableScheduleData = {
 export type SeatAssignment = {
   enrolment_id: string;
   seat: number;
+};
+
+export type CampSeatAssignmentGroup = {
+  seat: number;
+  enrolmentIds: string[];
 };
 
 export type IncidentReportDetails = {

@@ -209,12 +209,6 @@ export default async function CampSessionPage({
           <ArrowLeftIcon className="h-4 w-4" />
           Back to Camp Sessions
         </Link>
-        <Link
-          href="/dashboard/camp/lms-mappings"
-          className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          LMS Mappings
-        </Link>
       </div>
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -231,7 +225,7 @@ export default async function CampSessionPage({
           className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 print:hidden"
         >
           <PrinterIcon className="h-4 w-4" />
-          Print Camper PDF
+          Print Camp Packet
         </Link>
       </div>
 
@@ -319,17 +313,6 @@ export default async function CampSessionPage({
           </div>
         )}
       </div>
-
-      <CampLmsChecklist
-        startDate={startDate}
-        endDate={endDate}
-        checklist={lmsChecklist}
-      />
-
-      <CampAccountPrepChecklist
-        scopeLabel={report.label}
-        checklist={accountPrepChecklist}
-      />
     </div>
   );
 }

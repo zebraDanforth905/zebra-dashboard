@@ -937,15 +937,32 @@ export async function assignStudentToRobloxAccount(robloxUsername: string, stude
 
 export async function assignStudentToLaptop(laptopNumber: string, studentId: string | null) {
   try {
-    await sql`
-      UPDATE laptop_assignments
-      SET student_id = ${studentId}
-      WHERE laptop_number = ${laptopNumber};
-    `;
+    if (studentId) {
+      await sql`
+        INSERT INTO laptop_assignments (student_id, laptop_number)
+        VALUES (${studentId}, ${laptopNumber})
+        ON CONFLICT (student_id) DO UPDATE
+        SET laptop_number = EXCLUDED.laptop_number;
+      `;
+    }
     revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error assigning student to laptop:', error);
     throw new Error('Failed to assign student to laptop.');
+  }
+}
+
+export async function unassignStudentFromLaptop(laptopNumber: string, studentId: string) {
+  try {
+    await sql`
+      DELETE FROM laptop_assignments
+      WHERE laptop_number = ${laptopNumber}
+        AND student_id = ${studentId};
+    `;
+    revalidateAccountPrepViews();
+  } catch (error) {
+    console.error('Error unassigning student from laptop:', error);
+    throw new Error('Failed to unassign student from laptop.');
   }
 }
 
@@ -978,8 +995,10 @@ export async function createRobloxAccount(username: string, password: string, st
 export async function createLaptopAssignment(laptopNumber: string, studentId: string) {
   try {
     await sql`
-      INSERT INTO laptop_assignments (laptop_number, student_id)
-      VALUES (${laptopNumber}, ${studentId});
+      INSERT INTO laptop_assignments (student_id, laptop_number)
+      VALUES (${studentId}, ${laptopNumber})
+      ON CONFLICT (student_id) DO UPDATE
+      SET laptop_number = EXCLUDED.laptop_number;
     `;
     revalidateAccountPrepViews();
   } catch (error) {
@@ -1050,10 +1069,10 @@ export async function assignCampPrepResource(input: {
       `;
     } else {
       updated = await sql<{ resource_id: string }[]>`
-        UPDATE laptop_assignments
-        SET student_id = ${studentId}
-        WHERE laptop_number = ${resourceId}
-          AND (student_id IS NULL OR student_id = ${studentId})
+        INSERT INTO laptop_assignments (student_id, laptop_number)
+        VALUES (${studentId}, ${resourceId})
+        ON CONFLICT (student_id) DO UPDATE
+        SET laptop_number = EXCLUDED.laptop_number
         RETURNING laptop_number AS resource_id;
       `;
     }
@@ -1173,46 +1192,12 @@ export async function createOrAssignCampPrepResource(input: {
         `;
       }
     } else {
-      const existing = await sql<{
-        resource_id: string;
-        student_id: string | null;
-        student_name: string | null;
-      }[]>`
-        SELECT lap.laptop_number AS resource_id, lap.student_id, s.name AS student_name
-        FROM laptop_assignments lap
-        LEFT JOIN students s ON s.id = lap.student_id
-        WHERE lap.laptop_number = ${identifier}
-        LIMIT 1;
+      await sql`
+        INSERT INTO laptop_assignments (student_id, laptop_number)
+        VALUES (${studentId}, ${identifier})
+        ON CONFLICT (student_id) DO UPDATE
+        SET laptop_number = EXCLUDED.laptop_number;
       `;
-
-      if (existing.length > 0) {
-        const current = existing[0];
-        if (current.student_id && String(current.student_id) !== studentId) {
-          return {
-            ok: false,
-            error: `Laptop ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
-          };
-        }
-
-        if (!current.student_id) {
-          const updated = await sql<{ resource_id: string }[]>`
-            UPDATE laptop_assignments
-            SET student_id = ${studentId}
-            WHERE laptop_number = ${identifier}
-              AND student_id IS NULL
-            RETURNING laptop_number AS resource_id;
-          `;
-
-          if (updated.length === 0) {
-            return { ok: false, error: 'That laptop is no longer available' };
-          }
-        }
-      } else {
-        await sql`
-          INSERT INTO laptop_assignments (laptop_number, student_id)
-          VALUES (${identifier}, ${studentId});
-        `;
-      }
     }
 
     revalidateAccountPrepViews();
@@ -1261,8 +1246,7 @@ export async function unassignCampPrepResource(input: {
       `;
     } else {
       updated = await sql<{ resource_id: string }[]>`
-        UPDATE laptop_assignments
-        SET student_id = NULL
+        DELETE FROM laptop_assignments
         WHERE laptop_number = ${resourceId}
           AND student_id = ${studentId}
         RETURNING laptop_number AS resource_id;
@@ -2271,6 +2255,7 @@ const CampLmsDateSchema = z.object({
 
 const CampPrintableStudentListFieldSchema = z.enum([
   'student',
+  'birthday',
   'parent',
   'type',
   'camp',
@@ -3547,6 +3532,7 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
         cs.extended_care,
         JSONB_STRIP_NULLS(
           JSONB_BUILD_OBJECT(
+            'Account #', ce.student_id::bigint::text,
             'Scratch Login', scr.username,
             'Scratch Password', scr.password,
             'Roblox Login', rob.username,

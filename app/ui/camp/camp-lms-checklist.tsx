@@ -451,7 +451,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
             href="/dashboard/camp/lms-mappings"
             className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            Edit Mappings
+            LMS Custom Mapping
           </Link>
         </div>
       </div>
@@ -517,7 +517,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
               href="/dashboard/camp/lms-mappings"
               className="rounded-md bg-orange-600 px-3 py-2 text-sm font-medium text-white hover:bg-orange-700"
             >
-              Edit Mappings
+              Edit LMS Mapping
             </Link>
           </div>
           {rowsWithoutCourseId > 0 && (
