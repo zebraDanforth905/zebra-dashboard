@@ -2268,7 +2268,7 @@ const CampPrintableStudentListFieldSchema = z.enum([
 const CampPrintableStudentListOverrideSchema = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  studentId: z.string().trim().regex(/^\d+$/),
+  studentId: z.string().trim().regex(/^\d+(?:\.0+)?$/),
   field: CampPrintableStudentListFieldSchema,
   value: z.string().max(5000),
 });
@@ -3442,6 +3442,9 @@ export async function updateCampPrintableStudentListOverride(input: {
     const updatedBy =
       session.user.email ?? session.user.name ?? getSessionUserId(session) ?? 'unknown';
     const { weekStart, weekEnd, studentId, field, value } = parsed.data;
+    const normalizedStudentId = studentId.includes('.')
+      ? studentId.replace(/\.0+$/, '')
+      : studentId;
 
     await sql`
       INSERT INTO camp_print_student_list_overrides (
@@ -3456,7 +3459,7 @@ export async function updateCampPrintableStudentListOverride(input: {
       VALUES (
         ${weekStart}::date,
         ${weekEnd}::date,
-        ${studentId}::numeric,
+        ${normalizedStudentId}::numeric,
         ${field},
         ${value},
         ${updatedBy},

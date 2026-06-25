@@ -2590,7 +2590,7 @@ export async function fetchCampPrintableSchedule(
     const rows = await sql<CampPrintableScheduleRow[]>`
       SELECT
         ce.id::text AS camp_enrolment_id,
-        ce.student_id::text AS student_id,
+        TRUNC(ce.student_id)::text AS student_id,
         s.name AS student_name,
         s.dob,
         ce.assigned_seat_number,
@@ -2654,7 +2654,7 @@ export async function fetchCampPrintableSchedule(
     const studentListOverrides = (await campPrintStudentListOverridesReady())
       ? await sql<CampPrintableStudentListOverride[]>`
           SELECT
-            student_id::text AS student_id,
+            TRUNC(student_id)::text AS student_id,
             field,
             value
           FROM camp_print_student_list_overrides

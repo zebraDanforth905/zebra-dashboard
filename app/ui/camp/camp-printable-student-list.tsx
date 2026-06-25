@@ -140,7 +140,7 @@ export default function CampPrintableStudentList({
             <th className="w-[7%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Type</th>
             <th className="w-[15%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Camp</th>
             <th className="w-[8%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Days</th>
-            <th className="w-[7%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Seat</th>
+            <th className="w-[7%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Room</th>
             <th className="w-[15%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Allergy / Medical</th>
             <th className="w-[14%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Notes</th>
           </tr>

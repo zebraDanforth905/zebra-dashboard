@@ -2,6 +2,7 @@ import PrintButton from '@/app/ui/print-button';
 import CampPrintableStudentList, {
   type CampPrintableStudentListRow,
 } from '@/app/ui/camp/camp-printable-student-list';
+import { CakeIcon } from '@heroicons/react/24/outline';
 import type {
   CampPrintableScheduleData,
   CampPrintableScheduleRow,
@@ -12,6 +13,32 @@ import type {
 type WeekdaySchedule = {
   day: Date;
 };
+
+type PrintableRoomConfig = {
+  name: string;
+  rows: number;
+  cols: number;
+  seatOffset: number;
+  visibleSeats: Set<number>;
+};
+
+const BACK_ROOM_CONFIG: PrintableRoomConfig = {
+  name: 'Back Room',
+  rows: 6,
+  cols: 5,
+  seatOffset: 0,
+  visibleSeats: new Set([4, 5, 9, 10, 19, 20, 24, 25, 1, 2, 6, 7, 11, 12, 16, 17, 21, 22, 26, 27]),
+};
+
+const FRONT_ROOM_CONFIG: PrintableRoomConfig = {
+  name: 'Front Room',
+  rows: 6,
+  cols: 6,
+  seatOffset: 100,
+  visibleSeats: new Set([3, 4, 7, 12, 13, 15, 16, 18, 19, 21, 22, 24, 25, 27, 28, 30, 33, 34]),
+};
+
+const PRINTABLE_ROOM_ORDER: PrintableRoomConfig[] = [FRONT_ROOM_CONFIG, BACK_ROOM_CONFIG];
 
 type PrintableStudent = CampPrintableStudentListRow & {
   parentName: string;
@@ -89,6 +116,14 @@ function formatDateRange(startDate: string, endDate: string) {
   return `${startText} - ${endText}`;
 }
 
+function formatDayLabel(date: Date) {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 function isActiveOnDate(row: CampPrintableScheduleRow, day: Date) {
   const start = getLocalDateFromDb(row.start_date);
   const end = getLocalDateFromDb(row.end_date);
@@ -124,6 +159,19 @@ function formatBirthday(value: Date | string | null) {
   });
 }
 
+function formatDob(value: Date | string | null) {
+  if (!value) return 'N/A';
+
+  const date = getLocalDateFromDb(value);
+  if (!date) return 'N/A';
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function sessionLabel(row: CampPrintableScheduleRow) {
   return `${row.camp_type}${row.extended_care ? ' EX' : ''}`;
 }
@@ -134,8 +182,7 @@ function roomFromSeatNumber(seatNumber?: number | null) {
 }
 
 function seatLabelFromNumber(seatNumber?: number | null) {
-  if (!seatNumber) return '';
-  return `${roomFromSeatNumber(seatNumber)} ${seatNumber}`;
+  return roomFromSeatNumber(seatNumber);
 }
 
 function normalizeRoomLabel(value: string) {
@@ -184,10 +231,7 @@ function medicalAlertForRows(rows: CampPrintableScheduleRow[]) {
 }
 
 function specialInstructionForRows(rows: CampPrintableScheduleRow[]) {
-  return uniqueCleanValues([
-    ...rows.map((row) => row.parent_request_notes),
-    ...rows.map((row) => row.note),
-  ]).join('\n');
+  return uniqueCleanValues(rows.map((row) => row.note)).join('\n');
 }
 
 function seatDefaultForRows(rows: CampPrintableScheduleRow[]) {
@@ -317,6 +361,188 @@ function buildPrintableStudents(
 function paddedRows<T>(rows: T[], minimumRows: number): Array<T | null> {
   const blanks = Math.max(0, minimumRows - rows.length);
   return [...rows, ...Array.from({ length: blanks }, () => null)];
+}
+
+function courseLabelForCard(row: CampPrintableScheduleRow) {
+  return cleanText(row.course_name) || cleanText(row.course_id);
+}
+
+function campTypeBadge(type: 'FD' | 'AM' | 'PM') {
+  if (type === 'FD') return { label: 'Full Day', className: 'bg-blue-100 text-blue-700' };
+  if (type === 'AM') return { label: 'Morning', className: 'bg-yellow-100 text-yellow-700' };
+  return { label: 'Afternoon', className: 'bg-orange-100 text-orange-700' };
+}
+
+function PrintableCamperCard({ row }: { row: CampPrintableScheduleRow }) {
+  const badge = campTypeBadge(row.camp_type);
+  const rosterNote = cleanText(row.note);
+  const course = courseLabelForCard(row);
+
+  return (
+    <div className="relative bg-white border rounded-md p-1 text-xs border-slate-200">
+      <h3 className="font-semibold text-slate-900 text-xs mb-0.5 pr-1 truncate">{row.student_name}</h3>
+
+      <div className="space-y-1">
+        <div className="flex items-center gap-0.5 text-[10px] text-slate-600">
+          <CakeIcon className="h-2.5 w-2.5" />
+          <span>{formatDob(row.dob)}</span>
+        </div>
+
+        <div className="flex flex-wrap gap-0.5">
+          <span className={`px-1 py-0.5 text-[10px] font-medium rounded ${badge.className}`}>
+            {badge.label}
+          </span>
+          {row.extended_care && (
+            <span className="px-1 py-0.5 text-[10px] font-medium rounded bg-purple-100 text-purple-700">
+              Ext Care
+            </span>
+          )}
+          {course && (
+            <span className="px-1 py-0.5 text-[10px] font-medium rounded bg-slate-100 text-slate-700">
+              {course}
+            </span>
+          )}
+        </div>
+
+        {rosterNote && (
+          <div className="mt-1 border border-slate-200 rounded-md p-1 bg-slate-50/80">
+            <span className="text-[10px] font-semibold text-slate-700">Roster Note: </span>
+            <span className="text-[10px] text-slate-700 whitespace-pre-wrap break-words">{rosterNote}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function getRoomRosterForDay(roomConfig: PrintableRoomConfig, dayRows: CampPrintableScheduleRow[], day: Date) {
+  return dayRows
+    .map((row) => ({
+      row,
+      seatNumber: assignedSeatForDate(row, day),
+    }))
+    .filter(({ seatNumber }) => {
+      if (!seatNumber) return false;
+      const relativeSeatNumber = seatNumber - roomConfig.seatOffset;
+      return roomConfig.visibleSeats.has(relativeSeatNumber);
+    })
+    .sort((a, b) => (a.seatNumber ?? 0) - (b.seatNumber ?? 0) || a.row.student_name.localeCompare(b.row.student_name));
+}
+
+function renderPrintRoomForDay(roomConfig: PrintableRoomConfig, dayRows: CampPrintableScheduleRow[], day: Date) {
+  const printRowsWithSeats = new Set<number>();
+  const printColsWithSeats = new Set<number>();
+
+  roomConfig.visibleSeats.forEach((seatNum) => {
+    printRowsWithSeats.add(Math.floor((seatNum - 1) / roomConfig.cols));
+    printColsWithSeats.add((seatNum - 1) % roomConfig.cols);
+  });
+
+  const roomRoster = getRoomRosterForDay(roomConfig, dayRows, day);
+
+  if (roomRoster.length === 0) {
+    return null;
+  }
+
+  const seatMap = new Map<number, CampPrintableScheduleRow[]>();
+  roomRoster.forEach(({ row, seatNumber }) => {
+    if (!seatNumber) return;
+    const existing = seatMap.get(seatNumber) ?? [];
+    existing.push(row);
+    seatMap.set(seatNumber, existing);
+  });
+
+  seatMap.forEach((seatRows, seatNumber) => {
+    const byTypeOrder = { FD: 0, AM: 1, PM: 2 } as const;
+    const deduped = Array.from(new Map(seatRows.map((row) => [row.camp_enrolment_id, row])).values())
+      .sort((a, b) => byTypeOrder[a.camp_type] - byTypeOrder[b.camp_type] || a.student_name.localeCompare(b.student_name));
+    seatMap.set(seatNumber, deduped);
+  });
+
+  return (
+    <section key={`${getDateKey(day)}-${roomConfig.name}`} className="camp-print-room bg-white text-black border border-slate-200 rounded-lg p-2">
+      <div className="mb-2 border-b border-slate-300 pb-1.5">
+        <h2 className="text-lg font-bold tracking-tight text-slate-900">{roomConfig.name}</h2>
+        <p className="text-sm font-semibold text-slate-700">{formatDayLabel(day)}</p>
+      </div>
+
+      <div>
+        <div
+          className="mb-1 grid gap-1"
+          style={{
+            gridTemplateColumns: Array.from({ length: roomConfig.cols }, (_, i) =>
+              printColsWithSeats.has(i) ? 'minmax(0, 1fr)' : '0.35in'
+            ).join(' '),
+            gridTemplateRows: Array.from({ length: roomConfig.rows }, (_, i) =>
+              printRowsWithSeats.has(i) ? 'minmax(1.2in, auto)' : '0.14in'
+            ).join(' ')
+          }}
+        >
+          {Array.from({ length: roomConfig.rows * roomConfig.cols }, (_, i) => {
+            const relativeSeatNumber = i + 1;
+            const absoluteSeatNumber = relativeSeatNumber + roomConfig.seatOffset;
+
+            if (!roomConfig.visibleSeats.has(relativeSeatNumber)) {
+              return <div key={`print-empty-${getDateKey(day)}-${absoluteSeatNumber}`} />;
+            }
+
+            const assignedRows = seatMap.get(absoluteSeatNumber) ?? [];
+            const fdRow = assignedRows.find((row) => row.camp_type === 'FD') ?? null;
+            const amRow = assignedRows.find((row) => row.camp_type === 'AM') ?? null;
+            const pmRow = assignedRows.find((row) => row.camp_type === 'PM') ?? null;
+
+            return (
+              <div
+                key={`print-seat-${getDateKey(day)}-${absoluteSeatNumber}`}
+                className="relative border border-slate-200 rounded-md p-1 min-h-[98px] bg-slate-50/60"
+              >
+                {fdRow ? (
+                  <PrintableCamperCard row={fdRow} />
+                ) : (
+                  <div className="space-y-0.5">
+                    {amRow ? (
+                      <PrintableCamperCard row={amRow} />
+                    ) : (
+                      <div className="h-8 flex items-center justify-center text-slate-400 text-[10px] border border-slate-200 rounded bg-yellow-50/50">
+                        AM
+                      </div>
+                    )}
+
+                    {pmRow ? (
+                      <PrintableCamperCard row={pmRow} />
+                    ) : (
+                      <div className="h-8 flex items-center justify-center text-slate-400 text-[10px] border border-slate-200 rounded bg-orange-50/50">
+                        PM
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PrintableWeeklySeatingCharts({
+  rows,
+  days,
+}: {
+  rows: CampPrintableScheduleRow[];
+  days: WeekdaySchedule[];
+}) {
+  return (
+    <>
+      {days.flatMap(({ day }) => {
+        const dayRows = rows.filter((row) => isActiveOnDate(row, day));
+        return PRINTABLE_ROOM_ORDER
+          .filter((roomConfig) => getRoomRosterForDay(roomConfig, dayRows, day).length > 0)
+          .map((roomConfig) => renderPrintRoomForDay(roomConfig, dayRows, day));
+      })}
+    </>
+  );
 }
 
 function SignInSpecialInstructions({
@@ -475,6 +701,7 @@ export default function CampPrintableSchedule({
                 weekEnd={schedule.end_date}
                 weekLabel={weekLabel}
               />
+              <PrintableWeeklySeatingCharts rows={activeRows} days={days} />
               <SignInSpecialInstructions students={students} schedule={schedule} />
               <MedicalAlertSheet students={students} schedule={schedule} />
             </>
