@@ -1,7 +1,12 @@
 'use client';
 
 import { fetchStudentsForAssignment } from '@/app/lib/data';
-import { assignStudentToScratchAccount, assignStudentToRobloxAccount, assignStudentToLaptop } from '@/app/lib/actions';
+import {
+  assignStudentToScratchAccount,
+  assignStudentToRobloxAccount,
+  assignStudentToLaptop,
+  unassignStudentFromLaptop,
+} from '@/app/lib/actions';
 import { useEffect, useState } from 'react';
 
 export default function ScratchAccountRow({ account }: { account: any }) {
@@ -53,8 +58,8 @@ export default function ScratchAccountRow({ account }: { account: any }) {
         await assignStudentToScratchAccount(account.username, null);
       } else if (account.account_type === 'roblox') {
         await assignStudentToRobloxAccount(account.username, null);
-      } else if (account.account_type === 'laptop') {
-        await assignStudentToLaptop(account.username, null);
+      } else if (account.account_type === 'laptop' && account.student_id) {
+        await unassignStudentFromLaptop(account.username, account.student_id);
       }
       setIsEditing(false);
       setIsUpdating(false);
@@ -108,7 +113,7 @@ export default function ScratchAccountRow({ account }: { account: any }) {
             className="text-blue-600 hover:text-blue-900"
             disabled={isUpdating}
           >
-            {account.student_id ? 'Change' : 'Assign'}
+            {account.account_type === 'laptop' ? 'Assign another' : account.student_id ? 'Change' : 'Assign'}
           </button>
         ) : (
           <div className="flex flex-col gap-2 relative">

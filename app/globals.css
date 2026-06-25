@@ -30,6 +30,11 @@ body {
     size: letter;
     margin: 0.5cm;
   }
+
+  @page camp-student-list {
+    size: letter landscape;
+    margin: 0.25in;
+  }
   
   /* Page break before small slips that follow big slips */
   .print-page-break {
@@ -68,6 +73,12 @@ body {
     break-after: page;
     min-height: 100vh;
     padding: 0.2in 0;
+  }
+
+  .camp-print-student-list-page {
+    page: camp-student-list;
+    min-height: auto;
+    padding: 0.05in 0;
   }
 
   .camp-print-packet-page:last-child {

@@ -1,0 +1,36 @@
+-- #34 - Manual deployment required.
+-- Allow staff to edit the birthday cell on printable camp student lists.
+
+CREATE TABLE IF NOT EXISTS camp_print_student_list_overrides (
+  week_start date NOT NULL,
+  week_end date NOT NULL,
+  student_id numeric NOT NULL,
+  field text NOT NULL,
+  value text NOT NULL DEFAULT '',
+  updated_by text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (week_start, week_end, student_id, field)
+);
+
+CREATE INDEX IF NOT EXISTS idx_camp_print_student_list_overrides_week
+  ON camp_print_student_list_overrides (week_start, week_end);
+
+ALTER TABLE camp_print_student_list_overrides
+  DROP CONSTRAINT IF EXISTS camp_print_student_list_overrides_field_check;
+
+ALTER TABLE camp_print_student_list_overrides
+  ADD CONSTRAINT camp_print_student_list_overrides_field_check
+  CHECK (
+    field IN (
+      'student',
+      'birthday',
+      'parent',
+      'type',
+      'camp',
+      'days',
+      'room',
+      'medical',
+      'notes'
+    )
+  );

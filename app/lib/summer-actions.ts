@@ -1104,20 +1104,15 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
   }));
 }
 
-async function validateTokenCurrentStudentIds(
+async function fetchTokenCurrentStudentIds(
   tokenId: string,
-  studentIds: number[],
   includeInactiveStudents = false,
-): Promise<boolean> {
-  const ids = Array.from(new Set(studentIds.filter(Number.isFinite)));
-  if (ids.length === 0 || ids.length !== studentIds.length) return false;
-
+): Promise<number[]> {
   const rows = await sql<{ id: number }[]>`
     SELECT s.id::int AS id
     FROM parent_tokens pt
     JOIN students s ON s.customer_id = pt.customer_id
     WHERE pt.id = ${tokenId}::uuid
-      AND s.id = ANY(${ids}::int[])
       AND (
         ${includeInactiveStudents}::boolean
         OR (
@@ -1134,7 +1129,7 @@ async function validateTokenCurrentStudentIds(
         )
       )
   `;
-  return rows.length === ids.length;
+  return rows.map(row => row.id);
 }
 
 async function canonicalizeFallSessionEntries(entries: StudentFormEntry[]): Promise<StudentFormEntry[]> {
@@ -1228,8 +1223,6 @@ export async function submitSummerForm(
     return { error: 'Malformed submission data.' };
   }
 
-  if (entries.length === 0) return { error: 'No student data submitted.' };
-
   entries = entries.map(entry => ({
     ...entry,
     session_ids: Array.isArray(entry.session_ids) ? entry.session_ids : [],
@@ -1250,6 +1243,10 @@ export async function submitSummerForm(
     ? (sessionUser?.name?.trim() || sessionUser?.email?.trim() || fallbackStaffName || 'staff')
     : null;
 
+  if (entries.length === 0) {
+    return { error: isStaffEntry ? 'No student changes to submit.' : 'No student data submitted.' };
+  }
+
   const validSummerStatuses = new Set(['enrolling', 'pausing', 'no_change', 'other']);
   const validFallStatuses = new Set(isStaffEntry
     ? ['same', 'change', 'pause', 'unsure', 'not_returning']
@@ -1261,11 +1258,20 @@ export async function submitSummerForm(
 
   const submittedStudentIds = entries.map(entry => Number(entry.student_id));
   const uniqueSubmittedStudentIds = new Set(submittedStudentIds);
+  const eligibleStudentIds = await fetchTokenCurrentStudentIds(token_id, isStaffEntry);
+  const eligibleStudentIdSet = new Set(eligibleStudentIds);
   if (
     uniqueSubmittedStudentIds.size !== submittedStudentIds.length ||
-    !(await validateTokenCurrentStudentIds(token_id, submittedStudentIds, isStaffEntry))
+    submittedStudentIds.some(id => !Number.isFinite(id) || !eligibleStudentIdSet.has(id))
   ) {
     return { error: 'One or more submitted students are invalid for this link. Please reload and try again.' };
+  }
+  if (
+    !isStaffEntry &&
+    (uniqueSubmittedStudentIds.size !== eligibleStudentIds.length ||
+      eligibleStudentIds.some(id => !uniqueSubmittedStudentIds.has(id)))
+  ) {
+    return { error: 'Please complete every student before submitting.' };
   }
 
   // Validate summer session_ids are still is_summer=TRUE

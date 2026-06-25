@@ -9,12 +9,17 @@ import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized, upsertSummerEnrolmentWeekFromNormalized } from './insert_from_portal';
-import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampPrintableStudentListField } from './definitions';
+import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampLmsCanvasCourseSearchResult, type CampPrintableStudentListField } from './definitions';
 import {
+  CanvasCourse,
   CanvasConfigError,
   CanvasUser,
   NormalizedCanvasEnrollment,
+  isCanvasTokenConfigured,
   createCanvasClient,
+  clearCanvasTokenCache,
+  getCanvasTokenSettings,
+  saveCanvasApiTokenToDb,
 } from './canvas-lms';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
@@ -932,15 +937,32 @@ export async function assignStudentToRobloxAccount(robloxUsername: string, stude
 
 export async function assignStudentToLaptop(laptopNumber: string, studentId: string | null) {
   try {
-    await sql`
-      UPDATE laptop_assignments
-      SET student_id = ${studentId}
-      WHERE laptop_number = ${laptopNumber};
-    `;
+    if (studentId) {
+      await sql`
+        INSERT INTO laptop_assignments (student_id, laptop_number)
+        VALUES (${studentId}, ${laptopNumber})
+        ON CONFLICT (student_id) DO UPDATE
+        SET laptop_number = EXCLUDED.laptop_number;
+      `;
+    }
     revalidateAccountPrepViews();
   } catch (error) {
     console.error('Error assigning student to laptop:', error);
     throw new Error('Failed to assign student to laptop.');
+  }
+}
+
+export async function unassignStudentFromLaptop(laptopNumber: string, studentId: string) {
+  try {
+    await sql`
+      DELETE FROM laptop_assignments
+      WHERE laptop_number = ${laptopNumber}
+        AND student_id = ${studentId};
+    `;
+    revalidateAccountPrepViews();
+  } catch (error) {
+    console.error('Error unassigning student from laptop:', error);
+    throw new Error('Failed to unassign student from laptop.');
   }
 }
 
@@ -973,8 +995,10 @@ export async function createRobloxAccount(username: string, password: string, st
 export async function createLaptopAssignment(laptopNumber: string, studentId: string) {
   try {
     await sql`
-      INSERT INTO laptop_assignments (laptop_number, student_id)
-      VALUES (${laptopNumber}, ${studentId});
+      INSERT INTO laptop_assignments (student_id, laptop_number)
+      VALUES (${studentId}, ${laptopNumber})
+      ON CONFLICT (student_id) DO UPDATE
+      SET laptop_number = EXCLUDED.laptop_number;
     `;
     revalidateAccountPrepViews();
   } catch (error) {
@@ -1045,10 +1069,10 @@ export async function assignCampPrepResource(input: {
       `;
     } else {
       updated = await sql<{ resource_id: string }[]>`
-        UPDATE laptop_assignments
-        SET student_id = ${studentId}
-        WHERE laptop_number = ${resourceId}
-          AND (student_id IS NULL OR student_id = ${studentId})
+        INSERT INTO laptop_assignments (student_id, laptop_number)
+        VALUES (${studentId}, ${resourceId})
+        ON CONFLICT (student_id) DO UPDATE
+        SET laptop_number = EXCLUDED.laptop_number
         RETURNING laptop_number AS resource_id;
       `;
     }
@@ -1168,46 +1192,12 @@ export async function createOrAssignCampPrepResource(input: {
         `;
       }
     } else {
-      const existing = await sql<{
-        resource_id: string;
-        student_id: string | null;
-        student_name: string | null;
-      }[]>`
-        SELECT lap.laptop_number AS resource_id, lap.student_id, s.name AS student_name
-        FROM laptop_assignments lap
-        LEFT JOIN students s ON s.id = lap.student_id
-        WHERE lap.laptop_number = ${identifier}
-        LIMIT 1;
+      await sql`
+        INSERT INTO laptop_assignments (student_id, laptop_number)
+        VALUES (${studentId}, ${identifier})
+        ON CONFLICT (student_id) DO UPDATE
+        SET laptop_number = EXCLUDED.laptop_number;
       `;
-
-      if (existing.length > 0) {
-        const current = existing[0];
-        if (current.student_id && String(current.student_id) !== studentId) {
-          return {
-            ok: false,
-            error: `Laptop ${identifier} is already assigned to ${current.student_name ?? `student ${current.student_id}`}`,
-          };
-        }
-
-        if (!current.student_id) {
-          const updated = await sql<{ resource_id: string }[]>`
-            UPDATE laptop_assignments
-            SET student_id = ${studentId}
-            WHERE laptop_number = ${identifier}
-              AND student_id IS NULL
-            RETURNING laptop_number AS resource_id;
-          `;
-
-          if (updated.length === 0) {
-            return { ok: false, error: 'That laptop is no longer available' };
-          }
-        }
-      } else {
-        await sql`
-          INSERT INTO laptop_assignments (laptop_number, student_id)
-          VALUES (${identifier}, ${studentId});
-        `;
-      }
     }
 
     revalidateAccountPrepViews();
@@ -1256,8 +1246,7 @@ export async function unassignCampPrepResource(input: {
       `;
     } else {
       updated = await sql<{ resource_id: string }[]>`
-        UPDATE laptop_assignments
-        SET student_id = NULL
+        DELETE FROM laptop_assignments
         WHERE laptop_number = ${resourceId}
           AND student_id = ${studentId}
         RETURNING laptop_number AS resource_id;
@@ -2151,6 +2140,60 @@ export async function updatePassword(formData: FormData) {
   }
 }
 
+export async function fetchCanvasApiSettings() {
+  try {
+    const session = await auth();
+    if (getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const settings = await getCanvasTokenSettings();
+    return { ok: true, settings };
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) };
+  }
+}
+
+export async function saveCanvasApiToken(formData: FormData) {
+  try {
+    const session = await auth();
+    if (getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const rawToken = formData.get('canvasApiToken');
+    const intent = formData.get('intent');
+    const shouldClear = intent === 'clear';
+    const token = typeof rawToken === 'string' && !shouldClear ? rawToken.trim() : null;
+
+    if (!shouldClear && token && token.length > 0) {
+      await saveCanvasApiTokenToDb(token);
+    } else {
+      await saveCanvasApiTokenToDb(null);
+    }
+
+    clearCanvasTokenCache();
+    revalidatePath('/dashboard/settings');
+
+    const settings = await getCanvasTokenSettings();
+    const isCleared = shouldClear || !token;
+    return {
+      ok: true,
+      settings,
+      message: isCleared
+        ? 'Canvas API token entry removed from dashboard settings.'
+        : 'Canvas API token saved to dashboard settings.',
+    };
+  } catch (error) {
+    const pgError = error as { code?: string } | undefined;
+    if (pgError?.code === '42P01') {
+      return { ok: false, error: 'Apply migration 033_create_app_settings.sql before saving the Canvas API token setting.' };
+    }
+
+    return { ok: false, error: errorMessage(error) };
+  }
+}
+
 // Camp actions
 function toLocalDateKey(value: Date | string): string {
   if (typeof value === 'string') {
@@ -2212,6 +2255,7 @@ const CampLmsDateSchema = z.object({
 
 const CampPrintableStudentListFieldSchema = z.enum([
   'student',
+  'birthday',
   'parent',
   'type',
   'camp',
@@ -2234,22 +2278,32 @@ const CampLmsCourseMappingSchema = z.object({
   lmsCourseName: optionalTrimmedString,
   lmsCourseLink: optionalTrimmedString,
   notes: optionalTrimmedString,
-  canvasCourseFamily: optionalTrimmedString,
   canvasBeginnerCourseId: optionalTrimmedString,
   canvasBeginnerCourseName: optionalTrimmedString,
   canvasIntermediateCourseId: optionalTrimmedString,
   canvasIntermediateCourseName: optionalTrimmedString,
   canvasAdvancedCourseId: optionalTrimmedString,
   canvasAdvancedCourseName: optionalTrimmedString,
+  canvasAdditionalCourseIds: optionalTrimmedString,
 }).refine((input) => Boolean(
   input.lmsCourseName
-  || input.canvasCourseFamily
   || input.canvasBeginnerCourseId
   || input.canvasIntermediateCourseId
   || input.canvasAdvancedCourseId
+  || input.canvasAdditionalCourseIds
 ), {
-  message: 'Add a Canvas family or course ID before saving',
+  message: 'Add a camp name or Canvas course ID before saving',
 });
+
+function parseCanvasCourseIdList(value: string | null | undefined) {
+  if (!value) return [];
+  return Array.from(new Set(
+    value
+      .split(/[\s,;|]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  ));
+}
 
 const CampLmsImportMappingsSchema = z.object({
   tableText: z.string().trim().min(1),
@@ -2257,9 +2311,13 @@ const CampLmsImportMappingsSchema = z.object({
 
 const CampLmsCanvasActionSchema = z.object({
   campEnrolmentId: z.string().uuid(),
-  type: z.enum(['add_expected_beginner', 'inactivate_enrollment']),
+  type: z.enum(['add_expected_beginner', 'activate_course', 'inactivate_enrollment']),
   canvasCourseId: optionalTrimmedString,
   canvasEnrollmentId: optionalTrimmedString,
+});
+
+const CampLmsCanvasCourseSearchSchema = z.object({
+  term: z.string().trim().min(2).max(120),
 });
 
 const CampLmsStatusSchema = z.enum([
@@ -2301,8 +2359,25 @@ async function campLmsChecklistSchemaReady() {
         SELECT 1
         FROM information_schema.columns
         WHERE table_schema = 'public'
+          AND table_name = 'camp_lms_course_mappings'
+          AND column_name = 'canvas_additional_course_ids'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
           AND table_name = 'camp_lms_canvas_action_audit'
           AND column_name = 'after_state'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = 'camp_lms_canvas_action_audit'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) LIKE '%activate_course%'
       )
     ) AS ready;
   `;
@@ -2343,6 +2418,15 @@ function canvasUserSummary(user: CanvasUser) {
     login_id: user.login_id ?? null,
     email: user.email ?? null,
     sis_user_id: user.sis_user_id ?? null,
+  };
+}
+
+function canvasCourseSummary(course: CanvasCourse): CampLmsCanvasCourseSearchResult {
+  return {
+    id: String(course.id),
+    name: course.name ?? null,
+    course_code: course.course_code ?? null,
+    workflow_state: course.workflow_state ?? null,
   };
 }
 
@@ -2616,6 +2700,7 @@ function extractCourseName(value: string | undefined, courseId: string | null) {
 
 async function revalidateCampLmsPaths(startDate?: string, endDate?: string) {
   revalidatePath('/dashboard/camp');
+  revalidatePath('/dashboard/camp/lms-mappings');
   if (startDate && endDate) {
     revalidatePath(`/dashboard/camp/${startDate}/${endDate}`);
   }
@@ -2665,9 +2750,9 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before syncing Canvas' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, and 032_lms_mapping_additional_courses.sql before syncing Canvas' };
     }
-    if (!process.env.CANVAS_API_TOKEN) {
+    if (!(await isCanvasTokenConfigured())) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas sync' };
     }
 
@@ -2705,13 +2790,13 @@ export async function saveCampLmsCourseMapping(input: {
   lmsCourseName?: string;
   lmsCourseLink?: string;
   notes?: string;
-  canvasCourseFamily?: string;
   canvasBeginnerCourseId?: string;
   canvasBeginnerCourseName?: string;
   canvasIntermediateCourseId?: string;
   canvasIntermediateCourseName?: string;
   canvasAdvancedCourseId?: string;
   canvasAdvancedCourseName?: string;
+  canvasAdditionalCourseIds?: string;
 }) {
   const session = await auth();
   if (!session?.user) {
@@ -2728,19 +2813,20 @@ export async function saveCampLmsCourseMapping(input: {
     lmsCourseName,
     lmsCourseLink,
     notes,
-    canvasCourseFamily,
     canvasBeginnerCourseId,
     canvasBeginnerCourseName,
     canvasIntermediateCourseId,
     canvasIntermediateCourseName,
     canvasAdvancedCourseId,
     canvasAdvancedCourseName,
+    canvasAdditionalCourseIds,
   } = parsed.data;
-  const storedCourseName = lmsCourseName || canvasCourseFamily || courseId;
+  const storedCourseName = lmsCourseName || courseId;
+  const additionalIds = parseCanvasCourseIdList(canvasAdditionalCourseIds);
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before saving LMS mappings' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, and 032_lms_mapping_additional_courses.sql before saving LMS mappings' };
     }
 
     await sql`
@@ -2756,6 +2842,7 @@ export async function saveCampLmsCourseMapping(input: {
         canvas_intermediate_course_name,
         canvas_advanced_course_id,
         canvas_advanced_course_name,
+        canvas_additional_course_ids,
         updated_at
       )
       VALUES (
@@ -2763,26 +2850,28 @@ export async function saveCampLmsCourseMapping(input: {
         ${storedCourseName},
         ${lmsCourseLink || null},
         ${notes || null},
-        ${canvasCourseFamily || null},
+        NULL,
         ${canvasBeginnerCourseId || null},
         ${canvasBeginnerCourseName || null},
         ${canvasIntermediateCourseId || null},
         ${canvasIntermediateCourseName || null},
         ${canvasAdvancedCourseId || null},
         ${canvasAdvancedCourseName || null},
+        ${sql.json(additionalIds as PostgresJsonValue)}::jsonb,
         NOW()
       )
       ON CONFLICT (course_id) DO UPDATE
       SET lms_course_name = EXCLUDED.lms_course_name,
           lms_course_link = EXCLUDED.lms_course_link,
           notes = EXCLUDED.notes,
-          canvas_course_family = EXCLUDED.canvas_course_family,
+          canvas_course_family = NULL,
           canvas_beginner_course_id = EXCLUDED.canvas_beginner_course_id,
           canvas_beginner_course_name = EXCLUDED.canvas_beginner_course_name,
           canvas_intermediate_course_id = EXCLUDED.canvas_intermediate_course_id,
           canvas_intermediate_course_name = EXCLUDED.canvas_intermediate_course_name,
           canvas_advanced_course_id = EXCLUDED.canvas_advanced_course_id,
           canvas_advanced_course_name = EXCLUDED.canvas_advanced_course_name,
+          canvas_additional_course_ids = EXCLUDED.canvas_additional_course_ids,
           updated_at = NOW();
     `;
 
@@ -2791,6 +2880,50 @@ export async function saveCampLmsCourseMapping(input: {
   } catch (error) {
     console.error('Error saving camp LMS course mapping:', error);
     return { ok: false, error: 'Failed to save LMS course mapping' };
+  }
+}
+
+export async function searchCampLmsCanvasCourses(input: { term: string }) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in', courses: [] };
+  }
+
+  const parsed = CampLmsCanvasCourseSearchSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Search with at least 2 characters.', courses: [] };
+  }
+
+  try {
+    if (!(await isCanvasTokenConfigured())) {
+      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas search', courses: [] };
+    }
+
+    const client = createCanvasClient();
+    const term = parsed.data.term;
+    const courses: CanvasCourse[] = [];
+    const directCourse = /^\d+$/.test(term) ? await client.getCourse(term) : null;
+    if (directCourse) courses.push(directCourse);
+    courses.push(...await client.searchCourses(term));
+
+    const seen = new Set<string>();
+    const deduped = courses
+      .filter((course) => {
+        const id = String(course.id);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      })
+      .slice(0, 12)
+      .map(canvasCourseSummary);
+
+    return { ok: true, courses: deduped };
+  } catch (error) {
+    if (error instanceof CanvasConfigError) {
+      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas search', courses: [] };
+    }
+    console.error('Error searching Canvas courses:', error);
+    return { ok: false, error: canvasErrorMessage(error), courses: [] };
   }
 }
 
@@ -2807,7 +2940,7 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before importing LMS mappings' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, and 032_lms_mapping_additional_courses.sql before importing LMS mappings' };
     }
 
     const lines = parsed.data.tableText
@@ -2825,10 +2958,11 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
     const headers = hasHeader ? firstHeaders : [];
 
     const portalIndex = hasHeader ? columnIndex(headers, ['portal', 'camp course', 'course id']) : 0;
-    const familyIndex = hasHeader ? columnIndex(headers, ['family', 'canvas family', 'lms course']) : 1;
-    const beginnerIndex = hasHeader ? columnIndex(headers, ['beginner']) : 2;
-    const intermediateIndex = hasHeader ? columnIndex(headers, ['intermediate']) : 3;
-    const advancedIndex = hasHeader ? columnIndex(headers, ['advanced']) : 4;
+    const beginnerIndex = hasHeader ? columnIndex(headers, ['beginner', 'general']) : 1;
+    const intermediateIndex = hasHeader ? columnIndex(headers, ['intermediate']) : 2;
+    const advancedIndex = hasHeader ? columnIndex(headers, ['advanced']) : 3;
+    const additionalIndex = hasHeader ? columnIndex(headers, ['additional', 'additional ids', 'additional id']) : -1;
+    const hasAdditionalColumn = hasHeader && additionalIndex >= 0;
 
     let imported = 0;
     for (const line of rows) {
@@ -2836,13 +2970,61 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
       const portalCourse = cells[portalIndex]?.trim();
       if (!portalCourse) continue;
 
-      const family = cells[familyIndex]?.trim() || portalCourse;
       const beginnerCell = cells[beginnerIndex]?.trim();
       const intermediateCell = cells[intermediateIndex]?.trim();
       const advancedCell = cells[advancedIndex]?.trim();
+      const additionalCell = hasAdditionalColumn ? cells[additionalIndex]?.trim() : undefined;
       const beginnerId = extractCanvasCourseId(beginnerCell);
       const intermediateId = extractCanvasCourseId(intermediateCell);
       const advancedId = extractCanvasCourseId(advancedCell);
+      const additionalIds = hasAdditionalColumn ? parseCanvasCourseIdList(additionalCell) : null;
+
+      if (hasAdditionalColumn) {
+        await sql`
+          INSERT INTO camp_lms_course_mappings (
+            course_id,
+            lms_course_name,
+            lms_course_link,
+            canvas_course_family,
+            canvas_beginner_course_id,
+            canvas_beginner_course_name,
+            canvas_intermediate_course_id,
+            canvas_intermediate_course_name,
+            canvas_advanced_course_id,
+            canvas_advanced_course_name,
+            canvas_additional_course_ids,
+            updated_at
+          )
+          VALUES (
+            ${portalCourse},
+            ${portalCourse},
+            ${beginnerCell?.startsWith('http') ? beginnerCell : null},
+            NULL,
+            ${beginnerId},
+            ${extractCourseName(beginnerCell, beginnerId)},
+            ${intermediateId},
+            ${extractCourseName(intermediateCell, intermediateId)},
+            ${advancedId},
+            ${extractCourseName(advancedCell, advancedId)},
+            ${sql.json(additionalIds as PostgresJsonValue)}::jsonb,
+            NOW()
+          )
+          ON CONFLICT (course_id) DO UPDATE
+          SET lms_course_name = EXCLUDED.lms_course_name,
+              lms_course_link = COALESCE(EXCLUDED.lms_course_link, camp_lms_course_mappings.lms_course_link),
+              canvas_course_family = NULL,
+              canvas_beginner_course_id = EXCLUDED.canvas_beginner_course_id,
+              canvas_beginner_course_name = EXCLUDED.canvas_beginner_course_name,
+              canvas_intermediate_course_id = EXCLUDED.canvas_intermediate_course_id,
+              canvas_intermediate_course_name = EXCLUDED.canvas_intermediate_course_name,
+              canvas_advanced_course_id = EXCLUDED.canvas_advanced_course_id,
+              canvas_advanced_course_name = EXCLUDED.canvas_advanced_course_name,
+              canvas_additional_course_ids = EXCLUDED.canvas_additional_course_ids,
+              updated_at = NOW();
+        `;
+        imported += 1;
+        continue;
+      }
 
       await sql`
         INSERT INTO camp_lms_course_mappings (
@@ -2860,9 +3042,9 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
         )
         VALUES (
           ${portalCourse},
-          ${family},
+          ${portalCourse},
           ${beginnerCell?.startsWith('http') ? beginnerCell : null},
-          ${family},
+          NULL,
           ${beginnerId},
           ${extractCourseName(beginnerCell, beginnerId)},
           ${intermediateId},
@@ -2874,7 +3056,7 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
         ON CONFLICT (course_id) DO UPDATE
         SET lms_course_name = EXCLUDED.lms_course_name,
             lms_course_link = COALESCE(EXCLUDED.lms_course_link, camp_lms_course_mappings.lms_course_link),
-            canvas_course_family = EXCLUDED.canvas_course_family,
+            canvas_course_family = NULL,
             canvas_beginner_course_id = EXCLUDED.canvas_beginner_course_id,
             canvas_beginner_course_name = EXCLUDED.canvas_beginner_course_name,
             canvas_intermediate_course_id = EXCLUDED.canvas_intermediate_course_id,
@@ -2915,7 +3097,7 @@ export async function updateCampLmsStatus(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before saving LMS statuses' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, and 032_lms_mapping_additional_courses.sql before saving LMS statuses' };
     }
 
     if (!status) {
@@ -2980,7 +3162,10 @@ export async function runCampLmsCanvasTestAction(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, and 027_rename_lms_status_note.sql before running Canvas test actions' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, and 032_lms_mapping_additional_courses.sql before running Canvas test actions' };
+    }
+    if (!(await isCanvasTokenConfigured())) {
+      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas test actions' };
     }
 
     const [row] = await sql<Array<{
@@ -2991,6 +3176,7 @@ export async function runCampLmsCanvasTestAction(input: {
       canvas_beginner_course_id: string | null;
       canvas_intermediate_course_id: string | null;
       canvas_advanced_course_id: string | null;
+      canvas_additional_course_ids: unknown;
       active_enrollments: unknown;
       inactive_enrollments: unknown;
       invited_enrollments: unknown;
@@ -3003,6 +3189,7 @@ export async function runCampLmsCanvasTestAction(input: {
         m.canvas_beginner_course_id,
         m.canvas_intermediate_course_id,
         m.canvas_advanced_course_id,
+        m.canvas_additional_course_ids,
         COALESCE(snap.active_enrollments, '[]'::jsonb) AS active_enrollments,
         COALESCE(snap.inactive_enrollments, '[]'::jsonb) AS inactive_enrollments,
         COALESCE(snap.invited_enrollments, '[]'::jsonb) AS invited_enrollments
@@ -3031,6 +3218,10 @@ export async function runCampLmsCanvasTestAction(input: {
         row.canvas_beginner_course_id,
         row.canvas_intermediate_course_id,
         row.canvas_advanced_course_id,
+        ...parseCanvasCourseIdList(Array.isArray(row.canvas_additional_course_ids)
+          ? row.canvas_additional_course_ids.join(',')
+          : ''
+        ),
       ].filter((courseId): courseId is string => Boolean(courseId))
     );
     let responsePayload: unknown = null;
@@ -3044,7 +3235,7 @@ export async function runCampLmsCanvasTestAction(input: {
       if (type === 'add_expected_beginner') {
         courseId = canvasCourseId || row.canvas_beginner_course_id;
         if (!courseId || courseId !== row.canvas_beginner_course_id) {
-          throw new Error('Expected beginner Canvas course is not mapped for this camper.');
+          throw new Error('Expected Canvas course is not mapped for this camper.');
         }
         const alreadyActive = activeEnrollments.some((candidate) => expectedCourseIds.has(String(candidate.course_id)));
         if (alreadyActive) {
@@ -3052,6 +3243,29 @@ export async function runCampLmsCanvasTestAction(input: {
         }
         requestPayload.canvasCourseId = courseId;
         requestPayload.canvasUserId = row.canvas_user_id;
+        responsePayload = await client.enrollStudent(courseId, row.canvas_user_id);
+      } else if (type === 'activate_course') {
+        courseId = canvasCourseId ?? null;
+        enrollmentId = canvasEnrollmentId ?? null;
+        if (!courseId) {
+          throw new Error('Choose a Canvas course to set active.');
+        }
+
+        if (enrollmentId) {
+          const inactiveEnrollments = Array.isArray(row.inactive_enrollments)
+            ? row.inactive_enrollments as Array<Record<string, unknown>>
+            : [];
+          const enrollment = inactiveEnrollments.find((candidate) =>
+            String(candidate.enrollment_id) === enrollmentId && String(candidate.course_id) === courseId
+          );
+          if (!enrollment) {
+            throw new Error('The selected enrollment is not in the latest inactive Canvas snapshot. Sync LMS before trying again.');
+          }
+        }
+
+        requestPayload.canvasCourseId = courseId;
+        requestPayload.canvasUserId = row.canvas_user_id;
+        if (enrollmentId) requestPayload.canvasEnrollmentId = enrollmentId;
         responsePayload = await client.enrollStudent(courseId, row.canvas_user_id);
       } else {
         courseId = canvasCourseId ?? null;
@@ -3078,6 +3292,7 @@ export async function runCampLmsCanvasTestAction(input: {
               canvas_intermediate_course_id,
               canvas_advanced_course_id
             )
+            OR canvas_additional_course_ids ? ${courseId}
           ) AS exists;
         `;
         if (!mappedCourse?.exists) {
@@ -3317,6 +3532,7 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
         cs.extended_care,
         JSONB_STRIP_NULLS(
           JSONB_BUILD_OBJECT(
+            'Account #', ce.student_id::bigint::text,
             'Scratch Login', scr.username,
             'Scratch Password', scr.password,
             'Roblox Login', rob.username,
@@ -3349,8 +3565,8 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
         }
         if (Object.keys(other_fields).length === 0) {
           other_fields = null;
-        }
-      }
+    }
+  }
       const otherFieldsValue = other_fields ? sql`${sql.json(other_fields)}::jsonb` : sql`NULL`;
 
       const sessionLabel = enrolment.extended_care && (enrolment.session === 'FD' || enrolment.session === 'PM')

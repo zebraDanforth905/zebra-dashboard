@@ -1,3 +1,5 @@
+import postgres from 'postgres';
+
 type CanvasRequestInit = RequestInit & {
   query?: Record<string, string | number | boolean | Array<string | number | boolean>>;
 };
@@ -44,19 +46,160 @@ export class CanvasConfigError extends Error {
   }
 }
 
+const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+const CANVAS_TOKEN_SETTING_KEY = 'CANVAS_API_TOKEN';
+const CANVAS_TOKEN_CACHE_MS = 30_000;
+
+export type CanvasTokenSource = 'environment' | 'database' | 'none';
+
+export type CanvasTokenSettings = {
+  configured: boolean;
+  source: CanvasTokenSource;
+  maskedToken: string | null;
+};
+
+type CachedCanvasToken = {
+  value: string | null;
+  loadedAt: number;
+};
+
+let canvasTokenCache: CachedCanvasToken | null = null;
+let missingAppSettingsWarningShown = false;
+
+function normalizeToken(value: string | null | undefined) {
+  return value?.trim() || null;
+}
+
+function maskToken(value: string | null | undefined) {
+  if (!value) return null;
+  if (value.length <= 8) return '••••••••';
+  return `${value.slice(0, 4)}••••${value.slice(-4)}`;
+}
+
 function canvasBaseUrl() {
   return (process.env.CANVAS_BASE_URL?.trim() || 'https://lms.zebrarobotics.com').replace(/\/+$/, '');
 }
 
-export function getCanvasPublicConfig() {
+async function getCanvasTokenFromDb() {
+  const now = Date.now();
+  if (canvasTokenCache && (now - canvasTokenCache.loadedAt) < CANVAS_TOKEN_CACHE_MS) {
+    return canvasTokenCache.value;
+  }
+
+  if (!process.env.POSTGRES_URL) {
+    return null;
+  }
+
+  try {
+    const rows = await sql<{ setting_value: string | null }[]>`
+      SELECT setting_value
+      FROM app_settings
+      WHERE setting_key = ${CANVAS_TOKEN_SETTING_KEY}
+      LIMIT 1
+    `;
+    const token = normalizeToken(rows[0]?.setting_value);
+    canvasTokenCache = { value: token, loadedAt: now };
+    return token;
+  } catch (error) {
+    const pgError = error as { code?: string } | undefined;
+    if (pgError?.code === '42P01' && !missingAppSettingsWarningShown) {
+      console.error('Canvas API token is stored in app_settings, but that table is missing. Run migration 033_create_app_settings.sql before using dashboard token settings.');
+      missingAppSettingsWarningShown = true;
+    }
+
+    if (!pgError?.code) {
+      console.error('Failed to load Canvas token setting from app_settings:', error);
+    }
+
+    canvasTokenCache = { value: null, loadedAt: now };
+    return null;
+  }
+}
+
+export async function getCanvasTokenSettings(): Promise<CanvasTokenSettings> {
+  const envToken = normalizeToken(process.env.CANVAS_API_TOKEN);
+  if (envToken) {
+    return {
+      configured: true,
+      source: 'environment',
+      maskedToken: maskToken(envToken),
+    };
+  }
+
+  const dbToken = await getCanvasTokenFromDb();
+  if (dbToken) {
+    return {
+      configured: true,
+      source: 'database',
+      maskedToken: maskToken(dbToken),
+    };
+  }
+
   return {
-    baseUrl: canvasBaseUrl(),
-    configured: Boolean(process.env.CANVAS_API_TOKEN?.trim()),
+    configured: false,
+    source: 'none',
+    maskedToken: null,
   };
 }
 
-function getCanvasToken() {
-  const token = process.env.CANVAS_API_TOKEN?.trim();
+export async function saveCanvasApiTokenToDb(rawToken: string | null | undefined) {
+  if (!process.env.POSTGRES_URL) {
+    throw new Error('Database URL is not configured.');
+  }
+
+  const token = normalizeToken(rawToken);
+
+  if (!token) {
+    await sql`
+      DELETE FROM app_settings
+      WHERE setting_key = ${CANVAS_TOKEN_SETTING_KEY}
+    `;
+    canvasTokenCache = null;
+    return;
+  }
+
+  await sql`
+    INSERT INTO app_settings (
+      setting_key,
+      setting_value,
+      updated_at
+    ) VALUES (
+      ${CANVAS_TOKEN_SETTING_KEY},
+      ${token},
+      NOW()
+    )
+    ON CONFLICT (setting_key) DO UPDATE
+    SET setting_value = EXCLUDED.setting_value,
+        updated_at = NOW()
+  `;
+  canvasTokenCache = null;
+}
+
+export function clearCanvasTokenCache() {
+  canvasTokenCache = null;
+}
+
+async function getCanvasTokenFromEnvOrDb() {
+  const envToken = normalizeToken(process.env.CANVAS_API_TOKEN);
+  if (envToken) return envToken;
+
+  return getCanvasTokenFromDb();
+}
+
+export async function isCanvasTokenConfigured() {
+  return (await getCanvasTokenSettings()).configured;
+}
+
+export async function getCanvasPublicConfig() {
+  const tokenSettings = await getCanvasTokenSettings();
+  return {
+    baseUrl: canvasBaseUrl(),
+    configured: tokenSettings.configured,
+  };
+}
+
+async function getCanvasToken() {
+  const token = await getCanvasTokenFromEnvOrDb();
   if (!token) {
     throw new CanvasConfigError('Canvas API token is not configured.');
   }
@@ -104,7 +247,7 @@ export class CanvasClient {
     data: T;
     nextUrl: string | null;
   }> {
-    const token = getCanvasToken();
+    const token = await getCanvasToken();
     const url = this.url(pathOrUrl, init.query);
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${token}`);
@@ -161,6 +304,14 @@ export class CanvasClient {
   async searchUsers(term: string) {
     const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
     return this.requestAll<CanvasUser>(`/api/v1/accounts/${accountId}/users`, {
+      search_term: term,
+      per_page: 50,
+    });
+  }
+
+  async searchCourses(term: string) {
+    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    return this.requestAll<CanvasCourse>(`/api/v1/accounts/${accountId}/courses`, {
       search_term: term,
       per_page: 50,
     });

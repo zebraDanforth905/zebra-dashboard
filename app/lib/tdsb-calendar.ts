@@ -26,6 +26,19 @@ const TERMS: Record<TermKey, { start: string; end: string }> = {
   fall:   { start: '2026-09-08', end: '2026-12-18' },
 };
 
+export function isDateInTerm(iso: string | null | undefined, term: TermKey): boolean {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const { start, end } = TERMS[term];
+  return iso >= start && iso <= end;
+}
+
+export function isSummerDateRange(startISO: string | null | undefined, endISO?: string | null): boolean {
+  if (!startISO || !/^\d{4}-\d{2}-\d{2}$/.test(startISO)) return false;
+  const rangeEnd = endISO && /^\d{4}-\d{2}-\d{2}$/.test(endISO) ? endISO : startISO;
+  const summer = TERMS.summer;
+  return startISO <= summer.end && rangeEnd >= summer.start;
+}
+
 // Dates Zebra is closed (stat holidays + extended breaks). Anything in this
 // list is removed from the picker. PA days are NOT in this list because Zebra
 // usually still runs classes — adjust if that changes.

@@ -201,13 +201,15 @@ export default async function CampSessionPage({
 
   return (
     <div className="m-2 md:m-4">
-      <Link
-        href="/dashboard/camp"
-        className="inline-flex items-center gap-2 text-sm text-sky-600 hover:text-sky-700 mb-4"
-      >
-        <ArrowLeftIcon className="h-4 w-4" />
-        Back to Camp Sessions
-      </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <Link
+          href="/dashboard/camp"
+          className="inline-flex items-center gap-2 text-sm text-sky-600 hover:text-sky-700"
+        >
+          <ArrowLeftIcon className="h-4 w-4" />
+          Back to Camp Sessions
+        </Link>
+      </div>
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -223,11 +225,22 @@ export default async function CampSessionPage({
           className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 print:hidden"
         >
           <PrinterIcon className="h-4 w-4" />
-          Print Camper PDF
+          Print Camp Packet
         </Link>
       </div>
 
       <CampMonthlyReport reports={weekReport} heading="Weekly Enrollment Summary" />
+
+      <CampAccountPrepChecklist
+        scopeLabel={report.label}
+        checklist={accountPrepChecklist}
+      />
+
+      <CampLmsChecklist
+        startDate={startDate}
+        endDate={endDate}
+        checklist={lmsChecklist}
+      />
 
       <div className="mt-4">
         <h2 className="text-lg font-bold text-slate-900 mb-3 pb-2 border-b border-slate-300">
@@ -300,17 +313,6 @@ export default async function CampSessionPage({
           </div>
         )}
       </div>
-
-      <CampLmsChecklist
-        startDate={startDate}
-        endDate={endDate}
-        checklist={lmsChecklist}
-      />
-
-      <CampAccountPrepChecklist
-        scopeLabel={report.label}
-        checklist={accountPrepChecklist}
-      />
     </div>
   );
 }

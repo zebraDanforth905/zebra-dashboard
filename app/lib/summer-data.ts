@@ -197,12 +197,8 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
       SELECT
         s.id::text AS student_id,
         s.name AS student_name,
-        EXISTS (
-          SELECT 1
-          FROM enrolments e
-          WHERE e.student_id = s.id
-        ) AS is_active,
         cs.current_sessions AS current_sessions,
+        COALESCE(cs.is_active, false) AS is_active,
         cs.current_weekday AS current_weekday,
         cs.current_start_time AS current_start_time,
         cs.current_pickup_school AS current_pickup_school,
@@ -224,6 +220,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
             )
             ORDER BY slots.weekday_order, slots.start_time
           ) AS current_sessions,
+          COUNT(slots.weekday)::int > 0 AS is_active,
           (ARRAY_AGG(slots.weekday ORDER BY slots.weekday_order, slots.start_time))[1] AS current_weekday,
           (ARRAY_AGG(slots.start_time ORDER BY slots.weekday_order, slots.start_time))[1] AS current_start_time,
           (ARRAY_AGG(slots.pickup_school ORDER BY slots.weekday_order, slots.start_time) FILTER (WHERE slots.pickup_school IS NOT NULL))[1] AS current_pickup_school
@@ -609,6 +606,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       LEFT JOIN student_course_summary scs ON scs.token_id = tb.token_id
       LEFT JOIN response_summary rs ON rs.token_id = tb.token_id
       LEFT JOIN august_response_summary ars ON ars.token_id = tb.token_id
+      WHERE COALESCE(ss.student_count, 0) > 0
       ORDER BY tb.customer_name
     `;
     return rows;
@@ -987,9 +985,12 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         COALESCE(fsl.fall_session_choices, '[]'::json)                       AS fall_session_choices,
         COALESCE(fwl.fall_waitlist_session_labels, '{}')                     AS fall_waitlist_session_labels,
         pr.payload->>'fall_notes'                                             AS fall_notes,
-        le.weekday                                                           AS current_weekday,
-        le.start_time                                                        AS current_start_time,
-        COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb)       AS current_sessions_snapshot,
+        cs.current_weekday                                                   AS current_weekday,
+        cs.current_start_time                                                AS current_start_time,
+        CASE
+          WHEN COALESCE(jsonb_array_length(cs.current_sessions), 0) > 0 THEN cs.current_sessions
+          ELSE COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb)
+        END                                                                  AS current_sessions_snapshot,
         pr.status,
         pr.custom_notes,
         COALESCE(pr.submitted_by, 'parent')                                  AS submitted_by,
@@ -999,7 +1000,7 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         COALESCE(pt.export_count, 0)::int                                     AS token_export_count,
         pr.added_to_portal_at,
         pr.added_to_portal_by,
-        COALESCE(ri.recurring_invoices, '[]'::json)                          AS recurring_invoices,
+        '[]'::json                                                            AS recurring_invoices,
         COALESCE(history.previous_submission_count, 0)::int                 AS previous_submission_count,
         history.previous_submitted_at,
         COALESCE(history.submission_history, '[]'::json)                    AS submission_history
@@ -1007,6 +1008,52 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
       JOIN students s  ON s.id  = pr.student_id
       JOIN customers c ON c.id  = s.customer_id
       LEFT JOIN parent_tokens pt ON pt.id = pr.token_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(
+            JSONB_AGG(
+              JSONB_BUILD_OBJECT(
+                'weekday', slots.weekday,
+                'start_time', slots.start_time,
+                'pickup_school', slots.pickup_school,
+                'course_name', slots.course_name
+              )
+              ORDER BY slots.weekday_order, slots.start_time, slots.course_name
+            ) FILTER (WHERE slots.weekday IS NOT NULL),
+            '[]'::jsonb
+          ) AS current_sessions,
+          (ARRAY_AGG(slots.weekday ORDER BY slots.weekday_order, slots.start_time, slots.course_name))[1] AS current_weekday,
+          (ARRAY_AGG(slots.start_time ORDER BY slots.weekday_order, slots.start_time, slots.course_name))[1] AS current_start_time
+        FROM (
+          SELECT DISTINCT
+            se.weekday,
+            se.start_time,
+            cp.school_name AS pickup_school,
+            co.name AS course_name,
+            CASE LOWER(TRIM(se.weekday))
+              WHEN 'monday' THEN 1
+              WHEN 'tuesday' THEN 2
+              WHEN 'wednesday' THEN 3
+              WHEN 'thursday' THEN 4
+              WHEN 'friday' THEN 5
+              WHEN 'saturday' THEN 6
+              WHEN 'sunday' THEN 7
+              ELSE 8
+            END AS weekday_order
+          FROM enrolments e
+          JOIN sessions se ON se.id = e.session_id
+          LEFT JOIN courses co ON co.id = e.course_id
+          LEFT JOIN LATERAL (
+            SELECT p.school_name
+            FROM pickups p
+            WHERE p.student_id = s.id
+              AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
+            ORDER BY p.id
+            LIMIT 1
+          ) cp ON true
+          WHERE e.student_id = s.id
+        ) slots
+      ) cs ON true
       LEFT JOIN LATERAL (
         SELECT
           ARRAY_AGG(
@@ -1089,32 +1136,6 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
             fsid.ordinality DESC
         ) slot
       ) fwl ON true
-      LEFT JOIN LATERAL (
-        SELECT se.weekday, se.start_time
-        FROM enrolments e
-        JOIN sessions se ON se.id = e.session_id
-        WHERE e.student_id = s.id
-        ORDER BY e.start_date DESC NULLS LAST
-        LIMIT 1
-      ) le ON true
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(
-            JSON_AGG(
-              JSON_BUILD_OBJECT(
-                'id', r.id::text,
-                'amount', r.amount,
-                'every', r.every,
-                'next_date', r.next_date,
-                'description', r.description
-              )
-              ORDER BY r.next_date, r.id
-            ),
-            '[]'::json
-          ) AS recurring_invoices
-        FROM recurring_invoices r
-        WHERE r.customer_id = c.id
-      ) ri ON true
       LEFT JOIN LATERAL (
         SELECT
           COUNT(*)::int AS previous_submission_count,

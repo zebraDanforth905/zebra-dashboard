@@ -1,6 +1,8 @@
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
+import { fetchCanvasApiSettings } from '@/app/lib/actions';
 import UpdatePasswordForm from '@/app/ui/settings/update-password-form';
+import CanvasApiTokenForm from '@/app/ui/settings/canvas-api-token-form';
 
 export const metadata = {
   title: 'Settings | Dashboard',
@@ -14,6 +16,14 @@ export default async function SettingsPage() {
   }
 
   const user = session.user as any;
+  const userType = user?.user_type;
+  const isAdmin = userType === 'admin';
+  const canvasSettings = isAdmin ? await fetchCanvasApiSettings() : null;
+  const canvasApiSettings = canvasSettings?.ok ? canvasSettings.settings : null;
+  const settingsError =
+    isAdmin && canvasSettings && !canvasSettings.ok && typeof canvasSettings.error === 'string'
+      ? canvasSettings.error
+      : null;
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -46,6 +56,18 @@ export default async function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4 text-gray-700">Canvas API Token</h2>
+          <CanvasApiTokenForm
+            configured={Boolean(canvasApiSettings?.configured)}
+            source={canvasApiSettings?.source ?? 'none'}
+            maskedToken={canvasApiSettings?.maskedToken ?? null}
+            settingsError={settingsError}
+          />
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow-md p-6">
         <h2 className="text-xl font-semibold mb-4 text-gray-700">Change Password</h2>

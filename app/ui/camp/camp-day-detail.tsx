@@ -14,7 +14,6 @@ export default function CampDayDetail({
   seatAssignments?: Map<number, string[]>;
   seatAssignmentsDateKey?: string;
 }) {
-  // flatten enrolments from all groups
   const allEnrolments = Array.from(dayEnrolments.values()).flat();
 
   const session = {

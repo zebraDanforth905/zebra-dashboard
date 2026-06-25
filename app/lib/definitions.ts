@@ -397,6 +397,7 @@ export type CampLmsCanvasIssue =
 
 export type CampLmsCanvasActionType =
   | 'add_expected_beginner'
+  | 'activate_course'
   | 'inactivate_enrollment';
 
 export type CampLmsCanvasMatch = {
@@ -418,7 +419,7 @@ export type CampLmsCanvasEnrollment = {
 };
 
 export type CampLmsExpectedCourse = {
-  level: 'beginner' | 'intermediate' | 'advanced';
+  level: 'beginner' | 'intermediate' | 'advanced' | 'additional';
   course_id: string;
   course_name: string | null;
 };
@@ -452,6 +453,7 @@ export type CampLmsChecklistRow = {
   canvas_intermediate_course_name: string | null;
   canvas_advanced_course_id: string | null;
   canvas_advanced_course_name: string | null;
+  canvas_additional_course_ids: string[];
   canvas_user_id: string | null;
   canvas_user_name: string | null;
   canvas_user_login: string | null;
@@ -504,6 +506,31 @@ export type CampLmsChecklistData = {
   canvas_last_synced_at: Date | null;
   rows: CampLmsChecklistRow[];
   summary: CampLmsChecklistSummary;
+};
+
+export type CampLmsCourseMappingRow = {
+  course_id: string;
+  course_name: string | null;
+  camper_count: number;
+  mapped: boolean;
+  lms_course_name: string | null;
+  mapping_notes: string | null;
+  canvas_beginner_course_id: string | null;
+  canvas_intermediate_course_id: string | null;
+  canvas_advanced_course_id: string | null;
+  canvas_additional_course_ids: string[];
+};
+
+export type CampLmsCourseMappingsData = {
+  schema_ready: boolean;
+  rows: CampLmsCourseMappingRow[];
+};
+
+export type CampLmsCanvasCourseSearchResult = {
+  id: string;
+  name: string | null;
+  course_code: string | null;
+  workflow_state: string | null;
 };
 
 export type CampPrepResourceKind = 'scratch' | 'roblox' | 'laptop';
@@ -577,6 +604,7 @@ export type CampPrintableScheduleRow = {
   camp_enrolment_id: string;
   student_id: string;
   student_name: string;
+  dob: Date | null;
   assigned_seat_number: number | null;
   seat_assignments: Array<{
     date: string;
@@ -598,6 +626,7 @@ export type CampPrintableScheduleRow = {
 
 export type CampPrintableStudentListField =
   | 'student'
+  | 'birthday'
   | 'parent'
   | 'type'
   | 'camp'
@@ -622,6 +651,11 @@ export type CampPrintableScheduleData = {
 export type SeatAssignment = {
   enrolment_id: string;
   seat: number;
+};
+
+export type CampSeatAssignmentGroup = {
+  seat: number;
+  enrolmentIds: string[];
 };
 
 export type IncidentReportDetails = {

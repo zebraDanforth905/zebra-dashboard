@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   CheckCircleIcon,
@@ -8,13 +9,11 @@ import {
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import {
-  assignCampPrepResource,
   createOrAssignCampPrepResource,
   unassignCampPrepResource,
 } from '@/app/lib/actions';
 import type {
   CampAccountPrepChecklistData,
-  CampAccountPrepInventoryItem,
   CampAccountPrepRow,
   CampPrepResourceKind,
   CampPrepStatus,
@@ -51,7 +50,7 @@ const STATUS_BADGES: Record<CampPrepStatus, string> = {
 const RESOURCE_LABELS: Record<CampPrepResourceKind, string> = {
   scratch: 'Scratch',
   roblox: 'Roblox',
-  laptop: 'Laptop',
+  laptop: 'Unity laptop',
 };
 
 function courseLabel(row: CampAccountPrepRow) {
@@ -82,17 +81,12 @@ function assignedPassword(row: CampAccountPrepRow, kind: CampPrepResourceKind) {
   return null;
 }
 
-function inventoryForKind(
-  checklist: CampAccountPrepChecklistData,
-  kind: CampPrepResourceKind
-) {
-  if (kind === 'scratch') return checklist.inventory.scratch_accounts;
-  if (kind === 'roblox') return checklist.inventory.roblox_accounts;
-  return checklist.inventory.laptops;
-}
-
 function defaultPasswordForKind(kind: CampPrepResourceKind) {
   return kind === 'laptop' ? '' : DEFAULT_CAMP_ACCOUNT_PASSWORD;
+}
+
+function accountsSearchHref(resourceId: string) {
+  return `/dashboard/scratch-accounts?query=${encodeURIComponent(resourceId)}`;
 }
 
 export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Props) {
@@ -102,7 +96,6 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
   const [courseFilter, setCourseFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [message, setMessage] = useState<string | null>(null);
-  const [selections, setSelections] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, InlineDraft>>({});
 
   const courseOptions = useMemo(() => {
@@ -137,13 +130,6 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
         checklist.summary.missing_roblox - checklist.inventory.roblox_accounts.length
       ),
     },
-    {
-      label: 'laptops',
-      count: Math.max(
-        0,
-        checklist.summary.missing_laptop - checklist.inventory.laptops.length
-      ),
-    },
   ].filter((shortage) => shortage.count > 0);
 
   const selectionKey = (row: CampAccountPrepRow, kind: CampPrepResourceKind) =>
@@ -173,40 +159,13 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
     }));
   };
 
-  const handleAssign = (row: CampAccountPrepRow, kind: CampPrepResourceKind) => {
-    const key = selectionKey(row, kind);
-    const resourceId = selections[key];
-    if (!resourceId) {
-      setMessage(`Choose a ${RESOURCE_LABELS[kind]} resource first.`);
-      return;
-    }
-
-    setMessage(null);
-    startTransition(async () => {
-      const result = await assignCampPrepResource({
-        resourceKind: kind,
-        resourceId,
-        studentId: row.student_id,
-      });
-
-      if (!result.ok) {
-        setMessage(result.error ?? 'Assignment failed.');
-        return;
-      }
-
-      setSelections((current) => ({ ...current, [key]: '' }));
-      setMessage(`${RESOURCE_LABELS[kind]} assigned to ${row.student_name}.`);
-      router.refresh();
-    });
-  };
-
   const handleCreateOrAssign = (
     row: CampAccountPrepRow,
     kind: CampPrepResourceKind
   ) => {
     const draft = draftFor(row, kind);
     const identifier = draft.identifier.trim();
-    const label = kind === 'laptop' && row.needs_unity ? 'Unity laptop' : RESOURCE_LABELS[kind];
+    const label = RESOURCE_LABELS[kind];
 
     if (!identifier) {
       setMessage(`Enter a ${label} first.`);
@@ -234,7 +193,9 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
           password: defaultPasswordForKind(kind),
         },
       }));
-      setMessage(`${label} saved for ${row.student_name}.`);
+      setMessage(
+        `${label} saved for ${row.student_name}. It is now in Accounts and will be included when camp slips are printed.`
+      );
       router.refresh();
     });
   };
@@ -266,7 +227,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
     if (!needsResource(row, kind)) return null;
 
     const assigned = assignedResource(row, kind);
-    const label = kind === 'laptop' && row.needs_unity ? 'Unity laptop' : RESOURCE_LABELS[kind];
+    const label = RESOURCE_LABELS[kind];
 
     return (
       <span
@@ -287,14 +248,19 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
 
     const assigned = assignedResource(row, kind);
     const password = assignedPassword(row, kind);
-    const label = kind === 'laptop' && row.needs_unity ? 'Unity laptop' : RESOURCE_LABELS[kind];
+    const label = RESOURCE_LABELS[kind];
 
     return (
       <div key={kind} className="text-xs">
         <span className="font-medium text-slate-700">{label}: </span>
         {assigned ? (
           <>
-            <span className="font-mono text-slate-900">{assigned}</span>
+            <Link
+              href={accountsSearchHref(assigned)}
+              className="font-mono text-sky-700 underline-offset-2 hover:underline"
+            >
+              {assigned}
+            </Link>
             {password && (
               <span className="ml-2 text-slate-500">pw {password}</span>
             )}
@@ -306,15 +272,11 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
     );
   };
 
-  const renderAssignmentControl = (
-    row: CampAccountPrepRow,
-    kind: CampPrepResourceKind,
-    inventory: CampAccountPrepInventoryItem[]
-  ) => {
+  const renderAssignmentControl = (row: CampAccountPrepRow, kind: CampPrepResourceKind) => {
     if (!needsResource(row, kind)) return null;
 
     const assigned = assignedResource(row, kind);
-    const label = kind === 'laptop' && row.needs_unity ? 'Unity laptop' : RESOURCE_LABELS[kind];
+    const label = RESOURCE_LABELS[kind];
 
     if (assigned) {
       return (
@@ -332,8 +294,6 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
       );
     }
 
-    const key = selectionKey(row, kind);
-    const selected = selections[key] ?? '';
     const draft = draftFor(row, kind);
     const canSaveDraft = draft.identifier.trim().length > 0;
 
@@ -341,39 +301,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
       <div key={kind} className="space-y-1.5 rounded-md border border-slate-200 bg-slate-50 p-2">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-medium text-slate-700">{label}</span>
-          <span className="text-xs text-slate-500">
-            {inventory.length > 0 ? `${inventory.length} available` : 'create new'}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-          <select
-            value={selected}
-            onChange={(event) => setSelections((current) => ({
-              ...current,
-              [key]: event.target.value,
-            }))}
-            disabled={isPending || inventory.length === 0}
-            className="min-w-36 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 disabled:bg-slate-100"
-          >
-            <option value="">
-              {inventory.length > 0 ? `Choose ${label}` : `No ${label} left`}
-            </option>
-            {inventory.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-                {item.password ? ` / ${item.password}` : ''}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => handleAssign(row, kind)}
-            disabled={isPending || !selected}
-            className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Assign
-          </button>
+          <span className="text-xs text-slate-500">create or assign</span>
         </div>
 
         <div
@@ -388,7 +316,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
             value={draft.identifier}
             onChange={(event) => updateDraft(row, kind, { identifier: event.target.value })}
             disabled={isPending}
-            placeholder={kind === 'laptop' ? 'Laptop #' : 'Username'}
+            placeholder={kind === 'laptop' ? 'Laptop #' : `${label} username`}
             className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400 disabled:bg-slate-100"
           />
           {kind !== 'laptop' && (
@@ -405,7 +333,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
             type="button"
             onClick={() => handleCreateOrAssign(row, kind)}
             disabled={isPending || !canSaveDraft}
-            className="rounded-md border border-sky-300 bg-white px-2 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Save
           </button>
@@ -423,29 +351,15 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
             <h2 className="text-lg font-bold text-slate-900">Account & Device Prep</h2>
           </div>
           <p className="mt-1 text-sm text-slate-600">
-            {scopeLabel}. Dashboard-only prep for Scratch, Roblox, Unity, and laptops.
+            {scopeLabel}. Dashboard-only prep for Scratch, Roblox, and Unity laptops.
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-center text-xs">
-          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
-            <div className="font-semibold text-slate-900">
-              {checklist.inventory.scratch_accounts.length}
-            </div>
-            <div className="text-slate-500">Scratch free</div>
-          </div>
-          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
-            <div className="font-semibold text-slate-900">
-              {checklist.inventory.roblox_accounts.length}
-            </div>
-            <div className="text-slate-500">Roblox free</div>
-          </div>
-          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
-            <div className="font-semibold text-slate-900">
-              {checklist.inventory.laptops.length}
-            </div>
-            <div className="text-slate-500">Laptops free</div>
-          </div>
-        </div>
+        <Link
+          href="/dashboard/scratch-accounts"
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Open Accounts
+        </Link>
       </div>
 
       {message && (
@@ -593,9 +507,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
                     </td>
                     <td className="px-3 py-3">
                       <div className="w-[26rem] space-y-2">
-                        {resourceKinds.map((kind) =>
-                          renderAssignmentControl(row, kind, inventoryForKind(checklist, kind))
-                        )}
+                        {resourceKinds.map((kind) => renderAssignmentControl(row, kind))}
                         {row.status === 'not_needed' && (
                           <span className="text-xs text-slate-500">No action</span>
                         )}

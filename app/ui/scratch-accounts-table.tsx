@@ -19,7 +19,7 @@ export default async function ScratchAccountsTable({
 
   return (
     <div className="space-y-4">
-      <ScratchAccountsSearch query={query} unassignedOnly={unassignedOnly} />
+      <ScratchAccountsSearch unassignedOnly={unassignedOnly} />
 
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
@@ -54,7 +54,7 @@ export default async function ScratchAccountsTable({
         
         {accounts.length === 0 && (
           <div className="text-center py-8 text-gray-500">
-            No scratch accounts found.
+            No accounts or laptops found.
           </div>
         )}
       </div>

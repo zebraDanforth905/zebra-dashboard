@@ -1,4 +1,3 @@
-import { fetchAllAccountsManagement, fetchAccountsManagementPages } from "@/app/lib/data";
 import ScratchAccountsTable from "@/app/ui/scratch-accounts-table";
 import NewAccountButton from "@/app/ui/new-account-button";
 import { auth } from "@/auth";
@@ -31,7 +30,7 @@ export default async function Page(props: {
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h1 className="text-2xl font-semibold text-slate-800">Account Management</h1>
-                    <p className="text-sm text-gray-600 mt-1">Manage Scratch accounts, Roblox accounts, and Laptop assignments</p>
+                    <p className="text-sm text-gray-600 mt-1">Manage Scratch accounts, Roblox accounts, and Unity laptop assignments</p>
                 </div>
                 <NewAccountButton />
             </div>

@@ -13,7 +13,7 @@ export default function RefreshLinksButton() {
     setMessage(null);
     startTransition(async () => {
       const result = await refreshParentLinkData();
-      setMessage(result.skipped ? 'Snapshot columns missing' : 'Snapshot refresh disabled');
+      setMessage(result.skipped ? 'Refresh skipped' : 'Link data refreshed; snapshot unchanged');
       router.refresh();
     });
   }
@@ -23,10 +23,10 @@ export default function RefreshLinksButton() {
       <button
         onClick={handleClick}
         disabled={isPending}
-        title="Snapshot refresh is disabled to preserve the historic outreach list"
+        title="Refresh cached link data without changing the historic snapshot"
         className="shrink-0 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
       >
-        {isPending ? 'Refreshing...' : 'Snapshot Refresh Disabled'}
+        {isPending ? 'Refreshing…' : 'Refresh Link Data'}
       </button>
       {message && <span className="max-w-48 text-xs leading-tight text-slate-500">{message}</span>}
     </div>
