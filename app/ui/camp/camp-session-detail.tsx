@@ -1074,18 +1074,6 @@ export default function CampSessionDetail({
       <div className="hidden print:block">
         {renderPrintRoom(ROOM_2_CONFIG, room2Seats)}
         {renderPrintRoom(ROOM_1_CONFIG, room1Seats)}
-        {unassignedEnrolments.length > 0 && (
-          <section className="bg-white text-black">
-            <h2 className="mb-3 border-b border-slate-400 pb-2 text-2xl font-bold">
-              Unassigned Campers
-            </h2>
-            <div>
-              {unassignedEnrolments.map((enrolment) => (
-                renderPrintRosterRow(enrolment, 'Unassigned')
-              ))}
-            </div>
-          </section>
-        )}
       </div>
     </div>
   );
