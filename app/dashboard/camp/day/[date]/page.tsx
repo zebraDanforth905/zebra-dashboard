@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import CampDayDetail from '@/app/ui/camp/camp-day-detail';
 import { connection } from 'next/server';
-import { CampEnrolmentWithStudent, CampSeatAssignmentGroup } from '@/app/lib/definitions';
+import { CampEnrolmentWithStudent } from '@/app/lib/definitions';
 
 const parseLocalISODate = (value: string) => {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -183,10 +183,6 @@ export default async function CampDayPage({
     seatOccupancy.set(previousSeat, occupancy);
   }
 
-  const seatAssignmentGroups: CampSeatAssignmentGroup[] = Array.from(seatMap.entries())
-    .map(([seat, enrolmentIds]) => ({ seat, enrolmentIds }))
-    .sort((a, b) => a.seat - b.seat);
-
   const formatDate = (date: Date) => {
     return new Date(date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   };
@@ -210,9 +206,10 @@ export default async function CampDayPage({
       </div>
 
       <CampDayDetail
-        dayDate={date}
-        enrolments={allEnrolments}
-        seatAssignments={seatAssignmentGroups}
+        dayDate={dayDate}
+        dayEnrolments={dayEnrolments}
+        seatAssignments={seatMap}
+        seatAssignmentsDateKey={date}
       />
 
     </div>

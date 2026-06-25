@@ -1,31 +1,26 @@
 'use client';
 
 import CampSessionDetail from './camp-session-detail';
-import { CampEnrolmentWithStudent, CampSeatAssignmentGroup } from '@/app/lib/definitions';
-
-const parseLocalISODate = (value: string) => {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return new Date(value);
-
-  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-};
+import { CampEnrolmentWithStudent } from '@/app/lib/definitions';
 
 export default function CampDayDetail({
   dayDate,
-  enrolments,
+  dayEnrolments,
   seatAssignments,
+  seatAssignmentsDateKey,
 }: {
-  dayDate: string;
-  enrolments: CampEnrolmentWithStudent[];
-  seatAssignments?: CampSeatAssignmentGroup[];
+  dayDate: Date;
+  dayEnrolments: Map<string, CampEnrolmentWithStudent[]>;
+  seatAssignments?: Map<number, string[]>;
+  seatAssignmentsDateKey?: string;
 }) {
-  const parsedDayDate = parseLocalISODate(dayDate);
+  const allEnrolments = Array.from(dayEnrolments.values()).flat();
 
   const session = {
-    start_date: parsedDayDate,
-    end_date: parsedDayDate,
-    enrolment_count: enrolments.length,
-    enrolments,
+    start_date: dayDate,
+    end_date: dayDate,
+    enrolment_count: allEnrolments.length,
+    enrolments: allEnrolments,
   };
 
   return (
@@ -34,7 +29,7 @@ export default function CampDayDetail({
       <CampSessionDetail
         session={session}
         seatAssignments={seatAssignments}
-        seatAssignmentsDate={dayDate}
+        seatAssignmentsDateKey={seatAssignmentsDateKey}
       />
     </div>
   );
