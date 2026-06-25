@@ -878,15 +878,25 @@ export async function insertCampEnrolments(
       // Check if this student already has an enrolment for this camp week (same dates)
       // Delete any duplicate enrolments for the same student in overlapping camp sessions
       await tx`
+        WITH duplicate_enrolments AS (
+          SELECT ce.id
+          FROM camp_enrolments ce
+          WHERE ce.student_id = ${r.student_id}
+            AND EXISTS (
+              SELECT 1
+              FROM camp_sessions cs
+              WHERE cs.id = ce.camp_session_id
+                AND cs.start_date = ${r.start_date}::date
+                AND cs.end_date = ${r.end_date}::date
+                AND ce.camp_session_id != ${campSessionId}::uuid
+            )
+        ),
+        deleted_assignments AS (
+          DELETE FROM seat_assignments sa
+          WHERE sa.enrolment_id IN (SELECT id FROM duplicate_enrolments)
+        )
         DELETE FROM camp_enrolments ce
-        WHERE ce.student_id = ${r.student_id}
-        AND EXISTS (
-          SELECT 1 FROM camp_sessions cs
-          WHERE cs.id = ce.camp_session_id
-          AND cs.start_date = ${r.start_date}::date
-          AND cs.end_date = ${r.end_date}::date
-          AND ce.camp_session_id != ${campSessionId}::uuid
-        );
+        WHERE ce.id IN (SELECT id FROM duplicate_enrolments);
       `;
 
       // Insert or update camp enrolment
@@ -959,31 +969,49 @@ export async function insertCampEnrolments(
           SELECT *
           FROM UNNEST(${keepStudents}::int[], ${keepSessions}::uuid[])
           AS t(student_id, camp_session_id)
+        ),
+        stale_enrolments AS (
+          SELECT e.id
+          FROM camp_enrolments e
+          WHERE EXISTS (
+            SELECT 1 FROM camp_sessions cs
+            WHERE cs.id = e.camp_session_id
+              AND cs.start_date >= ${minDate.toISOString().split('T')[0]}::date
+              AND cs.end_date <= ${maxDate.toISOString().split('T')[0]}::date
+          )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM keep k
+              WHERE k.student_id = e.student_id
+                AND k.camp_session_id = e.camp_session_id
+            )
+        ),
+        deleted_assignments AS (
+          DELETE FROM seat_assignments sa
+          WHERE sa.enrolment_id IN (SELECT id FROM stale_enrolments)
         )
         DELETE FROM camp_enrolments e
-        WHERE EXISTS (
-          SELECT 1 FROM camp_sessions cs
-          WHERE cs.id = e.camp_session_id
-          AND cs.start_date >= ${minDate.toISOString().split('T')[0]}::date
-          AND cs.end_date <= ${maxDate.toISOString().split('T')[0]}::date
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM keep k
-          WHERE k.student_id = e.student_id
-            AND k.camp_session_id = e.camp_session_id
-        );
+        WHERE e.id IN (SELECT id FROM stale_enrolments);
       `;
     } else {
       // No enrolments in scraped data - delete all enrolments in the date range
       await tx`
+        WITH range_enrolments AS (
+          SELECT e.id
+          FROM camp_enrolments e
+          WHERE EXISTS (
+            SELECT 1 FROM camp_sessions cs
+            WHERE cs.id = e.camp_session_id
+              AND cs.start_date >= ${minDate.toISOString().split('T')[0]}::date
+              AND cs.end_date <= ${maxDate.toISOString().split('T')[0]}::date
+          )
+        ),
+        deleted_assignments AS (
+          DELETE FROM seat_assignments sa
+          WHERE sa.enrolment_id IN (SELECT id FROM range_enrolments)
+        )
         DELETE FROM camp_enrolments e
-        WHERE EXISTS (
-          SELECT 1 FROM camp_sessions cs
-          WHERE cs.id = e.camp_session_id
-          AND cs.start_date >= ${minDate.toISOString().split('T')[0]}::date
-          AND cs.end_date <= ${maxDate.toISOString().split('T')[0]}::date
-        );
+        WHERE e.id IN (SELECT id FROM range_enrolments);
       `;
     }
 
