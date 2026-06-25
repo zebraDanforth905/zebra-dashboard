@@ -121,7 +121,8 @@ export default async function CampPage() {
       if (e.camp_type === 'FD') entry!.byType.FD += 1;
       else entry!.byType.half += 1;
 
-      entry!.byCourse[e.course_id] = (entry!.byCourse[e.course_id] || 0) + 1;
+      const courseKey = e.course_id ?? 'No course';
+      entry!.byCourse[courseKey] = (entry!.byCourse[courseKey] || 0) + 1;
       entry!.byLength[length] = (entry!.byLength[length] || 0) + 1;
       entry!.uniqueStudents.add(e.student_id);
     });
@@ -146,7 +147,7 @@ export default async function CampPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Camp Schedule</h1>
           <p className="text-sm text-slate-600 mt-1">
-            Weekly enrollment summaries. Click a week to view that week's report and day cards.
+            Weekly enrollment summaries. Click a week to view that week&apos;s report and day cards.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -174,4 +175,3 @@ export default async function CampPage() {
     </div>
   );
 }
-

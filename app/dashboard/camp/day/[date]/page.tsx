@@ -2,12 +2,15 @@ import {
   fetchMostRecentSeatAssignmentsInWeek,
   fetchUpcomingCampSessionsWithEnrolments,
   fetchSeatAssignments,
+  fetchCampAccountPrepChecklist,
 } from '@/app/lib/data';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import CampDayDetail from '@/app/ui/camp/camp-day-detail';
+import CampAccountPrepChecklist from '@/app/ui/camp/camp-account-prep-checklist';
 import { connection } from 'next/server';
+import { CampEnrolmentWithStudent } from '@/app/lib/definitions';
 
 const parseLocalISODate = (value: string) => {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -83,10 +86,18 @@ export default async function CampDayPage({
   const weekEnd = getWeekEnd(weekStart);
   const weekHref = `/dashboard/camp/${getDateKey(weekStart)}/${getDateKey(weekEnd)}`;
   
-  const sessions = await fetchUpcomingCampSessionsWithEnrolments();
-  
+  const [sessions, seatRows, accountPrepChecklist] = await Promise.all([
+    fetchUpcomingCampSessionsWithEnrolments(),
+    fetchSeatAssignments(dayDate),
+    fetchCampAccountPrepChecklist(
+      getDateKey(weekStart),
+      getDateKey(weekEnd),
+      date
+    ),
+  ]);
+
   // Find all sessions that span this date and collect their enrolments
-  const dayEnrolments = new Map<string, Array<any>>();
+  const dayEnrolments = new Map<string, CampEnrolmentWithStudent[]>();
   
   sessions.forEach((session) => {
     const start = getLocalDateFromDb(session.start_date);
@@ -121,9 +132,6 @@ export default async function CampDayPage({
   // flatten enrolments for passing to session detail
   const allEnrolments = Array.from(dayEnrolments.values()).flat();
   const enrolmentById = new Map(allEnrolments.map((enrolment) => [enrolment.id, enrolment]));
-
-  // fetch explicit seat assignments for this date
-  const seatRows = await fetchSeatAssignments(dayDate);
 
   const seatMap = new Map<number, string[]>();
   const assignedIds = new Set<string>();
@@ -187,22 +195,27 @@ export default async function CampDayPage({
   };
 
   return (
-    <div className="m-2 md:m-4">
+    <div className="m-2 md:m-4 print:m-0">
       <Link
         href={weekHref}
-        className="inline-flex items-center gap-2 text-sm text-sky-600 hover:text-sky-700 mb-4"
+        className="inline-flex items-center gap-2 text-sm text-sky-600 hover:text-sky-700 mb-4 print:hidden"
       >
         <ArrowLeftIcon className="h-4 w-4" />
         Back to Week
       </Link>
 
-      <div className="mb-6">
+      <div className="mb-6 print:hidden">
         <div className="flex items-center gap-3 mb-2">
           <h1 className="text-2xl font-bold text-slate-900">
             {formatDate(dayDate)}
           </h1>
         </div>
       </div>
+
+      <CampAccountPrepChecklist
+        scopeLabel={formatDate(dayDate)}
+        checklist={accountPrepChecklist}
+      />
 
       <CampDayDetail
         dayDate={dayDate}

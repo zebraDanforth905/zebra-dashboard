@@ -11,6 +11,7 @@ import clsx from "clsx";
 type Props = {
   // server action: forceScheduleRefresh
   day?: string;                             // optional: refresh only one day
+  weekStart?: string;
   className?: string;
   size?: "sm" | "md";
   label?: string;                           // defaults to "Refresh schedule"
@@ -49,6 +50,7 @@ function SubmitInner({ label, size }: { label: string; size: "sm" | "md" }) {
 
 export default function RefreshScheduleButton({
   day,
+  weekStart,
   className,
   size = "md",
   label = "Refresh schedule",
@@ -58,6 +60,7 @@ export default function RefreshScheduleButton({
   return (
     <form action={forceScheduleRefresh}>
       {day ? <input type="hidden" name="day" value={day} /> : null}
+      {weekStart ? <input type="hidden" name="weekStart" value={weekStart} /> : null}
       <button
         type="submit"
         className={clsx(

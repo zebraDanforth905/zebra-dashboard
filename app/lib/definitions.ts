@@ -176,6 +176,26 @@ export type Absence = {
   date: Date;
 }
 
+export type BillingCalendarWeekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+
+export type BillingCalendarDateStatus = 'closed' | 'moved-in' | 'moved-out' | 'extra';
+
+export type BillingCalendarCell = {
+  classes: string;
+  notes: string[];
+  dateStatuses?: Record<string, BillingCalendarDateStatus>;
+};
+
+export type BillingCalendarMonth = {
+  id: string;
+  year: number;
+  month: string;
+  convergeMessage?: string;
+  source?: 'copied' | 'generated';
+  summaryNotes?: string[];
+  days: Record<BillingCalendarWeekday, BillingCalendarCell>;
+};
+
 
 export type StudentNote = {
   id: string;
@@ -309,12 +329,8 @@ export type RecurringInvoiceListData = {
   description: string;
 }
 
-export type StudentSpecificData = {
-
-}
-export type CustomerSpecificData = {
-
-}
+export type StudentSpecificData = Record<string, never>;
+export type CustomerSpecificData = Record<string, never>;
 
 export type PickupListDisplay = {
   id: string;
@@ -348,12 +364,206 @@ export type CampEnrolmentWithStudent = {
   student_id: string;
   student_name: string;
   dob: Date | null;
-  course_id: string;
+  course_id: string | null;
+  course_name: string | null;
   camp_type: 'FD' | 'PM' | 'AM';
   assigned_seat_number: number | null;
   note: string | null;
   special_needs: string | null;
+  allergies: string | null;
   extended_care: boolean;
+  parent_name: string | null;
+  parent_phone: string | null;
+  parent_request_notes: string | null;
+};
+
+export type CampLmsStatus =
+  | 'verified'
+  | 'missing_user'
+  | 'missing_course'
+  | 'needs_followup'
+  | 'not_applicable';
+
+export type CampLmsCanvasSyncStatus = 'not_synced' | 'synced' | 'error';
+
+export type CampLmsCanvasIssue =
+  | 'ok'
+  | 'not_synced'
+  | 'unmapped_course'
+  | 'missing_canvas_user'
+  | 'missing_expected_course'
+  | 'inactive_expected_course'
+  | 'extra_active_course';
+
+export type CampLmsCanvasActionType =
+  | 'add_expected_beginner'
+  | 'inactivate_enrollment';
+
+export type CampLmsCanvasMatch = {
+  id: string;
+  name: string | null;
+  login_id: string | null;
+  email: string | null;
+  sis_user_id: string | null;
+};
+
+export type CampLmsCanvasEnrollment = {
+  enrollment_id: string;
+  course_id: string;
+  course_name: string | null;
+  state: string;
+  role: string | null;
+  type: string | null;
+  updated_at: string | null;
+};
+
+export type CampLmsExpectedCourse = {
+  level: 'beginner' | 'intermediate' | 'advanced';
+  course_id: string;
+  course_name: string | null;
+};
+
+export type CampLmsSuggestedAction = {
+  type: CampLmsCanvasActionType;
+  label: string;
+  canvas_course_id?: string;
+  canvas_course_name?: string | null;
+  canvas_enrollment_id?: string;
+};
+
+export type CampLmsChecklistRow = {
+  camp_enrolment_id: string;
+  student_id: string;
+  student_name: string;
+  suggested_lms_login: string;
+  course_id: string | null;
+  course_name: string | null;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  start_date: Date;
+  end_date: Date;
+  lms_course_name: string | null;
+  lms_course_link: string | null;
+  mapping_notes: string | null;
+  canvas_course_family: string | null;
+  canvas_beginner_course_id: string | null;
+  canvas_beginner_course_name: string | null;
+  canvas_intermediate_course_id: string | null;
+  canvas_intermediate_course_name: string | null;
+  canvas_advanced_course_id: string | null;
+  canvas_advanced_course_name: string | null;
+  canvas_user_id: string | null;
+  canvas_user_name: string | null;
+  canvas_user_login: string | null;
+  canvas_user_email: string | null;
+  canvas_user_found: boolean;
+  canvas_user_matches: CampLmsCanvasMatch[];
+  canvas_sync_status: CampLmsCanvasSyncStatus;
+  canvas_sync_error: string | null;
+  canvas_synced_at: Date | null;
+  active_canvas_enrollments: CampLmsCanvasEnrollment[];
+  inactive_canvas_enrollments: CampLmsCanvasEnrollment[];
+  invited_canvas_enrollments: CampLmsCanvasEnrollment[];
+  expected_canvas_courses: CampLmsExpectedCourse[];
+  expected_canvas_course_ids: string[];
+  active_expected_enrollments: CampLmsCanvasEnrollment[];
+  inactive_expected_enrollments: CampLmsCanvasEnrollment[];
+  extra_active_mapped_enrollments: CampLmsCanvasEnrollment[];
+  canvas_issues: CampLmsCanvasIssue[];
+  canvas_status: CampLmsCanvasIssue;
+  canvas_status_label: string;
+  suggested_fix: string;
+  suggested_actions: CampLmsSuggestedAction[];
+  status: CampLmsStatus | null;
+  status_note: string | null;
+  checked_at: Date | null;
+  checked_by_name: string | null;
+};
+
+export type CampLmsChecklistSummary = {
+  total: number;
+  verified: number;
+  missing_setup: number;
+  needs_followup: number;
+  unmapped: number;
+  unchecked: number;
+  not_applicable: number;
+  canvas_ok: number;
+  canvas_not_synced: number;
+  canvas_missing_user: number;
+  canvas_missing_course: number;
+  canvas_inactive_expected: number;
+  canvas_extra_active: number;
+  canvas_unmapped: number;
+};
+
+export type CampLmsChecklistData = {
+  schema_ready: boolean;
+  canvas_configured: boolean;
+  canvas_base_url: string;
+  canvas_last_synced_at: Date | null;
+  rows: CampLmsChecklistRow[];
+  summary: CampLmsChecklistSummary;
+};
+
+export type CampPrepResourceKind = 'scratch' | 'roblox' | 'laptop';
+
+export type CampPrepStatus =
+  | 'ready'
+  | 'partial'
+  | 'missing'
+  | 'not_needed';
+
+export type CampAccountPrepInventoryItem = {
+  id: string;
+  label: string;
+  password: string | null;
+};
+
+export type CampAccountPrepRow = {
+  camp_enrolment_id: string;
+  student_id: string;
+  student_name: string;
+  course_id: string | null;
+  course_name: string | null;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  start_date: Date;
+  end_date: Date;
+  needs_scratch: boolean;
+  needs_roblox: boolean;
+  needs_unity: boolean;
+  needs_laptop: boolean;
+  scratch_username: string | null;
+  scratch_password: string | null;
+  roblox_username: string | null;
+  roblox_password: string | null;
+  laptop_number: string | null;
+  missing_resources: CampPrepResourceKind[];
+  status: CampPrepStatus;
+};
+
+export type CampAccountPrepSummary = {
+  total: number;
+  setup_needed: number;
+  ready: number;
+  partial: number;
+  missing: number;
+  not_needed: number;
+  needs_unity: number;
+  missing_scratch: number;
+  missing_roblox: number;
+  missing_laptop: number;
+};
+
+export type CampAccountPrepChecklistData = {
+  rows: CampAccountPrepRow[];
+  inventory: {
+    scratch_accounts: CampAccountPrepInventoryItem[];
+    roblox_accounts: CampAccountPrepInventoryItem[];
+    laptops: CampAccountPrepInventoryItem[];
+  };
+  summary: CampAccountPrepSummary;
 };
 
 export type CampSessionWithEnrolments = {
@@ -361,6 +571,52 @@ export type CampSessionWithEnrolments = {
   end_date: Date;
   enrolment_count: number;
   enrolments: CampEnrolmentWithStudent[];
+};
+
+export type CampPrintableScheduleRow = {
+  camp_enrolment_id: string;
+  student_id: string;
+  student_name: string;
+  assigned_seat_number: number | null;
+  seat_assignments: Array<{
+    date: string;
+    seat: number;
+  }>;
+  course_id: string | null;
+  course_name: string | null;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  start_date: Date;
+  end_date: Date;
+  note: string | null;
+  special_needs: string | null;
+  allergies: string | null;
+  parent_name: string | null;
+  parent_phone: string | null;
+  parent_request_notes: string | null;
+};
+
+export type CampPrintableStudentListField =
+  | 'student'
+  | 'parent'
+  | 'type'
+  | 'camp'
+  | 'days'
+  | 'room'
+  | 'medical'
+  | 'notes';
+
+export type CampPrintableStudentListOverride = {
+  student_id: string;
+  field: CampPrintableStudentListField;
+  value: string;
+};
+
+export type CampPrintableScheduleData = {
+  start_date: string;
+  end_date: string;
+  rows: CampPrintableScheduleRow[];
+  student_list_overrides: CampPrintableStudentListOverride[];
 };
 
 export type SeatAssignment = {
@@ -416,6 +672,8 @@ export type SummerSchedulingPayload = {
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
   pickup_school_other?: string;
   fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
+  // ISO 'YYYY-MM-DD'; populated for fall_status='same'.
+  fall_start_date?: string;
   fall_session_ids: string[];
   fall_waitlist_session_ids?: string[];
   // ISO 'YYYY-MM-DD' per fall session id; populated for fall_status='change'.
@@ -430,6 +688,7 @@ export type RestartPayload = {
 export type OtherPayload = {
   current_sessions_snapshot?: CurrentSessionSummary[];
   fall_status?: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
+  fall_start_date?: string;
   fall_session_ids?: string[];
   fall_waitlist_session_ids?: string[];
   fall_session_start_dates?: Record<string, string>;
@@ -504,6 +763,7 @@ export type ParentRequest =
 export type ParentFormStudentData = {
   student_id: string;
   student_name: string;
+  is_active: boolean;
   current_sessions: CurrentSessionSummary[];
   current_weekday: string | null;
   current_start_time: string | null;
@@ -520,6 +780,7 @@ export type CurrentSessionSummary = {
   start_time: string;
   pickup_school: string | null;
   course_name?: string | null;
+  end_date?: string | null;
 };
 
 export type ParentFormData = {
@@ -545,6 +806,7 @@ export type SubmittedStudentSummary = {
   pickup_school: string | null;
   pickup_school_other: string | null;
   fall_status: string | null;
+  fall_start_date: string | null;
   fall_session_labels: string[];
   fall_waitlist_session_labels: string[];
   fall_notes: string | null;
@@ -575,10 +837,26 @@ export type SummerRecurringInvoiceSummary = {
 
 export type SummerStats = {
   total_families: number;
-  responded: number;
-  enrolling: number;
-  pausing: number;
-  no_change: number;
+  total_students: number;
+  responded_families: number;
+  responded_students: number;
+  waitlisted_students: number;
+  summer_attending_families: number;
+  summer_attending_students: number;
+  summer_pausing_families: number;
+  summer_pausing_students: number;
+  summer_custom_families: number;
+  summer_custom_students: number;
+  summer_no_change_families: number;
+  summer_no_change_students: number;
+  fall_keep_current_families: number;
+  fall_keep_current_students: number;
+  fall_change_families: number;
+  fall_change_students: number;
+  fall_unsure_or_pause_families: number;
+  fall_unsure_or_pause_students: number;
+  fall_not_returning_families: number;
+  fall_not_returning_students: number;
   pending: number;
   needs_followup: number;
   exported: number;
@@ -596,6 +874,7 @@ export type SummerResponseHistoryItem = {
   pickup_school: string | null;
   pickup_school_other: string | null;
   fall_status: SummerSchedulingPayload['fall_status'] | null;
+  fall_start_date: string | null;
   fall_session_labels: string[];
   fall_waitlist_session_labels: string[];
   fall_notes: string | null;
@@ -610,8 +889,8 @@ export type SummerResponseHistoryItem = {
 
 export type SummerResponseRow = {
   request_id: string;
-  student_id: string;
   customer_id: string;
+  student_id: string;
   student_name: string;
   student_note_id: string | null;
   student_note: string | null;
@@ -632,6 +911,7 @@ export type SummerResponseRow = {
   pickup_school: string | null;
   pickup_school_other: string | null;
   fall_status: SummerSchedulingPayload['fall_status'] | null;
+  fall_start_date: string | null;
   fall_session_labels: string[];
   fall_session_choices: SessionChoiceSummary[];
   fall_waitlist_session_labels: string[];
@@ -675,6 +955,7 @@ export type StudentCourseEntry = {
   course_name: string | null;
   weekday: string;
   start_time: string;
+  end_date?: string | null;
   pickup_school?: string | null;
 };
 
@@ -690,6 +971,7 @@ export type ParentLinkRow = {
   alternate_email_locked: boolean;
   alternate_name_locked: boolean;
   student_names: string[];
+  snapshot_student_names: string[];
   student_courses: StudentCourseEntry[];
   student_count: number;
   active_student_count: number;
@@ -697,6 +979,26 @@ export type ParentLinkRow = {
   last_exported_at: Date | null;
   last_seen_active_at: Date | null;
   export_count: number;
+  fall_confirmation_eligible: boolean;
   has_responded: boolean;
   has_internal_response: boolean;
+};
+
+export type SummerSnapshotStudentRow = {
+  student_id: string;
+  student_name: string;
+  is_active: boolean;
+  in_snapshot: boolean;
+  current_sessions: CurrentSessionSummary[];
+  snapshot_sessions: CurrentSessionSummary[];
+};
+
+export type SummerSnapshotFamilyRow = {
+  token_id: string;
+  customer_id: string;
+  customer_name: string;
+  alternate_name: string | null;
+  token: string;
+  last_seen_active_at: Date | null;
+  students: SummerSnapshotStudentRow[];
 };

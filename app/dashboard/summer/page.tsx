@@ -3,11 +3,15 @@ import {
   fetchParentLinkRows,
   fetchSummerResponseRows,
   fetchSummerSchedule,
+  fetchSummerSnapshotCourseOptions,
+  fetchSummerSnapshotRows,
   fetchSummerStats,
   fetchUntokenizedActiveFamilyCount,
 } from '@/app/lib/summer-data';
+import { fetchLatestSummerResponseNotes } from '@/app/lib/data';
 import LinkManagement from '@/app/ui/summer/link-management';
 import ResponsesTab from '@/app/ui/summer/responses-tab';
+import SnapshotManagement from '@/app/ui/summer/snapshot-management';
 import SummerScheduleTab from '@/app/ui/summer/summer-schedule-tab';
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
@@ -34,14 +38,32 @@ export default async function SummerPage({
 
   const { tab = 'links' } = await searchParams;
 
-  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, scheduleRows, fallScheduleRows] = await Promise.all([
+  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, scheduleRows, fallScheduleRows, snapshotRows, snapshotCourseOptions] = await Promise.all([
     tab === 'links' ? fetchParentLinkRows() : null,
     tab === 'links' ? fetchUntokenizedActiveFamilyCount() : null,
     tab === 'responses' ? fetchSummerStats() : null,
     tab === 'responses' ? fetchSummerResponseRows() : null,
     tab === 'schedule' ? fetchSummerSchedule() : null,
     tab === 'fall-schedule' ? fetchFallSchedule() : null,
+    tab === 'snapshot' ? fetchSummerSnapshotRows() : null,
+    tab === 'snapshot' ? fetchSummerSnapshotCourseOptions() : null,
   ]);
+  let enrichedResponseRows = responseRows;
+
+  if (tab === 'responses' && responseRows) {
+    const latestNotes = await fetchLatestSummerResponseNotes(
+      responseRows.map(row => row.student_id),
+      responseRows.map(row => row.customer_id),
+    );
+    const studentNotesById = new Map(latestNotes.studentNotes.map(note => [note.student_id, note]));
+    const customerNotesById = new Map(latestNotes.customerNotes.map(note => [note.customer_id, note]));
+
+    enrichedResponseRows = responseRows.map(row => ({
+      ...row,
+      ...(studentNotesById.get(row.student_id) ?? {}),
+      ...(customerNotesById.get(row.customer_id) ?? {}),
+    }));
+  }
 
   return (
     <div className="m-3 md:m-6">
@@ -64,6 +86,9 @@ export default async function SummerPage({
         <TabLink href="/dashboard/summer?tab=fall-schedule" active={tab === 'fall-schedule'}>
           Fall Schedule
         </TabLink>
+        <TabLink href="/dashboard/summer?tab=snapshot" active={tab === 'snapshot'}>
+          Snapshot Add / Remove
+        </TabLink>
       </div>
 
       {tab === 'links' && linkRows && (
@@ -73,8 +98,8 @@ export default async function SummerPage({
         />
       )}
 
-      {tab === 'responses' && stats && responseRows && (
-        <ResponsesTab rows={responseRows} stats={stats} currentUserName={currentUserName} />
+      {tab === 'responses' && stats && enrichedResponseRows && (
+        <ResponsesTab rows={enrichedResponseRows} stats={stats} currentUserName={currentUserName} />
       )}
 
       {tab === 'schedule' && scheduleRows && (
@@ -83,6 +108,10 @@ export default async function SummerPage({
 
       {tab === 'fall-schedule' && fallScheduleRows && (
         <SummerScheduleTab rows={fallScheduleRows} term="fall" />
+      )}
+
+      {tab === 'snapshot' && snapshotRows && snapshotCourseOptions && (
+        <SnapshotManagement rows={snapshotRows} courseOptions={snapshotCourseOptions} />
       )}
     </div>
   );

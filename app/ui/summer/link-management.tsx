@@ -8,7 +8,6 @@ import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
 import ClearExportButton from './clear-export-button';
 import LockedFieldCell from './locked-field-cell';
-import RefreshLinksButton from './refresh-links-button';
 import Link from 'next/link';
 import {
   updatePrimaryName,
@@ -30,7 +29,8 @@ type FilterValue =
   | 'not_exported'
   | 'exported'
   | 'responded'
-  | 'internal_responded';
+  | 'internal_responded'
+  | 'august_fall_confirmation';
 
 const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'all',           label: 'All families' },
@@ -39,6 +39,7 @@ const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'exported',      label: 'Exported' },
   { value: 'responded',     label: 'Responded' },
   { value: 'internal_responded', label: 'Internal response' },
+  { value: 'august_fall_confirmation', label: 'August email' },
 ];
 const DEFAULT_FILTER: FilterValue = 'not_responded';
 
@@ -49,6 +50,7 @@ function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[
     case 'not_exported':  return rows.filter(r => r.export_count === 0);
     case 'exported':      return rows.filter(r => r.export_count > 0);
     case 'internal_responded': return rows.filter(r => r.has_internal_response);
+    case 'august_fall_confirmation': return rows.filter(r => r.fall_confirmation_eligible);
     default:              return rows;
   }
 }
@@ -59,6 +61,7 @@ function matchesSearch(row: ParentLinkRow, search: string): boolean {
     row.customer_name,
     row.alternate_name,
     ...row.student_names,
+    ...row.snapshot_student_names,
   ]
     .filter(Boolean)
     .join(' ')
@@ -87,13 +90,19 @@ export default function LinkManagement({
     () => applyFilter(rows, filter).filter(row => matchesSearch(row, normalizedSearch)),
     [filter, normalizedSearch, rows],
   );
-  const exportRows = filtered;
-  const exportLabel = filter === 'not_responded' ? 'Export email CSV' : 'Export CSV';
+  const exportRows = filter === 'august_fall_confirmation'
+    ? filtered.map(row => ({ ...row, student_names: row.snapshot_student_names }))
+    : filtered;
+  const exportLabel =
+    filter === 'not_responded' ? 'Export email CSV'
+    : filter === 'august_fall_confirmation' ? 'Export August Email CSV'
+    : 'Export CSV';
 
   const total = rows.length;
   const responded = rows.filter(r => r.has_responded).length;
   const internalResponded = rows.filter(r => r.has_internal_response).length;
   const needsEmail = rows.filter(r => !r.has_responded && !r.has_internal_response).length;
+  const augustEligible = rows.filter(r => r.fall_confirmation_eligible).length;
   const missingEmail = rows.filter(r => !r.email).length;
 
   const [isRefreshing, startRefresh] = useTransition();
@@ -152,7 +161,6 @@ export default function LinkManagement({
         <ExportCsvButton rows={exportRows} label={exportLabel} />
         <ClearExportButton rows={filtered} />
         <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
-        <RefreshLinksButton />
         <div className="flex min-w-[11rem] shrink-0 flex-col items-start gap-1">
           {refreshResult && (
             <span className="max-w-48 text-xs leading-tight text-slate-500">{refreshResult}</span>
@@ -172,6 +180,7 @@ export default function LinkManagement({
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{total}</span> families</span>
         <span><span className="font-semibold text-sky-700">{needsEmail}</span> need email</span>
+        <span><span className="font-semibold text-emerald-700">{augustEligible}</span> August email</span>
         <span><span className="font-semibold text-emerald-700">{responded}</span> responded</span>
         <span><span className="font-semibold text-amber-700">{internalResponded}</span> internal response</span>
         {missingEmail > 0 && (

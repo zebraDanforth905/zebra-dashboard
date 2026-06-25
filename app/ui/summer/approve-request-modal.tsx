@@ -135,6 +135,11 @@ function formatPortalDate(d: Date | string | null): string {
   return d ? SHORT_DATE_FORMATTER.format(new Date(d)) : 'Not marked';
 }
 
+function formatStartSuffix(date: string | null): string {
+  const startDate = formatShortDate(date);
+  return startDate ? ` (start ${startDate})` : '';
+}
+
 function formatCsvExport(row: Pick<SummerResponseRow, 'token_export_count' | 'token_last_exported_at'>): string {
   if (row.token_export_count === 0) return 'CSV not exported';
   const date = row.token_last_exported_at ? formatPortalDate(row.token_last_exported_at) : 'exported';
@@ -191,7 +196,8 @@ function formatFallChoice(row: SummerResponseRow): string {
   if (row.fall_status !== 'same') return formatFallStatus(row.fall_status);
 
   const currentSession = formatCurrentSessions(row);
-  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
+  const startSuffix = formatStartSuffix(row.fall_start_date);
+  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}${startSuffix}` : `${FALL_STATUS_LABEL.same}${startSuffix}`;
 }
 
 function SessionChoicesList({
@@ -403,7 +409,9 @@ export default function ApproveRequestModal({
                       <div>
                         <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Fall</dt>
                         <dd className="mt-1 text-slate-700">
-                          {item.fall_status ? (FALL_STATUS_LABEL[item.fall_status] ?? item.fall_status) : 'Not provided'}
+                          {item.fall_status
+                            ? `${FALL_STATUS_LABEL[item.fall_status] ?? item.fall_status}${item.fall_status === 'same' ? formatStartSuffix(item.fall_start_date) : ''}`
+                            : 'Not provided'}
                           <div className="mt-1 text-xs text-slate-500">
                             <LabelList
                               labels={item.fall_session_labels}

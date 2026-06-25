@@ -1,28 +1,34 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { refreshParentLinkData } from '@/app/lib/summer-actions';
 
 export default function RefreshLinksButton() {
   const [isPending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
   const router = useRouter();
 
   function handleClick() {
+    setMessage(null);
     startTransition(async () => {
-      await refreshParentLinkData();
+      const result = await refreshParentLinkData();
+      setMessage(result.skipped ? 'Snapshot columns missing' : 'Snapshot refresh disabled');
       router.refresh();
     });
   }
 
   return (
-    <button
-      onClick={handleClick}
-      disabled={isPending}
-      title="Reload the link table from the database"
-      className="shrink-0 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
-    >
-      {isPending ? 'Reloading…' : 'Reload Table'}
-    </button>
+    <div className="flex min-w-[11rem] shrink-0 flex-col items-start gap-1">
+      <button
+        onClick={handleClick}
+        disabled={isPending}
+        title="Snapshot refresh is disabled to preserve the historic outreach list"
+        className="shrink-0 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
+      >
+        {isPending ? 'Refreshing...' : 'Snapshot Refresh Disabled'}
+      </button>
+      {message && <span className="max-w-48 text-xs leading-tight text-slate-500">{message}</span>}
+    </div>
   );
 }

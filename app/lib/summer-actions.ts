@@ -6,6 +6,10 @@ import { redirect } from 'next/navigation';
 import { randomBytes } from 'crypto';
 import { auth } from '@/auth';
 import { normalizeSessionSelection } from '@/app/lib/session-selection';
+import {
+  LAST_SCHOOL_YEAR_END,
+  LAST_SCHOOL_YEAR_START,
+} from '@/app/lib/summer-snapshot-policy';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 type PostgresJsonValue = Parameters<typeof sql.json>[0];
@@ -49,6 +53,11 @@ async function parentTokenActiveSnapshotColumnsExist(): Promise<boolean> {
 // Idempotent: if a token already exists for this customer, returns the existing one.
 export async function generateParentToken(customerId: string): Promise<string> {
   await requireAdmin();
+  const existing = await sql<{ token: string }[]>`
+    SELECT token FROM parent_tokens WHERE customer_id = ${customerId}::uuid LIMIT 1
+  `;
+  if (existing.length > 0) return existing[0].token;
+
   const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
   let activeSnapshot: PostgresJsonValue = [];
   let activeCount = 0;
@@ -64,7 +73,7 @@ export async function generateParentToken(customerId: string): Promise<string> {
               'course_name', co.name,
               'weekday', se.weekday,
               'start_time', se.start_time,
-              'pickup_school', cp.school_name
+              'pickup_school', NULL
             )
           ) FILTER (WHERE e.id IS NOT NULL),
           '[]'::jsonb
@@ -73,58 +82,14 @@ export async function generateParentToken(customerId: string): Promise<string> {
       JOIN enrolments e ON e.student_id = s.id
       JOIN sessions se ON se.id = e.session_id
       LEFT JOIN courses co ON co.id = e.course_id
-      LEFT JOIN LATERAL (
-        SELECT p.school_name
-        FROM pickups p
-        WHERE p.student_id = s.id
-          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-        ORDER BY p.id
-        LIMIT 1
-      ) cp ON true
       WHERE s.customer_id = ${customerId}::uuid
+        AND se.is_summer = FALSE
+        AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+        AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
     `;
     activeSnapshot = activeSnapshotRows[0]?.last_active_snapshot ?? [];
     activeCount = activeSnapshotRows[0]?.active_count ?? 0;
-    await sql`
-      UPDATE parent_tokens pt
-      SET
-        last_seen_active_at = NOW(),
-        last_active_snapshot = active_family_snapshot.snapshot
-      FROM (
-        SELECT
-          s.customer_id,
-          JSONB_AGG(
-            DISTINCT JSONB_BUILD_OBJECT(
-              'student_id', s.id::text,
-              'student_name', s.name,
-              'course_name', co.name,
-              'weekday', se.weekday,
-              'start_time', se.start_time,
-              'pickup_school', cp.school_name
-            )
-          ) AS snapshot
-        FROM students s
-        JOIN enrolments e ON e.student_id = s.id
-        JOIN sessions se ON se.id = e.session_id
-        LEFT JOIN courses co ON co.id = e.course_id
-        LEFT JOIN LATERAL (
-          SELECT p.school_name
-          FROM pickups p
-          WHERE p.student_id = s.id
-            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-          ORDER BY p.id
-          LIMIT 1
-        ) cp ON true
-        WHERE s.customer_id = ${customerId}::uuid
-        GROUP BY s.customer_id
-      ) active_family_snapshot
-      WHERE pt.customer_id = active_family_snapshot.customer_id
-    `;
   }
-  const existing = await sql<{ token: string }[]>`
-    SELECT token FROM parent_tokens WHERE customer_id = ${customerId}::uuid LIMIT 1
-  `;
-  if (existing.length > 0) return existing[0].token;
 
   const token = randomBytes(24).toString('hex');
   if (canTrackLastSeenActive) {
@@ -158,42 +123,6 @@ export async function generateParentToken(customerId: string): Promise<string> {
 export async function generateAllParentTokens(): Promise<{ created: number }> {
   await requireAdmin();
   const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
-  if (canTrackLastSeenActive) {
-    await sql`
-      UPDATE parent_tokens pt
-      SET
-        last_seen_active_at = NOW(),
-        last_active_snapshot = active_family_snapshot.snapshot
-      FROM (
-        SELECT
-          s.customer_id,
-          JSONB_AGG(
-            DISTINCT JSONB_BUILD_OBJECT(
-              'student_id', s.id::text,
-              'student_name', s.name,
-              'course_name', co.name,
-              'weekday', se.weekday,
-              'start_time', se.start_time,
-              'pickup_school', cp.school_name
-            )
-          ) AS snapshot
-        FROM students s
-        JOIN enrolments e ON e.student_id = s.id
-        JOIN sessions se ON se.id = e.session_id
-        LEFT JOIN courses co ON co.id = e.course_id
-        LEFT JOIN LATERAL (
-          SELECT p.school_name
-          FROM pickups p
-          WHERE p.student_id = s.id
-            AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-          ORDER BY p.id
-          LIMIT 1
-        ) cp ON true
-        GROUP BY s.customer_id
-      ) active_family_snapshot
-      WHERE pt.customer_id = active_family_snapshot.customer_id
-    `;
-  }
   const eligible = await sql<{ customer_id: string; last_active_snapshot: PostgresJsonValue }[]>`
     SELECT
       c.id::text AS customer_id,
@@ -204,7 +133,7 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
           'course_name', co.name,
           'weekday', se.weekday,
           'start_time', se.start_time,
-          'pickup_school', cp.school_name
+          'pickup_school', NULL
         )
       ) AS last_active_snapshot
     FROM customers c
@@ -212,17 +141,12 @@ export async function generateAllParentTokens(): Promise<{ created: number }> {
     JOIN enrolments e ON e.student_id = s.id
     JOIN sessions se ON se.id = e.session_id
     LEFT JOIN courses co ON co.id = e.course_id
-    LEFT JOIN LATERAL (
-      SELECT p.school_name
-      FROM pickups p
-      WHERE p.student_id = s.id
-        AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-      ORDER BY p.id
-      LIMIT 1
-    ) cp ON true
     WHERE NOT EXISTS (
       SELECT 1 FROM parent_tokens pt WHERE pt.customer_id = c.id
     )
+      AND se.is_summer = FALSE
+      AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+      AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
     GROUP BY c.id
   `;
   if (eligible.length === 0) {
@@ -256,9 +180,11 @@ export async function deleteAllParentTokens(): Promise<{ deleted: number }> {
   return { deleted: rows.length };
 }
 
-export async function refreshParentLinkData(): Promise<void> {
+export async function refreshParentLinkData(): Promise<{ updated: number; skipped: boolean }> {
   await requireAdmin();
   revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
+  return { updated: 0, skipped: false };
 }
 
 // ── Email send tracking ───────────────────────────────────────────────────────
@@ -565,23 +491,19 @@ export async function approveAllEnrolling(startDate: string): Promise<{ created:
 
 export async function deleteSummerResponse(requestId: string): Promise<{ deleted: boolean }> {
   await requireAdmin();
-  const reqs = await sql<{ id: string; enrolment_ids: string[] }[]>`
-    SELECT id::text, enrolment_ids
-    FROM parent_requests
+  const rows = await sql<{ id: string }[]>`
+    UPDATE parent_requests
+    SET
+      removed_at = NOW(),
+      is_latest = FALSE,
+      status = 'superseded',
+      updated_at = NOW()
     WHERE id = ${requestId}::uuid
-    LIMIT 1
+      AND removed_at IS NULL
+      AND request_type IN ('summer_scheduling', 'other')
+    RETURNING id::text AS id
   `;
-  if (reqs.length === 0) return { deleted: false };
-  const { enrolment_ids } = reqs[0];
-  await sql.begin(async tx => {
-    if (enrolment_ids?.length > 0) {
-      await tx`DELETE FROM enrolments WHERE id = ANY(${enrolment_ids}::uuid[])`;
-    }
-    await tx`
-      DELETE FROM parent_requests
-      WHERE id = ${requestId}::uuid
-    `;
-  });
+  if (rows.length === 0) return { deleted: false };
   revalidateTag('summer-responses', 'max');
   revalidateTag('summer-tokens', 'max');
   return { deleted: true };
@@ -753,6 +675,10 @@ function pickStartDates(
   return Object.keys(out).length > 0 ? out : null;
 }
 
+function pickSingleStartDate(raw: string | undefined): string | null {
+  return typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
 
 type StudentFormEntry = {
   student_id: string;
@@ -765,6 +691,7 @@ type StudentFormEntry = {
   pickup_school?: 'Jackman' | 'Frankland' | 'other';
   pickup_school_other?: string;
   fall_status: 'same' | 'change' | 'pause' | 'unsure' | 'not_returning';
+  fall_start_date?: string;
   fall_session_ids: string[];
   fall_session_start_dates?: Record<string, string>;
   fall_waitlist_session_ids: string[];
@@ -774,14 +701,25 @@ type StudentFormEntry = {
     start_time: string;
     pickup_school: string | null;
     course_name?: string | null;
+    end_date?: string | null;
   }[];
 };
 
 type CurrentSessionSnapshot = NonNullable<StudentFormEntry['current_sessions_snapshot']>[number];
 type TokenCurrentSessionSnapshot = CurrentSessionSnapshot & { student_id: string };
+type ParentTokenSnapshotEntry = TokenCurrentSessionSnapshot & { student_name: string };
+type SnapshotManualDetails = {
+  course_name?: string;
+  end_date?: string;
+};
 
 function cleanSnapshotString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function snapshotStudentIdMatches(value: unknown, studentId: number): boolean {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue === studentId;
 }
 
 function normalizeSubmittedCurrentSessionsSnapshot(
@@ -795,11 +733,13 @@ function normalizeSubmittedCurrentSessionsSnapshot(
     if (!weekday || !/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) return [];
     const pickupSchool = cleanSnapshotString(session.pickup_school);
     const courseName = cleanSnapshotString(session.course_name);
+    const endDate = cleanSnapshotString(session.end_date);
     return [{
       weekday,
       start_time: startTime,
       pickup_school: pickupSchool || null,
       ...(courseName ? { course_name: courseName } : {}),
+      ...(endDate ? { end_date: endDate } : {}),
     }];
   });
 }
@@ -818,16 +758,288 @@ function normalizeTokenCurrentSessionSnapshots(value: unknown): Map<number, Curr
 
     const pickupSchool = cleanSnapshotString(session.pickup_school);
     const courseName = cleanSnapshotString(session.course_name);
+    const endDate = cleanSnapshotString(session.end_date);
     const currentSession: CurrentSessionSnapshot = {
       weekday,
       start_time: startTime,
       pickup_school: pickupSchool || null,
       ...(courseName ? { course_name: courseName } : {}),
+      ...(endDate ? { end_date: endDate } : {}),
     };
     map.set(studentId, [...(map.get(studentId) ?? []), currentSession]);
   }
 
   return map;
+}
+
+function normalizeParentTokenSnapshot(value: unknown): ParentTokenSnapshotEntry[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap(rawSession => {
+    if (!rawSession || typeof rawSession !== 'object') return [];
+    const session = rawSession as Partial<ParentTokenSnapshotEntry>;
+    const studentId = cleanSnapshotString(session.student_id);
+    const studentName = cleanSnapshotString(session.student_name);
+    if (!studentId) return [];
+
+    return [{
+      student_id: studentId,
+      student_name: studentName,
+      course_name: cleanSnapshotString(session.course_name) || null,
+      weekday: cleanSnapshotString(session.weekday),
+      start_time: cleanSnapshotString(session.start_time),
+      end_date: cleanSnapshotString(session.end_date) || null,
+      pickup_school: cleanSnapshotString(session.pickup_school) || null,
+    }];
+  });
+}
+
+async function fetchStudentCurrentSnapshotEntries(
+  tokenId: string,
+  studentId: number,
+  studentIdText: string,
+  studentName: string,
+  details?: SnapshotManualDetails,
+): Promise<ParentTokenSnapshotEntry[]> {
+  const manualCourseName = cleanSnapshotString(details?.course_name);
+  const manualEndDate = cleanSnapshotString(details?.end_date);
+
+  if (manualCourseName || manualEndDate) {
+    if (manualCourseName) {
+      const courseRows = await sql<{ name: string }[]>`
+        SELECT name
+        FROM courses
+        WHERE name = ${manualCourseName}
+        LIMIT 1
+      `;
+      if (courseRows.length === 0) {
+        throw new Error('Selected course was not found.');
+      }
+    }
+    if (manualEndDate && !/^\d{4}-\d{2}-\d{2}$/.test(manualEndDate)) {
+      throw new Error('End date must use YYYY-MM-DD format.');
+    }
+
+    return [{
+      student_id: studentIdText,
+      student_name: studentName,
+      course_name: manualCourseName || null,
+      weekday: '',
+      start_time: '',
+      end_date: manualEndDate || null,
+      pickup_school: null,
+    }];
+  }
+
+  const dbRows = await sql<CurrentSessionSnapshot[]>`
+    SELECT DISTINCT
+      se.weekday,
+      se.start_time,
+      NULL::text AS pickup_school,
+      co.name AS course_name,
+      e.end_date::text AS end_date
+    FROM enrolments e
+    JOIN sessions se ON se.id = e.session_id
+    LEFT JOIN courses co ON co.id = e.course_id
+    WHERE e.student_id = ${studentId}
+    ORDER BY se.weekday, se.start_time, co.name
+  `;
+  if (dbRows.length > 0) {
+    return dbRows.map(row => ({
+      student_id: studentIdText,
+      student_name: studentName,
+      course_name: cleanSnapshotString(row.course_name) || null,
+      weekday: cleanSnapshotString(row.weekday),
+      start_time: cleanSnapshotString(row.start_time),
+      end_date: cleanSnapshotString(row.end_date) || null,
+      pickup_school: cleanSnapshotString(row.pickup_school) || null,
+    }));
+  }
+
+  const requestRows = await sql<{ current_sessions_snapshot: unknown }[]>`
+    SELECT COALESCE(pr.payload->'current_sessions_snapshot', '[]'::jsonb) AS current_sessions_snapshot
+    FROM parent_requests pr
+    WHERE pr.token_id = ${tokenId}::uuid
+      AND pr.student_id = ${studentId}
+      AND pr.is_latest = TRUE
+      AND pr.removed_at IS NULL
+      AND pr.request_type IN ('summer_scheduling', 'other')
+    ORDER BY pr.submitted_at DESC
+    LIMIT 1
+  `;
+  const requestSessions = normalizeSubmittedCurrentSessionsSnapshot(
+    requestRows[0]?.current_sessions_snapshot as StudentFormEntry['current_sessions_snapshot'],
+  );
+  if (requestSessions.length > 0) {
+    return requestSessions.map(session => ({
+      student_id: studentIdText,
+      student_name: studentName,
+      ...session,
+    }));
+  }
+
+  return [{
+    student_id: studentIdText,
+    student_name: studentName,
+    course_name: null,
+    weekday: '',
+    start_time: '',
+    end_date: null,
+    pickup_school: null,
+  }];
+}
+
+export async function addStudentToParentSnapshot(
+  tokenId: string,
+  studentId: string,
+  details?: SnapshotManualDetails,
+): Promise<{ updated: boolean }> {
+  await requireAdmin();
+  const numericStudentId = Number(studentId);
+  if (!tokenId || !Number.isFinite(numericStudentId)) {
+    throw new Error('Invalid snapshot update.');
+  }
+
+  const rows = await sql<{
+    student_id: string;
+    student_name: string;
+    last_active_snapshot: unknown;
+  }[]>`
+    SELECT
+      s.id::text AS student_id,
+      s.name AS student_name,
+      COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
+    FROM parent_tokens pt
+    JOIN students s ON s.customer_id = pt.customer_id
+    WHERE pt.id = ${tokenId}::uuid
+      AND s.id = ${numericStudentId}
+    LIMIT 1
+  `;
+  if (rows.length === 0) {
+    throw new Error('Student not found for this family link.');
+  }
+
+  const nextEntries = [
+    ...normalizeParentTokenSnapshot(rows[0].last_active_snapshot)
+      .filter(entry => !snapshotStudentIdMatches(entry.student_id, numericStudentId)),
+    ...(await fetchStudentCurrentSnapshotEntries(tokenId, numericStudentId, rows[0].student_id, rows[0].student_name, details)),
+  ];
+
+  await sql`
+    UPDATE parent_tokens
+    SET
+      last_active_snapshot = ${sql.json(nextEntries)}::jsonb,
+      last_seen_active_at = COALESCE(last_seen_active_at, NOW())
+    WHERE id = ${tokenId}::uuid
+  `;
+  revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
+  return { updated: true };
+}
+
+export async function removeStudentFromParentSnapshot(
+  tokenId: string,
+  studentId: string,
+): Promise<{ updated: boolean }> {
+  await requireAdmin();
+  const numericStudentId = Number(studentId);
+  if (!tokenId || !Number.isFinite(numericStudentId)) {
+    throw new Error('Invalid snapshot update.');
+  }
+
+  const rows = await sql<{ last_active_snapshot: unknown }[]>`
+    SELECT COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot
+    FROM parent_tokens pt
+    JOIN students s ON s.customer_id = pt.customer_id
+    WHERE pt.id = ${tokenId}::uuid
+      AND s.id = ${numericStudentId}
+    LIMIT 1
+  `;
+  if (rows.length === 0) {
+    throw new Error('Student not found for this family link.');
+  }
+
+  const nextEntries = normalizeParentTokenSnapshot(rows[0].last_active_snapshot)
+    .filter(entry => !snapshotStudentIdMatches(entry.student_id, numericStudentId));
+
+  await sql`
+    UPDATE parent_tokens
+    SET last_active_snapshot = ${sql.json(nextEntries)}::jsonb
+    WHERE id = ${tokenId}::uuid
+  `;
+  revalidateTag('summer-tokens', 'max');
+  revalidateTag('summer-responses', 'max');
+  return { updated: true };
+}
+
+export async function backfillLastSchoolYearSnapshotStudents(): Promise<{
+  updatedFamilies: number;
+  addedStudents: number;
+}> {
+  await requireAdmin();
+
+  const rows = await sql<{
+    token_id: string;
+    last_active_snapshot: unknown;
+    school_year_snapshot: unknown;
+  }[]>`
+    SELECT
+      pt.id::text AS token_id,
+      COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot,
+      COALESCE(
+        JSONB_AGG(
+          DISTINCT JSONB_BUILD_OBJECT(
+            'student_id', s.id::text,
+            'student_name', s.name,
+            'course_name', co.name,
+            'weekday', se.weekday,
+            'start_time', se.start_time,
+            'end_date', e.end_date::text,
+            'pickup_school', NULL
+          )
+        ) FILTER (WHERE s.id IS NOT NULL),
+        '[]'::jsonb
+      ) AS school_year_snapshot
+    FROM parent_tokens pt
+    JOIN students s ON s.customer_id = pt.customer_id
+    JOIN enrolments e ON e.student_id = s.id
+    JOIN sessions se ON se.id = e.session_id
+    LEFT JOIN courses co ON co.id = e.course_id
+    WHERE se.is_summer = FALSE
+      AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+      AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
+    GROUP BY pt.id
+  `;
+
+  let updatedFamilies = 0;
+  let addedStudents = 0;
+
+  for (const row of rows) {
+    const existing = normalizeParentTokenSnapshot(row.last_active_snapshot);
+    const candidates = normalizeParentTokenSnapshot(row.school_year_snapshot);
+    const missing = candidates.filter(candidate => (
+      !existing.some(entry => snapshotStudentIdMatches(entry.student_id, Number(candidate.student_id)))
+    ));
+    if (missing.length === 0) continue;
+
+    updatedFamilies += 1;
+    addedStudents += new Set(missing.map(entry => entry.student_id)).size;
+
+    await sql`
+      UPDATE parent_tokens
+      SET
+        last_active_snapshot = ${sql.json([...existing, ...missing])}::jsonb,
+        last_seen_active_at = COALESCE(last_seen_active_at, NOW())
+      WHERE id = ${row.token_id}::uuid
+    `;
+  }
+
+  if (updatedFamilies > 0) {
+    revalidateTag('summer-tokens', 'max');
+    revalidateTag('summer-responses', 'max');
+  }
+
+  return { updatedFamilies, addedStudents };
 }
 
 async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[]): Promise<Map<number, CurrentSessionSnapshot[]>> {
@@ -843,7 +1055,8 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
             'weekday', slots.weekday,
             'start_time', slots.start_time,
             'pickup_school', slots.pickup_school,
-            'course_name', slots.course_name
+            'course_name', slots.course_name,
+            'end_date', slots.end_date
           )
           ORDER BY slots.weekday_order, slots.start_time, slots.course_name
         ) FILTER (WHERE slots.weekday IS NOT NULL),
@@ -854,8 +1067,9 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
       SELECT DISTINCT
         se.weekday,
         se.start_time,
-        cp.school_name AS pickup_school,
+        NULL::text AS pickup_school,
         co.name AS course_name,
+        e.end_date::text AS end_date,
         CASE LOWER(TRIM(se.weekday))
           WHEN 'monday' THEN 1
           WHEN 'tuesday' THEN 2
@@ -869,14 +1083,6 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
       FROM enrolments e
       JOIN sessions se ON se.id = e.session_id
       LEFT JOIN courses co ON co.id = e.course_id
-      LEFT JOIN LATERAL (
-        SELECT p.school_name
-        FROM pickups p
-        WHERE p.student_id = s.id
-          AND LOWER(TRIM(p.weekday)) = LOWER(TRIM(se.weekday))
-        ORDER BY p.id
-        LIMIT 1
-      ) cp ON true
       WHERE e.student_id = s.id
     ) slots ON true
     WHERE s.id = ANY(${ids}::int[])
@@ -898,7 +1104,11 @@ async function fetchCurrentSessionSnapshots(tokenId: string, studentIds: number[
   }));
 }
 
-async function validateTokenCurrentStudentIds(tokenId: string, studentIds: number[]): Promise<boolean> {
+async function validateTokenCurrentStudentIds(
+  tokenId: string,
+  studentIds: number[],
+  includeInactiveStudents = false,
+): Promise<boolean> {
   const ids = Array.from(new Set(studentIds.filter(Number.isFinite)));
   if (ids.length === 0 || ids.length !== studentIds.length) return false;
 
@@ -909,15 +1119,18 @@ async function validateTokenCurrentStudentIds(tokenId: string, studentIds: numbe
     WHERE pt.id = ${tokenId}::uuid
       AND s.id = ANY(${ids}::int[])
       AND (
-        EXISTS (
-          SELECT 1
-          FROM enrolments e
-          WHERE e.student_id = s.id
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) snapshot
-          WHERE snapshot->>'student_id' = s.id::text
+        ${includeInactiveStudents}::boolean
+        OR (
+          EXISTS (
+            SELECT 1
+            FROM enrolments e
+            WHERE e.student_id = s.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) snapshot
+            WHERE snapshot->>'student_id' = s.id::text
+          )
         )
       )
   `;
@@ -1021,6 +1234,7 @@ export async function submitSummerForm(
     ...entry,
     session_ids: Array.isArray(entry.session_ids) ? entry.session_ids : [],
     waitlist_session_ids: Array.isArray(entry.waitlist_session_ids) ? entry.waitlist_session_ids : [],
+    fall_start_date: typeof entry.fall_start_date === 'string' ? entry.fall_start_date : undefined,
     fall_session_ids: Array.isArray(entry.fall_session_ids) ? entry.fall_session_ids : [],
     fall_waitlist_session_ids: Array.isArray(entry.fall_waitlist_session_ids) ? entry.fall_waitlist_session_ids : [],
   }));
@@ -1049,7 +1263,7 @@ export async function submitSummerForm(
   const uniqueSubmittedStudentIds = new Set(submittedStudentIds);
   if (
     uniqueSubmittedStudentIds.size !== submittedStudentIds.length ||
-    !(await validateTokenCurrentStudentIds(token_id, submittedStudentIds))
+    !(await validateTokenCurrentStudentIds(token_id, submittedStudentIds, isStaffEntry))
   ) {
     return { error: 'One or more submitted students are invalid for this link. Please reload and try again.' };
   }
@@ -1085,6 +1299,17 @@ export async function submitSummerForm(
     token_id,
     normalizedEntries.map(entry => Number(entry.student_id)),
   );
+  if (isStaffEntry) {
+    for (const entry of normalizedEntries) {
+      if (entry.fall_status !== 'same') continue;
+      const studentId = Number(entry.student_id);
+      const storedCurrentSessions = currentSessionSnapshotsByStudentId.get(studentId) ?? [];
+      const submittedCurrentSessions = normalizeSubmittedCurrentSessionsSnapshot(entry.current_sessions_snapshot);
+      if (storedCurrentSessions.length === 0 && submittedCurrentSessions.length === 0) {
+        return { error: 'Staff entries keeping the same September class need previous/current class details.' };
+      }
+    }
+  }
 
   // Upsert each student's request inside a transaction
   await sql.begin(async tx => {
@@ -1114,6 +1339,9 @@ export async function submitSummerForm(
           ? { pickup_requested: false }
           : {};
       const fallStartDates = pickStartDates(entry.fall_session_start_dates, entry.fall_session_ids);
+      const fallStartDate = entry.fall_status === 'same'
+        ? pickSingleStartDate(entry.fall_start_date)
+        : null;
       const studentId = Number(entry.student_id);
       const dbCurrentSessionsSnapshot = currentSessionSnapshotsByStudentId.get(studentId) ?? [];
       const staffCurrentSessionsSnapshot = normalizeSubmittedCurrentSessionsSnapshot(entry.current_sessions_snapshot);
@@ -1123,6 +1351,7 @@ export async function submitSummerForm(
       const fallFields = {
         current_sessions_snapshot: currentSessionsSnapshot,
         fall_status: entry.fall_status,
+        ...(fallStartDate ? { fall_start_date: fallStartDate } : {}),
         fall_session_ids: entry.fall_session_ids,
         ...(entry.fall_waitlist_session_ids.length > 0 ? { fall_waitlist_session_ids: entry.fall_waitlist_session_ids } : {}),
         ...(fallStartDates ? { fall_session_start_dates: fallStartDates } : {}),

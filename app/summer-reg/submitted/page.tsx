@@ -22,6 +22,13 @@ const FALL_LABEL: Record<string, string> = {
   not_returning: 'Definitely not returning in September',
 };
 
+const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' });
+
+function formatStartDate(date: string | null): string | null {
+  if (!date) return null;
+  return SHORT_DATE_FORMATTER.format(new Date(`${date}T00:00:00`));
+}
+
 function formatTime(t: string | null): string {
   if (!t) return '—';
   const [h, m] = t.split(':').map(Number);
@@ -48,6 +55,7 @@ function formatCurrentSessions(
 
 function formatFallChoice(
   status: string | null,
+  fallStartDate: string | null,
   weekday: string | null,
   startTime: string | null,
   currentSessions: {
@@ -58,10 +66,12 @@ function formatFallChoice(
 ): string {
   if (status !== 'same') return status ? (FALL_LABEL[status] ?? status) : '—';
   const snapshotLabel = formatCurrentSessions(currentSessions);
-  if (snapshotLabel) return `${FALL_LABEL.same} - ${snapshotLabel}`;
+  const startLabel = formatStartDate(fallStartDate);
+  const startSuffix = startLabel ? ` (start ${startLabel})` : '';
+  if (snapshotLabel) return `${FALL_LABEL.same} - ${snapshotLabel}${startSuffix}`;
   return weekday
-    ? `${FALL_LABEL.same} - ${weekday} ${formatTime(startTime)}`
-    : FALL_LABEL.same;
+    ? `${FALL_LABEL.same} - ${weekday} ${formatTime(startTime)}${startSuffix}`
+    : `${FALL_LABEL.same}${startSuffix}`;
 }
 
 export default async function SubmittedPage({
@@ -142,7 +152,7 @@ export default async function SubmittedPage({
                   <div className="rounded-lg bg-emerald-50 px-3 py-2 space-y-1">
                     <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">September (Fall)</p>
                     <p className="text-sm text-slate-700 font-medium">
-                      {formatFallChoice(s.fall_status, s.current_weekday, s.current_start_time, s.current_sessions_snapshot)}
+                      {formatFallChoice(s.fall_status, s.fall_start_date, s.current_weekday, s.current_start_time, s.current_sessions_snapshot)}
                     </p>
                     {s.fall_session_labels.length > 0 && (
                       <p className="text-xs text-slate-600">

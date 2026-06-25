@@ -2,7 +2,41 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { InvoiceTableData, CustomerTableData, ScheduleRow, StudentTableData, Session, RecurringInvoice, RecurringInvoiceListData, TrialRow, MakeupRow, PickupListDisplay, SlipInfo, StudentNote, CustomerNote, TrialNote, CampSessionWithEnrolments } from './definitions';
+import { isSummerScheduleWeek } from './schedule-week';
+import {
+  InvoiceTableData,
+  CustomerTableData,
+  ScheduleRow,
+  StudentTableData,
+  Session,
+  RecurringInvoice,
+  RecurringInvoiceListData,
+  TrialRow,
+  MakeupRow,
+  PickupListDisplay,
+  SlipInfo,
+  StudentNote,
+  CustomerNote,
+  TrialNote,
+  CampLmsCanvasEnrollment,
+  CampLmsCanvasIssue,
+  CampLmsCanvasMatch,
+  CampLmsChecklistData,
+  CampLmsChecklistRow,
+  CampLmsChecklistSummary,
+  CampLmsExpectedCourse,
+  CampLmsSuggestedAction,
+  CampAccountPrepChecklistData,
+  CampAccountPrepRow,
+  CampAccountPrepSummary,
+  CampPrepResourceKind,
+  CampPrepStatus,
+  CampPrintableScheduleData,
+  CampPrintableScheduleRow,
+  CampSessionWithEnrolments,
+  CampPrintableStudentListOverride,
+} from './definitions';
+import { getCanvasPublicConfig } from './canvas-lms';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -847,6 +881,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
       LEFT JOIN latest_note ln ON ln.student_id = s.id
       WHERE e.session_id = ${sessionId}
         AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+        AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
       ORDER BY s.name;
     `;
 
@@ -966,7 +1001,11 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
   }
 }
 
-export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday', date?: Date) {
+export async function fetchSessionsForDay(
+  day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday',
+  date?: Date,
+  options?: { isSummer?: boolean },
+) {
   'use cache'
   
   try {
@@ -976,6 +1015,7 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
           targetDate = nextOccurrenceOf(day);
         }
         const target = Y(targetDate);
+        const isSummer = options?.isSummer ?? isSummerScheduleWeek(targetDate);
 
         const sessions = await sql<Session[]>
         `
@@ -993,6 +1033,8 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             SELECT COUNT(*) AS student_count
             FROM enrolments e
             WHERE e.session_id = s.id
+              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
           ) ec ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS makeup_count
@@ -1012,9 +1054,11 @@ export async function fetchSessionsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday
             JOIN enrolments e ON e.id = a.enrolment_id
             WHERE e.session_id = s.id
               AND a.date = ${target}
+              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
           ) ac ON true
           WHERE s.weekday = ${day}
-            AND s.is_summer = FALSE
+            AND s.is_summer = ${isSummer}
             AND (
               COALESCE(ec.student_count, 0) > 0
               OR COALESCE(mc.makeup_count, 0) > 0
@@ -1083,12 +1127,13 @@ export async function fetchRecurringInvoiceById(invoiceId: string){
 
 export async function fetchPickupsForDay(day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday', school?: string, date?: Date){
   try {
-    let weekday = day.toLowerCase()
-    let school_name = school?.toLowerCase();
+    const weekday = day.toLowerCase()
+    const school_name = school?.toLowerCase();
 
     let targetDate = date;
-
-    targetDate = nextOccurrenceOf(day);
+    if (!targetDate) {
+      targetDate = nextOccurrenceOf(day);
+    }
 
 
     const target = Y(targetDate);
@@ -1395,6 +1440,67 @@ export async function fetchCustomerNotes(customerId: string) {
   }
 }
 
+export type SummerResponseLatestNotes = {
+  studentNotes: {
+    student_id: string;
+    student_note_id: string | null;
+    student_note: string | null;
+    student_note_date: Date | null;
+    student_note_creator: string | null;
+  }[];
+  customerNotes: {
+    customer_id: string;
+    customer_note_id: string | null;
+    customer_note: string | null;
+    customer_note_date: Date | null;
+    customer_note_creator: string | null;
+  }[];
+};
+
+export async function fetchLatestSummerResponseNotes(
+  studentIds: string[],
+  customerIds: string[],
+): Promise<SummerResponseLatestNotes> {
+  const uniqueStudentIds = Array.from(new Set(studentIds.filter(Boolean)));
+  const uniqueCustomerIds = Array.from(new Set(customerIds.filter(Boolean)));
+
+  try {
+    const [studentNotes, customerNotes] = await Promise.all([
+      uniqueStudentIds.length > 0
+        ? sql<SummerResponseLatestNotes['studentNotes']>`
+            SELECT DISTINCT ON (sn.student_id)
+              sn.student_id::text AS student_id,
+              sn.id::text AS student_note_id,
+              sn.content AS student_note,
+              sn.date AS student_note_date,
+              sn.creator AS student_note_creator
+            FROM student_notes sn
+            WHERE sn.student_id::text = ANY(${uniqueStudentIds}::text[])
+            ORDER BY sn.student_id, sn.date DESC, sn.id DESC
+          `
+        : Promise.resolve([]),
+      uniqueCustomerIds.length > 0
+        ? sql<SummerResponseLatestNotes['customerNotes']>`
+            SELECT DISTINCT ON (cn.customer_id)
+              cn.customer_id::text AS customer_id,
+              cn.id::text AS customer_note_id,
+              cn.content AS customer_note,
+              cn.date AS customer_note_date,
+              cn.creator AS customer_note_creator
+            FROM customer_notes cn
+            WHERE cn.customer_id::text = ANY(${uniqueCustomerIds}::text[])
+            ORDER BY cn.customer_id, cn.date DESC, cn.id DESC
+          `
+        : Promise.resolve([]),
+    ]);
+
+    return { studentNotes, customerNotes };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch summer response notes.');
+  }
+}
+
 export async function fetchTrialNotes(trialId: string) {
   try {
     const notes = await sql<TrialNote[]>`
@@ -1687,6 +1793,39 @@ export async function fetchInvoiceDiscrepancies() {
 }
 
 // Camp functions
+type CampRosterColumnFlags = {
+  note: boolean;
+  parent_name: boolean;
+  parent_phone: boolean;
+  allergies: boolean;
+};
+
+async function campEnrolmentsRosterColumns(): Promise<CampRosterColumnFlags> {
+  const columns = await sql<{ column_name: keyof CampRosterColumnFlags }[]>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'camp_enrolments'
+      AND column_name IN ('note', 'parent_name', 'parent_phone', 'allergies');
+  `;
+  const names = new Set(columns.map((column) => column.column_name));
+
+  return {
+    note: names.has('note'),
+    parent_name: names.has('parent_name'),
+    parent_phone: names.has('parent_phone'),
+    allergies: names.has('allergies'),
+  };
+}
+
+async function campPrintStudentListOverridesReady() {
+  const [schema] = await sql<{ ready: boolean }[]>`
+    SELECT to_regclass('public.camp_print_student_list_overrides') IS NOT NULL AS ready;
+  `;
+
+  return Boolean(schema?.ready);
+}
+
 export async function fetchUpcomingCampSessions() {
   'use cache'
   cacheTag('camps');
@@ -1729,6 +1868,17 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
   'use cache'
   cacheTag('camps');
   try {
+    const rosterColumns = await campEnrolmentsRosterColumns();
+    const noteExpression = rosterColumns.note ? sql`ce.note` : sql`NULL::text`;
+    const parentNameExpression = rosterColumns.parent_name
+      ? sql`COALESCE(NULLIF(ce.parent_name, ''), cust.name)`
+      : sql`cust.name`;
+    const parentPhoneExpression = rosterColumns.parent_phone
+      ? sql`NULLIF(ce.parent_phone, '')`
+      : sql`NULL::text`;
+    const allergiesExpression = rosterColumns.allergies
+      ? sql`NULLIF(ce.allergies, '')`
+      : sql`NULL::text`;
     const sessions = await sql<Array<{
       start_date: Date;
       end_date: Date;
@@ -1737,12 +1887,17 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
         student_id: string;
         student_name: string;
         dob: Date | null;
-        course_id: string;
+        course_id: string | null;
+        course_name: string | null;
         camp_type: 'FD' | 'PM' | 'AM';
         assigned_seat_number: number | null;
         note: string | null;
         special_needs: string | null;
+        allergies: string | null;
         extended_care: boolean;
+        parent_name: string | null;
+        parent_phone: string | null;
+        parent_request_notes: string | null;
       }>;
     }>>`
       SELECT 
@@ -1755,16 +1910,40 @@ export async function fetchUpcomingCampSessionsWithEnrolments() {
             'student_name', s.name,
             'dob', s.dob,
             'course_id', ce.course_id,
+            'course_name', co.name,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
-            'note', ce.note,
+            'note', ${noteExpression},
             'special_needs', s.special_needs,
-            'extended_care', cs.extended_care
+            'allergies', ${allergiesExpression},
+            'extended_care', cs.extended_care,
+            'parent_name', ${parentNameExpression},
+            'parent_phone', ${parentPhoneExpression},
+            'parent_request_notes', prn.notes
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
         ) FILTER (WHERE ce.id IS NOT NULL) AS enrolments
       FROM camp_sessions cs
       LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
       LEFT JOIN students s ON s.id = ce.student_id
+      LEFT JOIN customers cust ON cust.id = s.customer_id
+      LEFT JOIN courses co ON co.id = ce.course_id
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_TO_STRING(
+          ARRAY_REMOVE(ARRAY[
+            CASE WHEN NULLIF(pr.custom_notes, '') IS NOT NULL THEN 'Summer: ' || pr.custom_notes END,
+            CASE WHEN NULLIF(pr.payload->>'fall_notes', '') IS NOT NULL THEN 'Fall: ' || (pr.payload->>'fall_notes') END,
+            CASE WHEN pr.status = 'needs_manual_followup' THEN 'Needs follow-up' END
+          ], NULL),
+          E'\n'
+        ) AS notes
+        FROM parent_requests pr
+        WHERE pr.student_id = s.id
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        ORDER BY pr.submitted_at DESC
+        LIMIT 1
+      ) prn ON TRUE
       WHERE cs.start_date >= DATE_TRUNC('week', CURRENT_DATE)::date
       GROUP BY cs.start_date, cs.end_date
       ORDER BY cs.start_date ASC;
@@ -1780,6 +1959,17 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
   'use cache'
   cacheTag('camps');
   try {
+    const rosterColumns = await campEnrolmentsRosterColumns();
+    const noteExpression = rosterColumns.note ? sql`ce.note` : sql`NULL::text`;
+    const parentNameExpression = rosterColumns.parent_name
+      ? sql`COALESCE(NULLIF(ce.parent_name, ''), cust.name)`
+      : sql`cust.name`;
+    const parentPhoneExpression = rosterColumns.parent_phone
+      ? sql`NULLIF(ce.parent_phone, '')`
+      : sql`NULL::text`;
+    const allergiesExpression = rosterColumns.allergies
+      ? sql`NULLIF(ce.allergies, '')`
+      : sql`NULL::text`;
     let whereConditions = sql`DATE_TRUNC('week', cs.start_date)::date < DATE_TRUNC('week', CURRENT_DATE)::date`;
 
     if (fromDate) {
@@ -1798,12 +1988,17 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
         student_id: string;
         student_name: string;
         dob: Date | null;
-        course_id: string;
+        course_id: string | null;
+        course_name: string | null;
         camp_type: 'FD' | 'PM' | 'AM';
         assigned_seat_number: number | null;
         note: string | null;
         special_needs: string | null;
+        allergies: string | null;
         extended_care: boolean;
+        parent_name: string | null;
+        parent_phone: string | null;
+        parent_request_notes: string | null;
       }>;
     }>>`
       SELECT 
@@ -1816,16 +2011,40 @@ export async function fetchPastCampSessionsWithEnrolments(fromDate?: string, toD
             'student_name', s.name,
             'dob', s.dob,
             'course_id', ce.course_id,
+            'course_name', co.name,
             'camp_type', cs.camp_type,
             'assigned_seat_number', ce.assigned_seat_number,
-            'note', ce.note,
+            'note', ${noteExpression},
             'special_needs', s.special_needs,
-            'extended_care', cs.extended_care
+            'allergies', ${allergiesExpression},
+            'extended_care', cs.extended_care,
+            'parent_name', ${parentNameExpression},
+            'parent_phone', ${parentPhoneExpression},
+            'parent_request_notes', prn.notes
           ) ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC
         ) FILTER (WHERE ce.id IS NOT NULL) AS enrolments
       FROM camp_sessions cs
       LEFT JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
       LEFT JOIN students s ON s.id = ce.student_id
+      LEFT JOIN customers cust ON cust.id = s.customer_id
+      LEFT JOIN courses co ON co.id = ce.course_id
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_TO_STRING(
+          ARRAY_REMOVE(ARRAY[
+            CASE WHEN NULLIF(pr.custom_notes, '') IS NOT NULL THEN 'Summer: ' || pr.custom_notes END,
+            CASE WHEN NULLIF(pr.payload->>'fall_notes', '') IS NOT NULL THEN 'Fall: ' || (pr.payload->>'fall_notes') END,
+            CASE WHEN pr.status = 'needs_manual_followup' THEN 'Needs follow-up' END
+          ], NULL),
+          E'\n'
+        ) AS notes
+        FROM parent_requests pr
+        WHERE pr.student_id = s.id
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        ORDER BY pr.submitted_at DESC
+        LIMIT 1
+      ) prn ON TRUE
       WHERE ${whereConditions}
       GROUP BY cs.start_date, cs.end_date
       ORDER BY cs.start_date DESC;
@@ -1841,6 +2060,17 @@ export async function fetchCampSessionById(sessionId: string) {
   'use cache'
   cacheTag('camps');
   try {
+    const rosterColumns = await campEnrolmentsRosterColumns();
+    const noteExpression = rosterColumns.note ? sql`ce.note` : sql`NULL::text`;
+    const parentNameExpression = rosterColumns.parent_name
+      ? sql`COALESCE(NULLIF(ce.parent_name, ''), cust.name)`
+      : sql`cust.name`;
+    const parentPhoneExpression = rosterColumns.parent_phone
+      ? sql`NULLIF(ce.parent_phone, '')`
+      : sql`NULL::text`;
+    const allergiesExpression = rosterColumns.allergies
+      ? sql`NULLIF(ce.allergies, '')`
+      : sql`NULL::text`;
     const [session] = await sql<Array<{
       id: string;
       start_date: Date;
@@ -1865,10 +2095,17 @@ export async function fetchCampSessionById(sessionId: string) {
       student_id: string;
       student_name: string;
       dob: Date | null;
-      course_id: string;
+      course_id: string | null;
+      course_name: string | null;
       camp_type: 'FD' | 'PM' | 'AM';
       assigned_seat_number: number | null;
+      note: string | null;
       special_needs: string | null;
+      allergies: string | null;
+      extended_care: boolean;
+      parent_name: string | null;
+      parent_phone: string | null;
+      parent_request_notes: string | null;
     }>>`
       SELECT 
         ce.id,
@@ -1876,12 +2113,38 @@ export async function fetchCampSessionById(sessionId: string) {
         s.name as student_name,
         s.dob,
         ce.course_id,
+        co.name AS course_name,
         cs.camp_type,
         ce.assigned_seat_number,
-        s.special_needs
+        ${noteExpression} AS note,
+        s.special_needs,
+        ${allergiesExpression} AS allergies,
+        cs.extended_care,
+        ${parentNameExpression} AS parent_name,
+        ${parentPhoneExpression} AS parent_phone,
+        prn.notes AS parent_request_notes
       FROM camp_enrolments ce
       JOIN students s ON s.id = ce.student_id
       JOIN camp_sessions cs ON cs.id = ce.camp_session_id
+      LEFT JOIN customers cust ON cust.id = s.customer_id
+      LEFT JOIN courses co ON co.id = ce.course_id
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_TO_STRING(
+          ARRAY_REMOVE(ARRAY[
+            CASE WHEN NULLIF(pr.custom_notes, '') IS NOT NULL THEN 'Summer: ' || pr.custom_notes END,
+            CASE WHEN NULLIF(pr.payload->>'fall_notes', '') IS NOT NULL THEN 'Fall: ' || (pr.payload->>'fall_notes') END,
+            CASE WHEN pr.status = 'needs_manual_followup' THEN 'Needs follow-up' END
+          ], NULL),
+          E'\n'
+        ) AS notes
+        FROM parent_requests pr
+        WHERE pr.student_id = s.id
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        ORDER BY pr.submitted_at DESC
+        LIMIT 1
+      ) prn ON TRUE
       WHERE ce.camp_session_id = ${sessionId}
       ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC;
     `;
@@ -1901,16 +2164,33 @@ export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Dat
   'use cache'
   cacheTag('camps');
   try {
+    const rosterColumns = await campEnrolmentsRosterColumns();
+    const noteExpression = rosterColumns.note ? sql`ce.note` : sql`NULL::text`;
+    const parentNameExpression = rosterColumns.parent_name
+      ? sql`COALESCE(NULLIF(ce.parent_name, ''), cust.name)`
+      : sql`cust.name`;
+    const parentPhoneExpression = rosterColumns.parent_phone
+      ? sql`NULLIF(ce.parent_phone, '')`
+      : sql`NULL::text`;
+    const allergiesExpression = rosterColumns.allergies
+      ? sql`NULLIF(ce.allergies, '')`
+      : sql`NULL::text`;
     const enrolments = await sql<Array<{
       id: string;
       student_id: string;
       student_name: string;
       dob: Date | null;
-      course_id: string;
+      course_id: string | null;
+      course_name: string | null;
       camp_type: 'FD' | 'PM' | 'AM';
       assigned_seat_number: number | null;
+      note: string | null;
       special_needs: string | null;
+      allergies: string | null;
       extended_care: boolean;
+      parent_name: string | null;
+      parent_phone: string | null;
+      parent_request_notes: string | null;
     }>>`
       SELECT 
         ce.id,
@@ -1918,13 +2198,38 @@ export async function fetchCampSessionsByDateRange(startDate: Date, endDate: Dat
         s.name as student_name,
         s.dob,
         ce.course_id,
+        co.name AS course_name,
         cs.camp_type,
         ce.assigned_seat_number,
+        ${noteExpression} AS note,
         s.special_needs,
-        cs.extended_care
+        ${allergiesExpression} AS allergies,
+        cs.extended_care,
+        ${parentNameExpression} AS parent_name,
+        ${parentPhoneExpression} AS parent_phone,
+        prn.notes AS parent_request_notes
       FROM camp_enrolments ce
       JOIN students s ON s.id = ce.student_id
       JOIN camp_sessions cs ON cs.id = ce.camp_session_id
+      LEFT JOIN customers cust ON cust.id = s.customer_id
+      LEFT JOIN courses co ON co.id = ce.course_id
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_TO_STRING(
+          ARRAY_REMOVE(ARRAY[
+            CASE WHEN NULLIF(pr.custom_notes, '') IS NOT NULL THEN 'Summer: ' || pr.custom_notes END,
+            CASE WHEN NULLIF(pr.payload->>'fall_notes', '') IS NOT NULL THEN 'Fall: ' || (pr.payload->>'fall_notes') END,
+            CASE WHEN pr.status = 'needs_manual_followup' THEN 'Needs follow-up' END
+          ], NULL),
+          E'\n'
+        ) AS notes
+        FROM parent_requests pr
+        WHERE pr.student_id = s.id
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        ORDER BY pr.submitted_at DESC
+        LIMIT 1
+      ) prn ON TRUE
       WHERE cs.start_date = ${startDate} AND cs.end_date = ${endDate}
       ORDER BY ce.assigned_seat_number NULLS LAST, s.name ASC;
     `;
@@ -1966,6 +2271,819 @@ function toLocalDateKey(value: Date | string): string {
   const month = String(value.getMonth() + 1).padStart(2, '0');
   const day = String(value.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+type CampLmsChecklistDbRow = Omit<
+  CampLmsChecklistRow,
+  | 'canvas_user_matches'
+  | 'active_canvas_enrollments'
+  | 'inactive_canvas_enrollments'
+  | 'invited_canvas_enrollments'
+  | 'expected_canvas_courses'
+  | 'expected_canvas_course_ids'
+  | 'active_expected_enrollments'
+  | 'inactive_expected_enrollments'
+  | 'extra_active_mapped_enrollments'
+  | 'canvas_issues'
+  | 'canvas_status'
+  | 'canvas_status_label'
+  | 'suggested_fix'
+  | 'suggested_actions'
+> & {
+  canvas_user_matches: unknown;
+  active_canvas_enrollments: unknown;
+  inactive_canvas_enrollments: unknown;
+  invited_canvas_enrollments: unknown;
+};
+
+const EMPTY_LMS_SUMMARY: CampLmsChecklistSummary = {
+  total: 0,
+  verified: 0,
+  missing_setup: 0,
+  needs_followup: 0,
+  unmapped: 0,
+  unchecked: 0,
+  not_applicable: 0,
+  canvas_ok: 0,
+  canvas_not_synced: 0,
+  canvas_missing_user: 0,
+  canvas_missing_course: 0,
+  canvas_inactive_expected: 0,
+  canvas_extra_active: 0,
+  canvas_unmapped: 0,
+};
+
+function asCanvasMatches(value: unknown): CampLmsCanvasMatch[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((match) => {
+      if (!match || typeof match !== 'object') return null;
+      const raw = match as Record<string, unknown>;
+      if (raw.id == null) return null;
+
+      return {
+        id: String(raw.id),
+        name: raw.name == null ? null : String(raw.name),
+        login_id: raw.login_id == null ? null : String(raw.login_id),
+        email: raw.email == null ? null : String(raw.email),
+        sis_user_id: raw.sis_user_id == null ? null : String(raw.sis_user_id),
+      };
+    })
+    .filter((match): match is CampLmsCanvasMatch => Boolean(match));
+}
+
+function asCanvasEnrollments(value: unknown): CampLmsCanvasEnrollment[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((enrollment) => {
+      if (!enrollment || typeof enrollment !== 'object') return null;
+      const raw = enrollment as Record<string, unknown>;
+      if (raw.enrollment_id == null || raw.course_id == null) return null;
+
+      return {
+        enrollment_id: String(raw.enrollment_id),
+        course_id: String(raw.course_id),
+        course_name: raw.course_name == null ? null : String(raw.course_name),
+        state: raw.state == null ? 'unknown' : String(raw.state),
+        role: raw.role == null ? null : String(raw.role),
+        type: raw.type == null ? null : String(raw.type),
+        updated_at: raw.updated_at == null ? null : String(raw.updated_at),
+      };
+    })
+    .filter((enrollment): enrollment is CampLmsCanvasEnrollment => Boolean(enrollment));
+}
+
+function buildExpectedCanvasCourses(row: CampLmsChecklistDbRow): CampLmsExpectedCourse[] {
+  const candidates: CampLmsExpectedCourse[] = [
+    {
+      level: 'beginner',
+      course_id: row.canvas_beginner_course_id ?? '',
+      course_name: row.canvas_beginner_course_name,
+    },
+    {
+      level: 'intermediate',
+      course_id: row.canvas_intermediate_course_id ?? '',
+      course_name: row.canvas_intermediate_course_name,
+    },
+    {
+      level: 'advanced',
+      course_id: row.canvas_advanced_course_id ?? '',
+      course_name: row.canvas_advanced_course_name,
+    },
+  ];
+
+  return candidates.filter((course) => course.course_id.trim().length > 0);
+}
+
+function canvasStatusLabel(status: CampLmsCanvasIssue) {
+  const labels: Record<CampLmsCanvasIssue, string> = {
+    ok: 'OK',
+    not_synced: 'Not synced',
+    unmapped_course: 'Unmapped camp course',
+    missing_canvas_user: 'Missing Canvas user',
+    missing_expected_course: 'Missing expected course',
+    inactive_expected_course: 'Expected course inactive',
+    extra_active_course: 'Extra active course',
+  };
+
+  return labels[status];
+}
+
+function primaryCanvasStatus(issues: CampLmsCanvasIssue[]): CampLmsCanvasIssue {
+  const priority: CampLmsCanvasIssue[] = [
+    'not_synced',
+    'unmapped_course',
+    'missing_canvas_user',
+    'missing_expected_course',
+    'inactive_expected_course',
+    'extra_active_course',
+  ];
+
+  return priority.find((issue) => issues.includes(issue)) ?? 'ok';
+}
+
+function suggestedCanvasFix(params: {
+  status: CampLmsCanvasIssue;
+  login: string;
+  family: string | null;
+  beginnerCourseId: string | null;
+  activeExpected: CampLmsCanvasEnrollment[];
+  inactiveExpected: CampLmsCanvasEnrollment[];
+  extraActive: CampLmsCanvasEnrollment[];
+}) {
+  const { status, login, family, beginnerCourseId, activeExpected, inactiveExpected, extraActive } = params;
+  const familyLabel = family ?? 'the expected Canvas family';
+
+  if (status === 'not_synced') return 'Click Sync LMS to read current Canvas users and enrollments.';
+  if (status === 'unmapped_course') return 'Map this portal camp course to its Canvas course family and beginner/intermediate/advanced course IDs.';
+  if (status === 'missing_canvas_user') return `Create or locate the Canvas user for ${login}, then sync again.`;
+  if (status === 'missing_expected_course') {
+    return beginnerCourseId
+      ? `Test-add this camper to ${familyLabel} beginner course ${beginnerCourseId}.`
+      : `Add this camper to an active course in ${familyLabel}.`;
+  }
+  if (status === 'inactive_expected_course') {
+    const course = inactiveExpected[0];
+    return course
+      ? `Reactivate or re-enroll the camper in ${course.course_name ?? course.course_id}.`
+      : `Reactivate an enrollment in ${familyLabel}.`;
+  }
+  if (status === 'extra_active_course') {
+    const courseNames = extraActive
+      .map((enrollment) => enrollment.course_name ?? enrollment.course_id)
+      .join(', ');
+    const suffix = activeExpected.length > 0
+      ? ''
+      : ` and add ${familyLabel}${beginnerCourseId ? ` beginner course ${beginnerCourseId}` : ''}`;
+    return `Set extra active enrollment(s) inactive: ${courseNames}${suffix}.`;
+  }
+
+  return 'Expected Canvas setup is active.';
+}
+
+function suggestedCanvasActions(params: {
+  row: CampLmsChecklistDbRow;
+  expectedCourses: CampLmsExpectedCourse[];
+  activeExpected: CampLmsCanvasEnrollment[];
+  extraActive: CampLmsCanvasEnrollment[];
+}): CampLmsSuggestedAction[] {
+  const { row, expectedCourses, activeExpected, extraActive } = params;
+
+  if (row.canvas_sync_status !== 'synced' || !row.canvas_user_found) return [];
+
+  const actions: CampLmsSuggestedAction[] = [];
+  const beginner = expectedCourses.find((course) => course.level === 'beginner');
+  if (beginner && activeExpected.length === 0) {
+    actions.push({
+      type: 'add_expected_beginner',
+      label: 'Test add beginner',
+      canvas_course_id: beginner.course_id,
+      canvas_course_name: beginner.course_name,
+    });
+  }
+
+  extraActive.forEach((enrollment) => {
+    actions.push({
+      type: 'inactivate_enrollment',
+      label: 'Test set inactive',
+      canvas_course_id: enrollment.course_id,
+      canvas_course_name: enrollment.course_name,
+      canvas_enrollment_id: enrollment.enrollment_id,
+    });
+  });
+
+  return actions;
+}
+
+function buildCampLmsRows(rows: CampLmsChecklistDbRow[], allMappedCanvasCourseIds: Set<string>): CampLmsChecklistRow[] {
+  return rows.map((row) => {
+    const expectedCourses = buildExpectedCanvasCourses(row);
+    const expectedCourseIds = new Set(expectedCourses.map((course) => course.course_id));
+    const activeEnrollments = asCanvasEnrollments(row.active_canvas_enrollments);
+    const inactiveEnrollments = asCanvasEnrollments(row.inactive_canvas_enrollments);
+    const activeExpected = activeEnrollments.filter((enrollment) => expectedCourseIds.has(enrollment.course_id));
+    const inactiveExpected = inactiveEnrollments.filter((enrollment) => expectedCourseIds.has(enrollment.course_id));
+    const extraActive = activeEnrollments.filter((enrollment) =>
+      allMappedCanvasCourseIds.has(enrollment.course_id) && !expectedCourseIds.has(enrollment.course_id)
+    );
+
+    const issues: CampLmsCanvasIssue[] = [];
+    if (row.canvas_sync_status !== 'synced') issues.push('not_synced');
+    if (expectedCourses.length === 0) issues.push('unmapped_course');
+    if (row.canvas_sync_status === 'synced' && !row.canvas_user_found) issues.push('missing_canvas_user');
+    if (row.canvas_sync_status === 'synced' && row.canvas_user_found && expectedCourses.length > 0 && activeExpected.length === 0) {
+      issues.push(inactiveExpected.length > 0 ? 'inactive_expected_course' : 'missing_expected_course');
+    }
+    if (row.canvas_sync_status === 'synced' && row.canvas_user_found && extraActive.length > 0) {
+      issues.push('extra_active_course');
+    }
+
+    const canvasIssues: CampLmsCanvasIssue[] = issues.length > 0 ? Array.from(new Set(issues)) : ['ok'];
+    const canvasStatus = primaryCanvasStatus(canvasIssues);
+    const suggestedActions = suggestedCanvasActions({
+      row,
+      expectedCourses,
+      activeExpected,
+      extraActive,
+    });
+
+    return {
+      ...row,
+      canvas_user_matches: asCanvasMatches(row.canvas_user_matches),
+      active_canvas_enrollments: activeEnrollments,
+      inactive_canvas_enrollments: inactiveEnrollments,
+      invited_canvas_enrollments: asCanvasEnrollments(row.invited_canvas_enrollments),
+      expected_canvas_courses: expectedCourses,
+      expected_canvas_course_ids: Array.from(expectedCourseIds),
+      active_expected_enrollments: activeExpected,
+      inactive_expected_enrollments: inactiveExpected,
+      extra_active_mapped_enrollments: extraActive,
+      canvas_issues: canvasIssues,
+      canvas_status: canvasStatus,
+      canvas_status_label: canvasStatusLabel(canvasStatus),
+      suggested_fix: suggestedCanvasFix({
+        status: canvasStatus,
+        login: row.suggested_lms_login,
+        family: row.canvas_course_family,
+        beginnerCourseId: row.canvas_beginner_course_id,
+        activeExpected,
+        inactiveExpected,
+        extraActive,
+      }),
+      suggested_actions: suggestedActions,
+    };
+  });
+}
+
+export async function fetchCampPrintableSchedule(
+  startDate: string,
+  endDate: string
+): Promise<CampPrintableScheduleData> {
+  'use cache'
+  cacheTag('camps');
+
+  try {
+    const rosterColumns = await campEnrolmentsRosterColumns();
+    const noteExpression = rosterColumns.note ? sql`ce.note` : sql`NULL::text`;
+    const parentNameExpression = rosterColumns.parent_name
+      ? sql`COALESCE(NULLIF(ce.parent_name, ''), cust.name)`
+      : sql`cust.name`;
+    const parentPhoneExpression = rosterColumns.parent_phone
+      ? sql`NULLIF(ce.parent_phone, '')`
+      : sql`NULL::text`;
+    const allergiesExpression = rosterColumns.allergies
+      ? sql`NULLIF(ce.allergies, '')`
+      : sql`NULL::text`;
+    const rows = await sql<CampPrintableScheduleRow[]>`
+      SELECT
+        ce.id::text AS camp_enrolment_id,
+        ce.student_id::text AS student_id,
+        s.name AS student_name,
+        ce.assigned_seat_number,
+        COALESCE(seats.seat_assignments, '[]'::jsonb) AS seat_assignments,
+        ce.course_id::text AS course_id,
+        c.name AS course_name,
+        cs.camp_type,
+        cs.extended_care,
+        cs.start_date,
+        cs.end_date,
+        ${noteExpression} AS note,
+        s.special_needs,
+        ${allergiesExpression} AS allergies,
+        ${parentNameExpression} AS parent_name,
+        ${parentPhoneExpression} AS parent_phone,
+        prn.notes AS parent_request_notes
+      FROM camp_sessions cs
+      JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      JOIN students s ON s.id = ce.student_id
+      LEFT JOIN customers cust ON cust.id = s.customer_id
+      LEFT JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'date', sa.date::text,
+            'seat', sa.seat
+          )
+          ORDER BY sa.date ASC
+        ) AS seat_assignments
+        FROM seat_assignments sa
+        WHERE sa.enrolment_id = ce.id
+          AND sa.date >= ${startDate}::date
+          AND sa.date <= ${endDate}::date
+      ) seats ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT ARRAY_TO_STRING(
+          ARRAY_REMOVE(ARRAY[
+            CASE WHEN NULLIF(pr.custom_notes, '') IS NOT NULL THEN 'Summer: ' || pr.custom_notes END,
+            CASE WHEN NULLIF(pr.payload->>'fall_notes', '') IS NOT NULL THEN 'Fall: ' || (pr.payload->>'fall_notes') END,
+            CASE WHEN pr.status = 'needs_manual_followup' THEN 'Needs follow-up' END
+          ], NULL),
+          E'\n'
+        ) AS notes
+        FROM parent_requests pr
+        WHERE pr.student_id = s.id
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+          AND pr.request_type IN ('summer_scheduling', 'other')
+        ORDER BY pr.submitted_at DESC
+        LIMIT 1
+      ) prn ON TRUE
+      WHERE cs.start_date <= ${endDate}::date
+        AND cs.end_date >= ${startDate}::date
+      ORDER BY
+        cs.start_date ASC,
+        CASE cs.camp_type WHEN 'FD' THEN 1 WHEN 'AM' THEN 2 ELSE 3 END,
+        c.name NULLS LAST,
+        ce.course_id NULLS LAST,
+        s.name ASC;
+    `;
+    const studentListOverrides = (await campPrintStudentListOverridesReady())
+      ? await sql<CampPrintableStudentListOverride[]>`
+          SELECT
+            student_id::text AS student_id,
+            field,
+            value
+          FROM camp_print_student_list_overrides
+          WHERE week_start = ${startDate}::date
+            AND week_end = ${endDate}::date
+          ORDER BY student_id::text ASC, field ASC;
+        `
+      : [];
+
+    return {
+      start_date: startDate,
+      end_date: endDate,
+      rows,
+      student_list_overrides: studentListOverrides,
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch printable camp schedule.');
+  }
+}
+
+function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSummary {
+  return rows.reduce<CampLmsChecklistSummary>(
+    (summary, row) => {
+      const mapped = row.expected_canvas_course_ids.length > 0;
+
+      summary.total += 1;
+      if (!mapped) summary.unmapped += 1;
+      if (!row.status) summary.unchecked += 1;
+      if (row.status === 'verified') summary.verified += 1;
+      if (row.status === 'missing_user' || row.status === 'missing_course') {
+        summary.missing_setup += 1;
+      }
+      if (row.status === 'needs_followup') summary.needs_followup += 1;
+      if (row.status === 'not_applicable') summary.not_applicable += 1;
+      if (row.canvas_issues.includes('ok')) summary.canvas_ok += 1;
+      if (row.canvas_issues.includes('not_synced')) summary.canvas_not_synced += 1;
+      if (row.canvas_issues.includes('missing_canvas_user')) summary.canvas_missing_user += 1;
+      if (row.canvas_issues.includes('missing_expected_course')) summary.canvas_missing_course += 1;
+      if (row.canvas_issues.includes('inactive_expected_course')) summary.canvas_inactive_expected += 1;
+      if (row.canvas_issues.includes('extra_active_course')) summary.canvas_extra_active += 1;
+      if (row.canvas_issues.includes('unmapped_course')) summary.canvas_unmapped += 1;
+
+      return summary;
+    },
+    { ...EMPTY_LMS_SUMMARY }
+  );
+}
+
+export async function fetchCampLmsChecklist(startDate: string, endDate: string): Promise<CampLmsChecklistData> {
+  try {
+    const canvasConfig = getCanvasPublicConfig();
+    const [schema] = await sql<{ schema_ready: boolean }[]>`
+      SELECT (
+        to_regclass('public.camp_lms_course_mappings') IS NOT NULL
+        AND to_regclass('public.camp_lms_status_checks') IS NOT NULL
+        AND to_regclass('public.camp_lms_canvas_snapshots') IS NOT NULL
+        AND to_regclass('public.camp_lms_canvas_action_audit') IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_status_checks'
+            AND column_name = 'lms_note'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_course_mappings'
+            AND column_name = 'canvas_beginner_course_id'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'camp_lms_canvas_action_audit'
+            AND column_name = 'after_state'
+        )
+      ) AS schema_ready;
+    `;
+
+    const schemaReady = Boolean(schema?.schema_ready);
+
+    if (!schemaReady) {
+      const dbRows = await sql<CampLmsChecklistDbRow[]>`
+        SELECT
+          ce.id::text AS camp_enrolment_id,
+          TRUNC(ce.student_id)::text AS student_id,
+          s.name AS student_name,
+          TRUNC(ce.student_id)::text || '@zebrarobotics.com' AS suggested_lms_login,
+          ce.course_id::text AS course_id,
+          c.name AS course_name,
+          cs.camp_type,
+          cs.extended_care,
+          cs.start_date,
+          cs.end_date,
+          NULL::text AS lms_course_name,
+          NULL::text AS lms_course_link,
+          NULL::text AS mapping_notes,
+          NULL::text AS canvas_course_family,
+          NULL::text AS canvas_beginner_course_id,
+          NULL::text AS canvas_beginner_course_name,
+          NULL::text AS canvas_intermediate_course_id,
+          NULL::text AS canvas_intermediate_course_name,
+          NULL::text AS canvas_advanced_course_id,
+          NULL::text AS canvas_advanced_course_name,
+          NULL::text AS canvas_user_id,
+          NULL::text AS canvas_user_name,
+          NULL::text AS canvas_user_login,
+          NULL::text AS canvas_user_email,
+          FALSE AS canvas_user_found,
+          '[]'::jsonb AS canvas_user_matches,
+          'not_synced'::text AS canvas_sync_status,
+          NULL::text AS canvas_sync_error,
+          NULL::timestamptz AS canvas_synced_at,
+          '[]'::jsonb AS active_canvas_enrollments,
+          '[]'::jsonb AS inactive_canvas_enrollments,
+          '[]'::jsonb AS invited_canvas_enrollments,
+          NULL::text AS status,
+          NULL::text AS status_note,
+          NULL::timestamptz AS checked_at,
+          NULL::text AS checked_by_name
+        FROM camp_sessions cs
+        JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+        JOIN students s ON s.id = ce.student_id
+        LEFT JOIN courses c ON c.id = ce.course_id
+        WHERE DATE_TRUNC('week', cs.start_date)::date = ${startDate}::date
+          AND cs.start_date <= ${endDate}::date
+          AND cs.end_date >= ${startDate}::date
+        ORDER BY ce.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
+      `;
+      const rows = buildCampLmsRows(dbRows, new Set());
+
+      return {
+        schema_ready: false,
+        canvas_configured: canvasConfig.configured,
+        canvas_base_url: canvasConfig.baseUrl,
+        canvas_last_synced_at: null,
+        rows,
+        summary: summarizeCampLmsRows(rows),
+      };
+    }
+
+    const mappingRows = await sql<Array<{
+      canvas_beginner_course_id: string | null;
+      canvas_intermediate_course_id: string | null;
+      canvas_advanced_course_id: string | null;
+    }>>`
+      SELECT
+        canvas_beginner_course_id,
+        canvas_intermediate_course_id,
+        canvas_advanced_course_id
+      FROM camp_lms_course_mappings;
+    `;
+    const allMappedCanvasCourseIds = new Set(
+      mappingRows
+        .flatMap((row) => [
+          row.canvas_beginner_course_id,
+          row.canvas_intermediate_course_id,
+          row.canvas_advanced_course_id,
+        ])
+        .filter((courseId): courseId is string => Boolean(courseId))
+    );
+
+    const dbRows = await sql<CampLmsChecklistDbRow[]>`
+      SELECT
+        ce.id::text AS camp_enrolment_id,
+        TRUNC(ce.student_id)::text AS student_id,
+        s.name AS student_name,
+        TRUNC(ce.student_id)::text || '@zebrarobotics.com' AS suggested_lms_login,
+        ce.course_id::text AS course_id,
+        c.name AS course_name,
+        cs.camp_type,
+        cs.extended_care,
+        cs.start_date,
+        cs.end_date,
+        m.lms_course_name,
+        m.lms_course_link,
+        m.notes AS mapping_notes,
+        m.canvas_course_family,
+        m.canvas_beginner_course_id,
+        m.canvas_beginner_course_name,
+        m.canvas_intermediate_course_id,
+        m.canvas_intermediate_course_name,
+        m.canvas_advanced_course_id,
+        m.canvas_advanced_course_name,
+        snap.canvas_user_id,
+        snap.canvas_user_name,
+        snap.canvas_user_login,
+        snap.canvas_user_email,
+        COALESCE(snap.canvas_user_found, FALSE) AS canvas_user_found,
+        COALESCE(snap.canvas_user_matches, '[]'::jsonb) AS canvas_user_matches,
+        COALESCE(snap.sync_status, 'not_synced') AS canvas_sync_status,
+        snap.sync_error AS canvas_sync_error,
+        snap.synced_at AS canvas_synced_at,
+        COALESCE(snap.active_enrollments, '[]'::jsonb) AS active_canvas_enrollments,
+        COALESCE(snap.inactive_enrollments, '[]'::jsonb) AS inactive_canvas_enrollments,
+        COALESCE(snap.invited_enrollments, '[]'::jsonb) AS invited_canvas_enrollments,
+        sc.status,
+        sc.lms_note AS status_note,
+        sc.checked_at,
+        u.name AS checked_by_name
+      FROM camp_sessions cs
+      JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      JOIN students s ON s.id = ce.student_id
+      LEFT JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN camp_lms_course_mappings m ON m.course_id = ce.course_id::text
+      LEFT JOIN camp_lms_canvas_snapshots snap ON snap.camp_enrolment_id = ce.id
+      LEFT JOIN camp_lms_status_checks sc ON sc.camp_enrolment_id = ce.id
+      LEFT JOIN users u ON u.id::text = sc.checked_by
+      WHERE DATE_TRUNC('week', cs.start_date)::date = ${startDate}::date
+        AND cs.start_date <= ${endDate}::date
+        AND cs.end_date >= ${startDate}::date
+      ORDER BY ce.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
+    `;
+    const rows = buildCampLmsRows(dbRows, allMappedCanvasCourseIds);
+    const canvasLastSyncedAt = rows.reduce<Date | null>((latest, row) => {
+      if (!row.canvas_synced_at) return latest;
+      const syncedAt = new Date(row.canvas_synced_at);
+      if (!latest || syncedAt > latest) return syncedAt;
+      return latest;
+    }, null);
+
+    return {
+      schema_ready: true,
+      canvas_configured: canvasConfig.configured,
+      canvas_base_url: canvasConfig.baseUrl,
+      canvas_last_synced_at: canvasLastSyncedAt,
+      rows,
+      summary: summarizeCampLmsRows(rows),
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp LMS checklist.');
+  }
+}
+
+type CampPrepDbRow = {
+  camp_enrolment_id: string;
+  student_id: string;
+  student_name: string;
+  course_id: string | null;
+  course_name: string | null;
+  camp_type: 'FD' | 'PM' | 'AM';
+  extended_care: boolean;
+  start_date: Date;
+  end_date: Date;
+  scratch_username: string | null;
+  scratch_password: string | null;
+  roblox_username: string | null;
+  roblox_password: string | null;
+  laptop_number: string | null;
+};
+
+function courseText(courseId: string | null, courseName: string | null) {
+  return `${courseId ?? ''} ${courseName ?? ''}`.toLowerCase();
+}
+
+function deriveCampPrepNeeds(courseId: string | null, courseName: string | null) {
+  const text = courseText(courseId, courseName);
+  const needsScratch = /\bscratch\b/.test(text);
+  const needsRoblox = /\broblox\b/.test(text);
+  const needsUnity = /\bunity\b|c#|c\s*sharp|\bcsharp\b/.test(text);
+
+  return {
+    needs_scratch: needsScratch,
+    needs_roblox: needsRoblox,
+    needs_unity: needsUnity,
+    needs_laptop: needsScratch || needsRoblox || needsUnity,
+  };
+}
+
+function buildCampPrepRow(row: CampPrepDbRow): CampAccountPrepRow {
+  const needs = deriveCampPrepNeeds(row.course_id, row.course_name);
+  const missingResources: CampPrepResourceKind[] = [];
+
+  if (needs.needs_scratch && !row.scratch_username) {
+    missingResources.push('scratch');
+  }
+  if (needs.needs_roblox && !row.roblox_username) {
+    missingResources.push('roblox');
+  }
+  if (needs.needs_laptop && !row.laptop_number) {
+    missingResources.push('laptop');
+  }
+
+  const neededCount = [
+    needs.needs_scratch,
+    needs.needs_roblox,
+    needs.needs_laptop,
+  ].filter(Boolean).length;
+
+  let status: CampPrepStatus = 'not_needed';
+  if (neededCount > 0 && missingResources.length === 0) {
+    status = 'ready';
+  } else if (neededCount > 0 && missingResources.length === neededCount) {
+    status = 'missing';
+  } else if (neededCount > 0) {
+    status = 'partial';
+  }
+
+  return {
+    ...row,
+    ...needs,
+    missing_resources: missingResources,
+    status,
+  };
+}
+
+function summarizeCampPrepRows(rows: CampAccountPrepRow[]): CampAccountPrepSummary {
+  const missingScratchStudents = new Set<string>();
+  const missingRobloxStudents = new Set<string>();
+  const missingLaptopStudents = new Set<string>();
+  const unityStudents = new Set<string>();
+
+  const summary = rows.reduce<CampAccountPrepSummary>(
+    (acc, row) => {
+      acc.total += 1;
+      if (row.needs_scratch || row.needs_roblox || row.needs_laptop) {
+        acc.setup_needed += 1;
+      }
+      if (row.status === 'ready') acc.ready += 1;
+      if (row.status === 'partial') acc.partial += 1;
+      if (row.status === 'missing') acc.missing += 1;
+      if (row.status === 'not_needed') acc.not_needed += 1;
+      if (row.needs_unity) unityStudents.add(row.student_id);
+
+      row.missing_resources.forEach((resource) => {
+        if (resource === 'scratch') missingScratchStudents.add(row.student_id);
+        if (resource === 'roblox') missingRobloxStudents.add(row.student_id);
+        if (resource === 'laptop') missingLaptopStudents.add(row.student_id);
+      });
+
+      return acc;
+    },
+    {
+      total: 0,
+      setup_needed: 0,
+      ready: 0,
+      partial: 0,
+      missing: 0,
+      not_needed: 0,
+      needs_unity: 0,
+      missing_scratch: 0,
+      missing_roblox: 0,
+      missing_laptop: 0,
+    }
+  );
+
+  return {
+    ...summary,
+    needs_unity: unityStudents.size,
+    missing_scratch: missingScratchStudents.size,
+    missing_roblox: missingRobloxStudents.size,
+    missing_laptop: missingLaptopStudents.size,
+  };
+}
+
+export async function fetchCampAccountPrepChecklist(
+  startDate: string,
+  endDate: string,
+  targetDate?: string
+): Promise<CampAccountPrepChecklistData> {
+  'use cache'
+  cacheTag('camps');
+
+  try {
+    const campDateFilter = targetDate
+      ? sql`cs.start_date <= ${targetDate}::date AND cs.end_date >= ${targetDate}::date`
+      : sql`DATE_TRUNC('week', cs.start_date)::date = ${startDate}::date
+          AND cs.start_date <= ${endDate}::date
+          AND cs.end_date >= ${startDate}::date`;
+
+    const campRows = await sql<CampPrepDbRow[]>`
+      SELECT
+        ce.id::text AS camp_enrolment_id,
+        ce.student_id::text AS student_id,
+        s.name AS student_name,
+        ce.course_id::text AS course_id,
+        c.name AS course_name,
+        cs.camp_type,
+        cs.extended_care,
+        cs.start_date,
+        cs.end_date,
+        scr.username AS scratch_username,
+        scr.password AS scratch_password,
+        rob.username AS roblox_username,
+        rob.password AS roblox_password,
+        lap.laptop_number
+      FROM camp_sessions cs
+      JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      JOIN students s ON s.id = ce.student_id
+      LEFT JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN LATERAL (
+        SELECT username, password
+        FROM scratch_accounts
+        WHERE student_id = s.id
+        ORDER BY username
+        LIMIT 1
+      ) scr ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT username, password
+        FROM roblox_accounts
+        WHERE student_id = s.id
+        ORDER BY username
+        LIMIT 1
+      ) rob ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT laptop_number
+        FROM laptop_assignments
+        WHERE student_id = s.id
+        ORDER BY laptop_number
+        LIMIT 1
+      ) lap ON TRUE
+      WHERE ${campDateFilter}
+      ORDER BY c.name NULLS LAST, s.name ASC, cs.camp_type ASC;
+    `;
+    const scratchAccounts = await sql<{ id: string; label: string; password: string | null }[]>`
+      SELECT
+        username AS id,
+        username AS label,
+        password
+      FROM scratch_accounts
+      WHERE student_id IS NULL
+      ORDER BY username;
+    `;
+    const robloxAccounts = await sql<{ id: string; label: string; password: string | null }[]>`
+      SELECT
+        username AS id,
+        username AS label,
+        password
+      FROM roblox_accounts
+      WHERE student_id IS NULL
+      ORDER BY username;
+    `;
+    const laptops = await sql<{ id: string; label: string; password: string | null }[]>`
+      SELECT
+        laptop_number AS id,
+        'Laptop #' || laptop_number AS label,
+        NULL::text AS password
+      FROM laptop_assignments
+      WHERE student_id IS NULL
+      ORDER BY laptop_number;
+    `;
+
+    const rows = campRows.map(buildCampPrepRow);
+
+    return {
+      rows,
+      inventory: {
+        scratch_accounts: scratchAccounts,
+        roblox_accounts: robloxAccounts,
+        laptops,
+      },
+      summary: summarizeCampPrepRows(rows),
+    };
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp account prep checklist.');
+  }
 }
 
 export async function fetchSeatAssignments(date: Date | string) {

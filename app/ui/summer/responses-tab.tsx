@@ -46,6 +46,11 @@ function formatStartDate(date: string | null): string | null {
   return SHORT_DATE_FORMATTER.format(new Date(`${date}T00:00:00`));
 }
 
+function formatStartSuffix(date: string | null): string {
+  const startDate = formatStartDate(date);
+  return startDate ? ` (start ${startDate})` : '';
+}
+
 function formatCurrentSession(weekday: string | null, startTime: string | null): string | null {
   if (!weekday) return null;
   return `${weekday} ${formatTime(startTime)}`;
@@ -82,7 +87,8 @@ function formatFallStatus(row: SummerResponseRow): string {
   }
 
   const currentSession = formatCurrentSessions(row);
-  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
+  const startSuffix = formatStartSuffix(row.fall_start_date);
+  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}${startSuffix}` : `${FALL_STATUS_LABEL.same}${startSuffix}`;
 }
 
 const SUMMER_STATUS_STYLE: Record<string, string> = {
@@ -127,6 +133,15 @@ const SUBMISSION_SOURCE_LABEL: Record<string, string> = {
   parent: 'Parent',
   staff:  'Internal',
 };
+
+const PERCENT_FORMATTER = new Intl.NumberFormat('en-CA', {
+  style: 'percent',
+  maximumFractionDigits: 0,
+});
+
+function formatPercent(part: number, total: number): string {
+  return total > 0 ? PERCENT_FORMATTER.format(part / total) : '0%';
+}
 
 function SummerBadge({ status }: { status: string }) {
   return (
@@ -178,29 +193,66 @@ function UpdatedBadge({
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color?: string }) {
+function StatCard({
+  label,
+  value,
+  color,
+  detail,
+}: {
+  label: string;
+  value: number;
+  color?: string;
+  detail?: string;
+}) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
       <div className={`text-2xl font-bold ${color ?? 'text-slate-800'}`}>{value}</div>
       <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+      {detail && <div className="mt-1 text-[11px] leading-4 text-slate-400">{detail}</div>}
     </div>
   );
 }
 
+function familyKey(row: SummerResponseRow): string {
+  return row.customer_id || `${row.parent_email}:${row.parent_name}`;
+}
+
+function countFamilies(rows: SummerResponseRow[], predicate: (row: SummerResponseRow) => boolean): number {
+  return new Set(rows.filter(predicate).map(familyKey)).size;
+}
+
 function deriveStats(baseStats: SummerStats, rows: SummerResponseRow[]): SummerStats {
-  const respondedFamilies = new Set(rows.map(row => `${row.parent_email}:${row.parent_name}`));
+  const respondedFamilies = new Set(rows.map(familyKey));
   const parentSubmittedFamilies = new Set(rows
     .filter(row => row.submitted_by === 'parent')
-    .map(row => `${row.parent_email}:${row.parent_name}`));
+    .map(familyKey));
   const staffSubmittedFamilies = new Set(rows
     .filter(row => row.submitted_by === 'staff')
-    .map(row => `${row.parent_email}:${row.parent_name}`));
+    .map(familyKey));
   return {
     ...baseStats,
-    responded: respondedFamilies.size,
-    enrolling: rows.filter(row => row.summer_status === 'enrolling').length,
-    pausing: rows.filter(row => row.summer_status === 'pausing').length,
-    no_change: rows.filter(row => row.summer_status === 'no_change').length,
+    responded_families: respondedFamilies.size,
+    responded_students: rows.length,
+    waitlisted_students: rows.filter(row => (
+      row.waitlist_session_labels.length > 0
+      || row.fall_waitlist_session_labels.length > 0
+    )).length,
+    summer_attending_families: countFamilies(rows, row => row.summer_status === 'enrolling'),
+    summer_attending_students: rows.filter(row => row.summer_status === 'enrolling').length,
+    summer_pausing_families: countFamilies(rows, row => row.summer_status === 'pausing'),
+    summer_pausing_students: rows.filter(row => row.summer_status === 'pausing').length,
+    summer_custom_families: countFamilies(rows, row => row.summer_status === 'other'),
+    summer_custom_students: rows.filter(row => row.summer_status === 'other').length,
+    summer_no_change_families: countFamilies(rows, row => row.summer_status === 'no_change'),
+    summer_no_change_students: rows.filter(row => row.summer_status === 'no_change').length,
+    fall_keep_current_families: countFamilies(rows, row => row.fall_status === 'same'),
+    fall_keep_current_students: rows.filter(row => row.fall_status === 'same').length,
+    fall_change_families: countFamilies(rows, row => row.fall_status === 'change'),
+    fall_change_students: rows.filter(row => row.fall_status === 'change').length,
+    fall_unsure_or_pause_families: countFamilies(rows, row => row.fall_status === 'unsure' || row.fall_status === 'pause'),
+    fall_unsure_or_pause_students: rows.filter(row => row.fall_status === 'unsure' || row.fall_status === 'pause').length,
+    fall_not_returning_families: countFamilies(rows, row => row.fall_status === 'not_returning'),
+    fall_not_returning_students: rows.filter(row => row.fall_status === 'not_returning').length,
     pending: rows.filter(row => row.status === 'pending').length,
     needs_followup: rows.filter(row => row.status === 'needs_manual_followup').length,
     parent_submitted: parentSubmittedFamilies.size,
@@ -343,17 +395,17 @@ function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onD
     return (
       <button
         onClick={() => setConfirm(true)}
-        title="Delete this test response permanently"
+        title="Hide this test response from active summer views"
         className="text-xs px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition"
       >
-        Delete Response
+        Remove Response
       </button>
     );
   }
   return (
     <span className="flex flex-col gap-1">
       <span className="text-[10px] text-red-700 leading-tight">
-        Delete is designed for test responses only. This permanently removes the response.
+        Remove is designed for test responses only. This hides the response without deleting history.
       </span>
       <span className="flex items-center gap-2">
         <button
@@ -364,7 +416,7 @@ function DeleteResponseButton({ requestId, onDeleted }: { requestId: string; onD
           })}
           className="text-xs text-red-600 font-medium disabled:opacity-50"
         >
-          {isPending ? '...' : 'Confirm Delete'}
+          {isPending ? '...' : 'Confirm Remove'}
         </button>
         <button onClick={() => setConfirm(false)} className="text-xs text-slate-400">Cancel</button>
       </span>
@@ -555,7 +607,8 @@ function formatHistoryFallChoice(
 ): string {
   if (item.fall_status !== 'same') return formatHistoryFallStatus(item);
   const currentSession = formatCurrentSession(row.current_weekday, row.current_start_time);
-  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}` : FALL_STATUS_LABEL.same;
+  const startSuffix = formatStartSuffix(item.fall_start_date);
+  return currentSession ? `${FALL_STATUS_LABEL.same} - ${currentSession}${startSuffix}` : `${FALL_STATUS_LABEL.same}${startSuffix}`;
 }
 
 function AddedToPortalCell({
@@ -1033,34 +1086,106 @@ export default function ResponsesTab({
     return true;
   }), [currentRows, fallFilter, normalizedSearch, sourceFilter, statusFilter, submissionFilter, summerFilter, workflowFilter]);
 
-  const notResponded = currentStats.total_families - currentStats.responded;
+  const notRespondedFamilies = Math.max(currentStats.total_families - currentStats.responded_families, 0);
+  const notRespondedStudents = Math.max(currentStats.total_students - currentStats.responded_students, 0);
+  const familyResponsePercent = formatPercent(currentStats.responded_families, currentStats.total_families);
+  const studentResponsePercent = formatPercent(currentStats.responded_students, currentStats.total_students);
+  const reviewQueue = currentStats.pending + currentStats.needs_followup;
   const pendingEnrollingCount = useMemo(() => currentRows.filter(
     r => r.summer_status === 'enrolling' && r.status === 'pending',
   ).length, [currentRows]);
 
   return (
     <div className="space-y-4">
-      {/* Stats row 1 */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard label="Total Families"  value={currentStats.total_families} />
-        <StatCard label="Responded"       value={currentStats.responded}   color="text-emerald-700" />
-        <StatCard label="Not Responded"   value={notResponded}      color={notResponded > 0 ? 'text-amber-600' : 'text-slate-800'} />
-        <StatCard label="Exported"        value={currentStats.exported} />
+      {/* Response totals */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Families Responded"
+          value={currentStats.responded_families}
+          color="text-emerald-700"
+          detail={`${familyResponsePercent} of ${currentStats.total_families} total - ${currentStats.parent_submitted} parent / ${currentStats.staff_submitted} internal - ${notRespondedFamilies} not responded`}
+        />
+        <StatCard
+          label="Students Responded"
+          value={currentStats.responded_students}
+          color="text-emerald-700"
+          detail={`${studentResponsePercent} of ${currentStats.total_students} expected - ${notRespondedStudents} not responded`}
+        />
+        <StatCard
+          label="Review Queue"
+          value={reviewQueue}
+          color={currentStats.needs_followup > 0 ? 'text-red-600' : reviewQueue > 0 ? 'text-amber-600' : 'text-slate-800'}
+          detail={`${currentStats.pending} pending - ${currentStats.needs_followup} followup`}
+        />
+        <StatCard
+          label="Email Exported"
+          value={currentStats.exported}
+          detail="families whose link was exported"
+        />
       </div>
 
-      {/* Stats row 2 */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard label="Enrolling"       value={currentStats.enrolling}      color="text-emerald-700" />
-        <StatCard label="Pausing"         value={currentStats.pausing}        color="text-orange-600" />
-        <StatCard label="No Change"       value={currentStats.no_change}      color="text-sky-700" />
-        <StatCard label="Pending Review"  value={currentStats.pending}        color={currentStats.pending > 0 ? 'text-amber-600' : 'text-slate-800'} />
+      {/* Summer choices */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Summer Attending"
+          value={currentStats.summer_attending_students}
+          color="text-emerald-700"
+          detail={`${currentStats.summer_attending_families} families selected attending`}
+        />
+        <StatCard
+          label="Summer Pausing"
+          value={currentStats.summer_pausing_students}
+          color="text-orange-600"
+          detail={`${currentStats.summer_pausing_families} families selected pausing`}
+        />
+        <StatCard
+          label="Summer Custom"
+          value={currentStats.summer_custom_students}
+          color="text-purple-700"
+          detail={`${currentStats.summer_custom_families} families selected custom`}
+        />
+        <StatCard
+          label="Waitlisted Students"
+          value={currentStats.waitlisted_students}
+          color={currentStats.waitlisted_students > 0 ? 'text-amber-700' : 'text-slate-800'}
+          detail="summer or fall waitlist requests"
+        />
+        {currentStats.summer_no_change_students > 0 && (
+          <StatCard
+            label="Summer No Change"
+            value={currentStats.summer_no_change_students}
+            color="text-sky-700"
+            detail={`${currentStats.summer_no_change_families} families selected legacy no change`}
+          />
+        )}
       </div>
 
-      {/* Stats row 3 */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <StatCard label="Parent Submitted" value={currentStats.parent_submitted} color="text-emerald-700" />
-        <StatCard label="Internal"         value={currentStats.staff_submitted}  color={currentStats.staff_submitted > 0 ? 'text-amber-700' : 'text-slate-800'} />
-        <StatCard label="Needs Followup"  value={currentStats.needs_followup} color={currentStats.needs_followup > 0 ? 'text-red-600' : 'text-slate-800'} />
+      {/* Fall choices */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Fall Keep Current"
+          value={currentStats.fall_keep_current_students}
+          color="text-sky-700"
+          detail={`${currentStats.fall_keep_current_families} families selected keep current`}
+        />
+        <StatCard
+          label="Fall Change"
+          value={currentStats.fall_change_students}
+          color="text-indigo-700"
+          detail={`${currentStats.fall_change_families} families requested a change`}
+        />
+        <StatCard
+          label="Fall Unsure"
+          value={currentStats.fall_unsure_or_pause_students}
+          color="text-amber-700"
+          detail={`${currentStats.fall_unsure_or_pause_families} families selected unsure/not sure`}
+        />
+        <StatCard
+          label="Fall Not Returning"
+          value={currentStats.fall_not_returning_students}
+          color="text-red-600"
+          detail={`${currentStats.fall_not_returning_families} families selected not returning`}
+        />
       </div>
 
       {/* Toolbar */}

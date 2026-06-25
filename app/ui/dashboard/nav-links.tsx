@@ -30,7 +30,7 @@ export default function NavLinks({ userType }: { userType?: string }) {
           return null;
         }
 
-        const active = pathname === link.href;
+        const active = pathname === link.href || pathname.startsWith(link.href + '/');
         return (
           <Link
             key={link.name}

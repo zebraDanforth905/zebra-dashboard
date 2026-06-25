@@ -1,8 +1,10 @@
-import { fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
+import { fetchCampAccountPrepChecklist, fetchCampLmsChecklist, fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeftIcon, UserGroupIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, PrinterIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import CampMonthlyReport from '@/app/ui/camp/camp-monthly-report';
+import CampLmsChecklist from '@/app/ui/camp/camp-lms-checklist';
+import CampAccountPrepChecklist from '@/app/ui/camp/camp-account-prep-checklist';
 import { connection } from 'next/server';
 
 type DayEnrolments = {
@@ -12,11 +14,17 @@ type DayEnrolments = {
     student_id: string;
     student_name: string;
     dob: Date | null;
-    course_id: string;
+    course_id: string | null;
+    course_name: string | null;
     camp_type: 'FD' | 'PM' | 'AM';
     assigned_seat_number: number | null;
+    note: string | null;
     special_needs: string | null;
+    allergies: string | null;
     extended_care: boolean;
+    parent_name: string | null;
+    parent_phone: string | null;
+    parent_request_notes: string | null;
   }>;
 };
 
@@ -79,10 +87,6 @@ const formatDate = (date: Date) => {
   return new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 };
 
-const getUniqueCampTypes = (enrolments: DayEnrolments['enrolments']) => {
-  return [...new Set(enrolments.map(e => e.camp_type))];
-};
-
 const countByType = (enrolments: DayEnrolments['enrolments'], type: 'FD' | 'AM' | 'PM') => {
   return enrolments.filter(e => e.camp_type === type).length;
 };
@@ -107,7 +111,11 @@ export default async function CampSessionPage({
   const weekEnd = new Date(parsedWeekEnd);
   weekEnd.setHours(23, 59, 59, 999);
 
-  const sessions = await fetchUpcomingCampSessionsWithEnrolments();
+  const [sessions, lmsChecklist, accountPrepChecklist] = await Promise.all([
+    fetchUpcomingCampSessionsWithEnrolments(),
+    fetchCampLmsChecklist(startDate, endDate),
+    fetchCampAccountPrepChecklist(startDate, endDate),
+  ]);
 
   const report = {
     id: startDate,
@@ -149,7 +157,8 @@ export default async function CampSessionPage({
       if (e.camp_type === 'FD') report.byType.FD += 1;
       else report.byType.half += 1;
 
-      report.byCourse[e.course_id] = (report.byCourse[e.course_id] || 0) + 1;
+      const courseKey = e.course_id ?? 'No course';
+      report.byCourse[courseKey] = (report.byCourse[courseKey] || 0) + 1;
       report.byLength[length] = (report.byLength[length] || 0) + 1;
       report.uniqueStudents.add(e.student_id);
     });
@@ -200,13 +209,22 @@ export default async function CampSessionPage({
         Back to Camp Sessions
       </Link>
 
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">
-          {report.label}
-        </h1>
-        <p className="text-sm text-slate-600 mt-1">
-          Enrollment report and camp day cards for this week.
-        </p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">
+            {report.label}
+          </h1>
+          <p className="text-sm text-slate-600 mt-1">
+            Enrollment report and camp day cards for this week.
+          </p>
+        </div>
+        <Link
+          href={`/dashboard/camp/${startDate}/${endDate}/printable`}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 print:hidden"
+        >
+          <PrinterIcon className="h-4 w-4" />
+          Print Camper PDF
+        </Link>
       </div>
 
       <CampMonthlyReport reports={weekReport} heading="Weekly Enrollment Summary" />
@@ -282,6 +300,17 @@ export default async function CampSessionPage({
           </div>
         )}
       </div>
+
+      <CampLmsChecklist
+        startDate={startDate}
+        endDate={endDate}
+        checklist={lmsChecklist}
+      />
+
+      <CampAccountPrepChecklist
+        scopeLabel={report.label}
+        checklist={accountPrepChecklist}
+      />
     </div>
   );
 }
