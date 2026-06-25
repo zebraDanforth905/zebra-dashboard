@@ -422,17 +422,12 @@ function SeatSpot({
 export default function CampSessionDetail({
   session,
   seatAssignments,
-  seatAssignmentsDate
+  seatAssignmentsDateKey
 }: {
   session: CampSessionWithEnrolments;
   seatAssignments?: Map<number, string[]>;
-  seatAssignmentsDate?: Date;
+  seatAssignmentsDateKey?: string;
 }) {
-  const seatAssignmentsDateValue = seatAssignmentsDate; // may be undefined
-
-  const seatAssignmentsDateKey = seatAssignmentsDateValue
-    ? `${seatAssignmentsDateValue.getFullYear()}-${String(seatAssignmentsDateValue.getMonth() + 1).padStart(2, '0')}-${String(seatAssignmentsDateValue.getDate()).padStart(2, '0')}`
-    : undefined;
   // Room configurations
   const ROOM_1_CONFIG = {
     name: 'Back Room',

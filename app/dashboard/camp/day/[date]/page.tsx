@@ -221,6 +221,7 @@ export default async function CampDayPage({
         dayDate={dayDate}
         dayEnrolments={dayEnrolments}
         seatAssignments={seatMap}
+        seatAssignmentsDateKey={date}
       />
 
     </div>

@@ -3132,7 +3132,15 @@ export async function fetchMostRecentSeatAssignmentsInWeek(
       seat: number;
       assigned_date: Date;
     }>>`
-      WITH ranked AS (
+      WITH calendar_days AS (
+        SELECT day::date AS day
+        FROM generate_series(
+          ${weekStartKey}::date,
+          (${targetDateKey}::date - INTERVAL '1 day')::date,
+          INTERVAL '1 day'
+        ) AS day
+      ),
+      ranked AS (
         SELECT
           sa.enrolment_id,
           sa.seat,
@@ -3141,10 +3149,9 @@ export async function fetchMostRecentSeatAssignmentsInWeek(
             PARTITION BY sa.enrolment_id
             ORDER BY sa.date DESC
           ) AS rn
-        FROM seat_assignments sa
+        FROM calendar_days cd
+        JOIN seat_assignments sa ON sa.date = cd.day
         WHERE sa.enrolment_id = ANY(${enrolmentIds}::uuid[])
-          AND sa.date >= ${weekStartKey}::date
-          AND sa.date < ${targetDateKey}::date
       )
       SELECT enrolment_id, seat, assigned_date
       FROM ranked
