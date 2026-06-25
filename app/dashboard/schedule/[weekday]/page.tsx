@@ -48,10 +48,8 @@ export default async function Page(props: {
       ? searchParams.school
       : "Frankland";
 
-  const [sessions, pickups] = await Promise.all([
-    fetchSessionsForDay(day, targetDate, { isSummer }),
-    fetchPickupsForDay(day, activeSchool, targetDate),
-  ]);
+  const sessions = await fetchSessionsForDay(day, targetDate, { isSummer });
+  const pickups = isSummer ? [] : await fetchPickupsForDay(day, activeSchool, targetDate);
 
   return (
     <div className="space-y-3 md:space-y-4">
@@ -59,47 +57,50 @@ export default async function Page(props: {
         <SessionNav day={day} sessions={sessions} />
       </div>
 
-      {/* Header with Add Pickup button */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <h1 className="text-base md:text-lg font-semibold text-slate-800">
-          Pickups for {day}
-        </h1>
-        <AddPickupButton defaultWeekday={params?.weekday} />
-      </div>
-
-      {/* School nav and stats */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-3 md:px-4 py-2 md:py-3 border-b border-slate-200 bg-slate-50 rounded-lg">
-          <div className="text-xs text-slate-500">
-            Total: <span className="font-semibold">{pickups.length}</span>
+      {!isSummer && (
+        <>
+          {/* Header with Add Pickup button */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <h1 className="text-base md:text-lg font-semibold text-slate-800">
+              Pickups for {day}
+            </h1>
+            <AddPickupButton defaultWeekday={params?.weekday} />
           </div>
-        <div className="inline-flex rounded-full bg-slate-100 p-1">
-          
-          {SCHOOLS.map((s) => {
-            const schoolParams = new URLSearchParams();
-            schoolParams.set("school", s);
-            schoolParams.set("weekStart", weekStart);
-            const href = `?${schoolParams.toString()}`;
-            const isActive = s === activeSchool;
-            return (
-              <Link
-                key={s}
-                href={href}
-                className={clsx(
-                  "px-3 py-1 text-xs font-medium rounded-full transition",
-                  isActive
-                    ? "bg-white text-sky-700 shadow-sm border border-sky-200"
-                    : "text-slate-600 hover:text-sky-700"
-                )}
-              >
-                {s}
-              </Link>
-            );
-          })}
-        </div>
-      </div>
-      
 
-        <PickupTableWrapper day={day} pickups={pickups} currentUserName={currentUserName} />
+          {/* School nav and stats */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-3 md:px-4 py-2 md:py-3 border-b border-slate-200 bg-slate-50 rounded-lg">
+              <div className="text-xs text-slate-500">
+                Total: <span className="font-semibold">{pickups.length}</span>
+              </div>
+            <div className="inline-flex rounded-full bg-slate-100 p-1">
+              
+              {SCHOOLS.map((s) => {
+                const schoolParams = new URLSearchParams();
+                schoolParams.set("school", s);
+                schoolParams.set("weekStart", weekStart);
+                const href = `?${schoolParams.toString()}`;
+                const isActive = s === activeSchool;
+                return (
+                  <Link
+                    key={s}
+                    href={href}
+                    className={clsx(
+                      "px-3 py-1 text-xs font-medium rounded-full transition",
+                      isActive
+                        ? "bg-white text-sky-700 shadow-sm border border-sky-200"
+                        : "text-slate-600 hover:text-sky-700"
+                    )}
+                  >
+                    {s}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+
+          <PickupTableWrapper day={day} pickups={pickups} currentUserName={currentUserName} />
+        </>
+      )}
     </div>
   );
 }
