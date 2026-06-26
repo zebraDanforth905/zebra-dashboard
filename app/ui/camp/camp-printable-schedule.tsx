@@ -3,8 +3,10 @@ import CampPrintableSeatingChartCard from '@/app/ui/camp/camp-printable-seating-
 import CampPrintableStudentList, {
   type CampPrintableStudentListRow,
 } from '@/app/ui/camp/camp-printable-student-list';
+import CampPrintableActivitySchedule from '@/app/ui/camp/camp-printable-activity-schedule';
 import { CakeIcon } from '@heroicons/react/24/outline';
 import type {
+  CampActivityScheduleCell,
   CampPrintableScheduleData,
   CampPrintableScheduleRow,
   CampPrintableStudentListField,
@@ -679,8 +681,10 @@ function MedicalAlertSheet({
 
 export default function CampPrintableSchedule({
   schedule,
+  activityCells,
 }: {
   schedule: CampPrintableScheduleData;
+  activityCells: CampActivityScheduleCell[];
 }) {
   const days = buildWeekdays(schedule);
   const activeRows = schedule.rows.filter((row) =>
@@ -719,6 +723,7 @@ export default function CampPrintableSchedule({
                 weekEnd={schedule.end_date}
                 weekLabel={weekLabel}
               />
+              <CampPrintableActivitySchedule weekLabel={weekLabel} cells={activityCells} />
               <PrintableWeeklySeatingCharts rows={activeRows} days={days} />
               <SignInSpecialInstructions students={students} schedule={schedule} />
               <MedicalAlertSheet students={students} schedule={schedule} />
