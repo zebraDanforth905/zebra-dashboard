@@ -9,7 +9,7 @@ import {z} from 'zod';
 import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized, upsertSummerEnrolmentWeekFromNormalized } from './insert_from_portal';
-import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampLmsCanvasCourseSearchResult, type CampPrintableStudentListField } from './definitions';
+import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampLmsCanvasCourseSearchResult, type CampPrintableStudentListField, type CampPrintLogEntry } from './definitions';
 import {
   CanvasCourse,
   CanvasConfigError,
@@ -3833,6 +3833,53 @@ export async function createCampPrintLogEntry(input: { weekStart: string }) {
   } catch (error) {
     console.error('Error creating camp print log entry:', error);
     return { ok: false, error: 'Failed to add print log row' };
+  }
+}
+
+// Seed a week's print log with one empty row per enrolled student. Inserts only
+// when the week has no rows yet, so re-opening the tab (or a deliberately
+// emptied log) never re-adds students. The NOT EXISTS guard lives inside the
+// single INSERT statement so concurrent calls can't double-seed.
+export async function seedCampPrintLogEntries(input: {
+  weekStart: string;
+  students: string[];
+}) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const weekStart = z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid week start')
+      .safeParse(input.weekStart);
+    if (!weekStart.success) {
+      return { ok: false, error: 'Invalid week start' };
+    }
+
+    const students = (input.students ?? [])
+      .map((s) => (typeof s === 'string' ? s.trim() : ''))
+      .filter((s) => s.length > 0);
+    if (students.length === 0) {
+      return { ok: true, rows: [] as CampPrintLogEntry[] };
+    }
+
+    const rows = await sql<Array<CampPrintLogEntry>>`
+      INSERT INTO camp_print_log (week_start, position, student)
+      SELECT ${weekStart.data}::date, ord - 1, name
+      FROM UNNEST(${students}::text[]) WITH ORDINALITY AS s(name, ord)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM camp_print_log WHERE week_start = ${weekStart.data}::date
+      )
+      RETURNING id, student, print_description, status, notes;
+    `;
+
+    revalidateTag('camps', 'max');
+    return { ok: true, rows };
+  } catch (error) {
+    console.error('Error seeding camp print log entries:', error);
+    return { ok: false, error: 'Failed to seed print log' };
   }
 }
 
