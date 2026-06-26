@@ -22,6 +22,8 @@ function makePassword(fullName: string): string {
   return pwd;
 }
 
+const hiddenOtherFieldKeys = new Set(['Account #']);
+
 export default function SlipForm (props: { slip_info?: SlipInfo }) {
   const labelClass = "inline-block w-[200px] font-bold text-[20pt] text-black align-top leading-snug tracking-tight flex-shrink-0 font-[Arial]";
   const valueClass = "text-[20pt] text-black font-[Arial] leading-snug tracking-tight flex-1 min-w-0";
@@ -33,7 +35,9 @@ export default function SlipForm (props: { slip_info?: SlipInfo }) {
 
   // Initialize other fields from existing data or empty array
   const initialOtherFields = slip_info?.other_fields 
-    ? Object.entries(slip_info.other_fields).map(([key, value]) => ({ key, value }))
+    ? Object.entries(slip_info.other_fields)
+        .filter(([key]) => !hiddenOtherFieldKeys.has(key))
+        .map(([key, value]) => ({ key, value }))
     : [];
   
   const [otherFields, setOtherFields] = useState<Array<{ key: string; value: string }>>(initialOtherFields);
@@ -218,5 +222,4 @@ export default function SlipForm (props: { slip_info?: SlipInfo }) {
     </form>
   );
 };
-
 
