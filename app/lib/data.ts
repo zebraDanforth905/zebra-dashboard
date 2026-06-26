@@ -2,8 +2,6 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { isSummerScheduleWeek } from './schedule-week';
-import { isDateInTerm } from './tdsb-calendar';
 import {
   InvoiceTableData,
   CustomerTableData,
@@ -844,8 +842,6 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
     }
 
     const target = Y(targetDate);
-    const isSummer = isDateInTerm(target, 'summer');
-    console.log(target)
 
     // Join absences ON the specific date and project a boolean
     const students = await sql<ScheduleRow[]>`
@@ -885,9 +881,12 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
        AND abs.date = ${target}::date
       LEFT JOIN latest_note ln ON ln.student_id = s.id
       WHERE e.session_id = ${sessionId}
-        AND sess.is_summer = ${isSummer}
-        AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-        AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
+      -- TODO(schedule): both the enrolment start_date/end_date filter AND the sess.is_summer
+      -- term split were intentionally removed. Schedule now reflects exactly what the portal
+      -- sync wrote to enrolments (portal = source of truth; summer pausing = remove class in
+      -- portal, then re-pull). No summer-batch/week date filtering, no term split. Side effects:
+      -- future-dated enrolments appear, and summer/regular weeks no longer differ by roster.
+      -- See app/lib/insert_from_portal.ts. Revisit once summer pausing is fully portal-driven.
       ORDER BY s.name;
     `;
 
@@ -1021,7 +1020,6 @@ export async function fetchSessionsForDay(
           targetDate = nextOccurrenceOf(day);
         }
         const target = Y(targetDate);
-        const isSummer = options?.isSummer ?? isSummerScheduleWeek(targetDate);
 
         const sessions = await sql<Session[]>
         `
@@ -1039,8 +1037,8 @@ export async function fetchSessionsForDay(
             SELECT COUNT(*) AS student_count
             FROM enrolments e
             WHERE e.session_id = s.id
-              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
+            -- TODO(schedule): start_date/end_date filter removed (see fetchSessionStudents).
+            -- Counts every active enrolment like regular; future-dated enrolments included for now.
           ) ec ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS makeup_count
@@ -1060,11 +1058,9 @@ export async function fetchSessionsForDay(
             JOIN enrolments e ON e.id = a.enrolment_id
             WHERE e.session_id = s.id
               AND a.date = ${target}
-              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
+            -- TODO(schedule): start_date/end_date filter removed (see fetchSessionStudents).
           ) ac ON true
           WHERE s.weekday = ${day}
-            AND s.is_summer = ${isSummer}
             AND (
               COALESCE(ec.student_count, 0) > 0
               OR COALESCE(mc.makeup_count, 0) > 0
