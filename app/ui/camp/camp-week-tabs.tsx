@@ -27,7 +27,7 @@ export default function CampWeekTabs({
     { key: 'lms', label: 'LMS Checklist' },
     ...(schedule != null ? [{ key: 'schedule' as const, label: 'Activity Schedule' }] : []),
     ...(staffSchedule != null ? [{ key: 'staff' as const, label: 'Staff Schedule' }] : []),
-    ...(printLog != null ? [{ key: 'printLog' as const, label: 'Print Log' }] : []),
+    ...(printLog != null ? [{ key: 'printLog' as const, label: '3D Print Log' }] : []),
   ];
 
   const tabClass = (tab: TabKey) =>
