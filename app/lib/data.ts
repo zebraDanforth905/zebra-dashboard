@@ -28,8 +28,10 @@ import {
   CampLmsCourseMappingsData,
   CampLmsCourseMappingRow,
   CampLmsExpectedCourse,
+  CampLmsDayCampCourseOption,
   CampLmsSuggestedAction,
   CampAccountPrepChecklistData,
+  CampAccountPrepCourseOption,
   CampAccountPrepRow,
   CampAccountPrepSummary,
   CampPrepResourceKind,
@@ -2323,6 +2325,11 @@ const EMPTY_LMS_SUMMARY: CampLmsChecklistSummary = {
   canvas_inactive_expected: 0,
   canvas_extra_active: 0,
   canvas_unmapped: 0,
+  lms_accounts_needed: 0,
+  day_camp_total: 0,
+  day_camp_assignments_needed: 0,
+  unmapped_assigned_camps: 0,
+  lms_course_fixes_needed: 0,
 };
 
 function asCanvasMatches(value: unknown): CampLmsCanvasMatch[] {
@@ -2467,8 +2474,8 @@ function suggestedCanvasFix(params: {
   return 'Expected Canvas setup is active.';
 }
 
-function isManualCampLmsCourse(row: Pick<CampLmsChecklistDbRow, 'course_id' | 'course_name'>) {
-  return `${row.course_id ?? ''} ${row.course_name ?? ''}`.toLowerCase().includes('day camp');
+function isManualCampLmsCourse(row: Pick<CampLmsChecklistDbRow, 'is_day_camp' | 'day_camp_assigned_course_id'>) {
+  return row.is_day_camp && !row.day_camp_assigned_course_id;
 }
 
 function suggestedCanvasActions(params: {
@@ -2566,6 +2573,38 @@ function buildCampLmsRows(rows: CampLmsChecklistDbRow[], allMappedCanvasCourseId
       suggested_actions: suggestedActions,
     };
   });
+}
+
+async function fetchCampLmsDayCampCourseOptions(): Promise<CampLmsDayCampCourseOption[]> {
+  const rows = await sql<CampLmsDayCampCourseOption[]>`
+    WITH option_courses AS (
+      SELECT
+        ce.course_id::text AS id,
+        MAX(c.name) AS label
+      FROM camp_enrolments ce
+      LEFT JOIN courses c ON c.id = ce.course_id
+      WHERE ce.course_id IS NOT NULL
+      GROUP BY ce.course_id::text
+
+      UNION
+
+      SELECT
+        m.course_id AS id,
+        COALESCE(MAX(c.name), m.lms_course_name, m.course_id) AS label
+      FROM camp_lms_course_mappings m
+      LEFT JOIN courses c ON c.id::text = m.course_id
+      GROUP BY m.course_id, m.lms_course_name
+    )
+    SELECT DISTINCT ON (id)
+      id,
+      COALESCE(NULLIF(label, ''), id) AS label
+    FROM option_courses
+    WHERE id IS NOT NULL
+      AND LOWER(CONCAT_WS(' ', id, label)) NOT LIKE '%day camp%'
+    ORDER BY id, COALESCE(NULLIF(label, ''), id);
+  `;
+
+  return rows.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 export async function fetchCampPrintableSchedule(
@@ -2677,31 +2716,54 @@ export async function fetchCampPrintableSchedule(
 }
 
 function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSummary {
-  return rows.reduce<CampLmsChecklistSummary>(
-    (summary, row) => {
-      const mapped = row.expected_canvas_course_ids.length > 0;
+  const summary: CampLmsChecklistSummary = { ...EMPTY_LMS_SUMMARY };
+  const students = new Set<string>();
 
-      summary.total += 1;
-      if (!mapped) summary.unmapped += 1;
-      if (!row.status) summary.unchecked += 1;
-      if (row.status === 'verified') summary.verified += 1;
-      if (row.status === 'missing_user' || row.status === 'missing_course') {
-        summary.missing_setup += 1;
-      }
-      if (row.status === 'needs_followup') summary.needs_followup += 1;
-      if (row.status === 'not_applicable') summary.not_applicable += 1;
-      if (row.canvas_issues.includes('ok')) summary.canvas_ok += 1;
-      if (row.canvas_issues.includes('not_synced')) summary.canvas_not_synced += 1;
-      if (row.canvas_issues.includes('missing_canvas_user')) summary.canvas_missing_user += 1;
-      if (row.canvas_issues.includes('missing_expected_course')) summary.canvas_missing_course += 1;
-      if (row.canvas_issues.includes('inactive_expected_course')) summary.canvas_inactive_expected += 1;
-      if (row.canvas_issues.includes('extra_active_course')) summary.canvas_extra_active += 1;
-      if (row.canvas_issues.includes('unmapped_course')) summary.canvas_unmapped += 1;
+  rows.forEach((row) => {
+    const mapped = row.expected_canvas_course_ids.length > 0;
+    const needsCourseFix = row.canvas_issues.some((issue) =>
+      issue === 'missing_expected_course'
+      || issue === 'inactive_expected_course'
+      || issue === 'extra_active_course'
+    );
 
-      return summary;
-    },
-    { ...EMPTY_LMS_SUMMARY }
-  );
+    students.add(row.student_id);
+    if (!mapped) summary.unmapped += 1;
+    if (!row.status) summary.unchecked += 1;
+    if (row.status === 'verified') summary.verified += 1;
+    if (row.status === 'missing_user' || row.status === 'missing_course') {
+      summary.missing_setup += 1;
+    }
+    if (row.status === 'needs_followup') summary.needs_followup += 1;
+    if (row.status === 'not_applicable') summary.not_applicable += 1;
+    if (row.canvas_issues.includes('ok')) summary.canvas_ok += 1;
+    if (row.canvas_issues.includes('not_synced')) summary.canvas_not_synced += 1;
+    if (row.canvas_issues.includes('missing_canvas_user')) summary.canvas_missing_user += 1;
+    if (row.canvas_issues.includes('missing_expected_course')) summary.canvas_missing_course += 1;
+    if (row.canvas_issues.includes('inactive_expected_course')) summary.canvas_inactive_expected += 1;
+    if (row.canvas_issues.includes('extra_active_course')) summary.canvas_extra_active += 1;
+    if (row.canvas_issues.includes('unmapped_course')) summary.canvas_unmapped += 1;
+    if (
+      row.canvas_sync_status === 'synced'
+      && !row.canvas_user_found
+      && row.canvas_user_matches.length === 0
+    ) {
+      summary.lms_accounts_needed += 1;
+    }
+    if (row.is_day_camp) summary.day_camp_total += 1;
+    if (row.is_day_camp && !row.day_camp_assigned_course_id) {
+      summary.day_camp_assignments_needed += 1;
+    }
+    if (row.canvas_issues.includes('unmapped_course')) {
+      summary.unmapped_assigned_camps += 1;
+    }
+    if (needsCourseFix) {
+      summary.lms_course_fixes_needed += 1;
+    }
+  });
+
+  summary.total = students.size;
+  return summary;
 }
 
 export async function fetchCampLmsChecklist(startDate: string, endDate: string): Promise<CampLmsChecklistData> {
@@ -2711,8 +2773,9 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       SELECT (
         to_regclass('public.camp_lms_course_mappings') IS NOT NULL
         AND to_regclass('public.camp_lms_status_checks') IS NOT NULL
-        AND to_regclass('public.camp_lms_canvas_snapshots') IS NOT NULL
+        AND to_regclass('public.camp_lms_canvas_sync_state') IS NOT NULL
         AND to_regclass('public.camp_lms_canvas_action_audit') IS NOT NULL
+        AND to_regclass('public.camp_pa_day_course_assignments') IS NOT NULL
         AND EXISTS (
           SELECT 1
           FROM information_schema.columns
@@ -2742,7 +2805,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           WHERE n.nspname = 'public'
             AND t.relname = 'camp_lms_canvas_action_audit'
             AND c.contype = 'c'
-            AND pg_get_constraintdef(c.oid) LIKE '%activate_course%'
+            AND pg_get_constraintdef(c.oid) LIKE '%create_user%'
         )
       ) AS schema_ready;
     `;
@@ -2758,6 +2821,11 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
           TRUNC(ce.student_id)::text || '@zebrarobotics.com' AS suggested_lms_login,
           ce.course_id::text AS course_id,
           c.name AS course_name,
+          ce.course_id::text AS original_course_id,
+          c.name AS original_course_name,
+          LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%' AS is_day_camp,
+          NULL::text AS day_camp_assigned_course_id,
+          NULL::text AS day_camp_assigned_course_name,
           cs.camp_type,
           cs.extended_care,
           cs.start_date,
@@ -2805,6 +2873,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         canvas_configured: canvasConfig.configured,
         canvas_base_url: canvasConfig.baseUrl,
         canvas_last_synced_at: null,
+        day_camp_course_options: [],
         rows,
         summary: summarizeCampLmsRows(rows),
       };
@@ -2840,8 +2909,13 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         TRUNC(ce.student_id)::text AS student_id,
         s.name AS student_name,
         TRUNC(ce.student_id)::text || '@zebrarobotics.com' AS suggested_lms_login,
-        ce.course_id::text AS course_id,
-        c.name AS course_name,
+        effective.course_id,
+        effective.course_name,
+        ce.course_id::text AS original_course_id,
+        c.name AS original_course_name,
+        effective.is_day_camp,
+        pa_day.assigned_course_id AS day_camp_assigned_course_id,
+        COALESCE(assigned_course.name, assigned_mapping.lms_course_name, pa_day.assigned_course_id) AS day_camp_assigned_course_name,
         cs.camp_type,
         cs.extended_care,
         cs.start_date,
@@ -2857,18 +2931,18 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         m.canvas_advanced_course_id,
         m.canvas_advanced_course_name,
         m.canvas_additional_course_ids,
-        snap.canvas_user_id,
-        snap.canvas_user_name,
-        snap.canvas_user_login,
-        snap.canvas_user_email,
-        COALESCE(snap.canvas_user_found, FALSE) AS canvas_user_found,
-        COALESCE(snap.canvas_user_matches, '[]'::jsonb) AS canvas_user_matches,
-        COALESCE(snap.sync_status, 'not_synced') AS canvas_sync_status,
-        snap.sync_error AS canvas_sync_error,
-        snap.synced_at AS canvas_synced_at,
-        COALESCE(snap.active_enrollments, '[]'::jsonb) AS active_canvas_enrollments,
-        COALESCE(snap.inactive_enrollments, '[]'::jsonb) AS inactive_canvas_enrollments,
-        COALESCE(snap.invited_enrollments, '[]'::jsonb) AS invited_canvas_enrollments,
+        sync.canvas_user_id,
+        sync.canvas_user_name,
+        sync.canvas_user_login,
+        sync.canvas_user_email,
+        COALESCE(sync.canvas_user_found, FALSE) AS canvas_user_found,
+        COALESCE(sync.canvas_user_matches, '[]'::jsonb) AS canvas_user_matches,
+        COALESCE(sync.sync_status, 'not_synced') AS canvas_sync_status,
+        sync.sync_error AS canvas_sync_error,
+        sync.synced_at AS canvas_synced_at,
+        COALESCE(sync.active_enrollments, '[]'::jsonb) AS active_canvas_enrollments,
+        COALESCE(sync.inactive_enrollments, '[]'::jsonb) AS inactive_canvas_enrollments,
+        COALESCE(sync.invited_enrollments, '[]'::jsonb) AS invited_canvas_enrollments,
         sc.status,
         sc.lms_note AS status_note,
         sc.checked_at,
@@ -2877,16 +2951,36 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
       JOIN students s ON s.id = ce.student_id
       LEFT JOIN courses c ON c.id = ce.course_id
-      LEFT JOIN camp_lms_course_mappings m ON m.course_id = ce.course_id::text
-      LEFT JOIN camp_lms_canvas_snapshots snap ON snap.camp_enrolment_id = ce.id
+      LEFT JOIN camp_pa_day_course_assignments pa_day ON pa_day.camp_enrolment_id = ce.id
+      LEFT JOIN courses assigned_course ON assigned_course.id::text = pa_day.assigned_course_id
+      LEFT JOIN camp_lms_course_mappings assigned_mapping ON assigned_mapping.course_id = pa_day.assigned_course_id
+      LEFT JOIN LATERAL (
+        SELECT
+          LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%' AS is_day_camp,
+          CASE
+            WHEN LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%'
+              AND pa_day.assigned_course_id IS NOT NULL
+            THEN pa_day.assigned_course_id
+            ELSE ce.course_id::text
+          END AS course_id,
+          CASE
+            WHEN LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%'
+              AND pa_day.assigned_course_id IS NOT NULL
+            THEN COALESCE(assigned_course.name, assigned_mapping.lms_course_name, pa_day.assigned_course_id)
+            ELSE c.name
+          END AS course_name
+      ) effective ON TRUE
+      LEFT JOIN camp_lms_course_mappings m ON m.course_id = effective.course_id
+      LEFT JOIN camp_lms_canvas_sync_state sync ON sync.camp_enrolment_id = ce.id
       LEFT JOIN camp_lms_status_checks sc ON sc.camp_enrolment_id = ce.id
       LEFT JOIN users u ON u.id::text = sc.checked_by
       WHERE DATE_TRUNC('week', cs.start_date)::date = ${startDate}::date
         AND cs.start_date <= ${endDate}::date
         AND cs.end_date >= ${startDate}::date
-      ORDER BY ce.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
+      ORDER BY effective.course_id NULLS LAST, s.name ASC, cs.camp_type ASC;
     `;
     const rows = buildCampLmsRows(dbRows, allMappedCanvasCourseIds);
+    const dayCampCourseOptions = await fetchCampLmsDayCampCourseOptions();
     const canvasLastSyncedAt = rows.reduce<Date | null>((latest, row) => {
       if (!row.canvas_synced_at) return latest;
       const syncedAt = new Date(row.canvas_synced_at);
@@ -2899,6 +2993,7 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       canvas_configured: canvasConfig.configured,
       canvas_base_url: canvasConfig.baseUrl,
       canvas_last_synced_at: canvasLastSyncedAt,
+      day_camp_course_options: dayCampCourseOptions,
       rows,
       summary: summarizeCampLmsRows(rows),
     };
@@ -2977,6 +3072,11 @@ type CampPrepDbRow = {
   student_name: string;
   course_id: string | null;
   course_name: string | null;
+  original_course_id: string | null;
+  original_course_name: string | null;
+  is_pa_day_camp: boolean;
+  pa_day_assigned_course_id: string | null;
+  pa_day_assigned_course_name: string | null;
   camp_type: 'FD' | 'PM' | 'AM';
   extended_care: boolean;
   start_date: Date;
@@ -3112,8 +3212,25 @@ export async function fetchCampAccountPrepChecklist(
         ce.id::text AS camp_enrolment_id,
         ce.student_id::text AS student_id,
         s.name AS student_name,
-        ce.course_id::text AS course_id,
-        c.name AS course_name,
+        CASE
+          WHEN LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%'
+            AND pa_day.assigned_course_id IS NOT NULL
+          THEN pa_day.assigned_course_id
+          ELSE ce.course_id::text
+        END AS course_id,
+        CASE
+          WHEN LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%'
+            AND pa_day.assigned_course_id IS NOT NULL
+          THEN COALESCE(assigned_course.name, assigned_mapping.lms_course_name, pa_day.assigned_course_id)
+          ELSE c.name
+        END AS course_name,
+        ce.course_id::text AS original_course_id,
+        c.name AS original_course_name,
+        (
+          LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%'
+        ) AS is_pa_day_camp,
+        pa_day.assigned_course_id AS pa_day_assigned_course_id,
+        COALESCE(assigned_course.name, assigned_mapping.lms_course_name, pa_day.assigned_course_id) AS pa_day_assigned_course_name,
         cs.camp_type,
         cs.extended_care,
         cs.start_date,
@@ -3127,6 +3244,9 @@ export async function fetchCampAccountPrepChecklist(
       JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
       JOIN students s ON s.id = ce.student_id
       LEFT JOIN courses c ON c.id = ce.course_id
+      LEFT JOIN camp_pa_day_course_assignments pa_day ON pa_day.camp_enrolment_id = ce.id
+      LEFT JOIN courses assigned_course ON assigned_course.id::text = pa_day.assigned_course_id
+      LEFT JOIN camp_lms_course_mappings assigned_mapping ON assigned_mapping.course_id = pa_day.assigned_course_id
       LEFT JOIN LATERAL (
         SELECT username, password
         FROM scratch_accounts
@@ -3149,7 +3269,18 @@ export async function fetchCampAccountPrepChecklist(
         LIMIT 1
       ) lap ON TRUE
       WHERE ${campDateFilter}
-      ORDER BY c.name NULLS LAST, s.name ASC, cs.camp_type ASC;
+      ORDER BY course_name NULLS LAST, s.name ASC, cs.camp_type ASC;
+    `;
+    const paDayCourseOptions = await sql<CampAccountPrepCourseOption[]>`
+      SELECT DISTINCT
+        c.id::text AS id,
+        c.name AS label
+      FROM courses c
+      JOIN camp_enrolments ce ON ce.course_id::text = c.id::text
+      WHERE NOT (
+        LOWER(CONCAT_WS(' ', c.id::text, c.name)) LIKE '%day camp%'
+      )
+      ORDER BY c.name;
     `;
     const scratchAccounts = await sql<{ id: string; label: string; password: string | null }[]>`
       SELECT
@@ -3188,6 +3319,7 @@ export async function fetchCampAccountPrepChecklist(
         roblox_accounts: robloxAccounts,
         laptops,
       },
+      pa_day_course_options: paDayCourseOptions,
       summary: summarizeCampPrepRows(rows),
     };
   } catch (error) {
