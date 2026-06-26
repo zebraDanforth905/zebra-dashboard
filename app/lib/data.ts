@@ -3242,6 +3242,29 @@ export async function fetchCampActivitySchedule(weekStart: Date | string) {
   }
 }
 
+export async function fetchCampStaffSchedule(weekStart: Date | string) {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const weekStartKey = toLocalDateKey(weekStart);
+
+    const rows = await sql<Array<{
+      row_key: string;
+      weekday: number;
+      content: string | null;
+    }>>`
+      SELECT row_key, weekday, content
+      FROM camp_staff_schedules
+      WHERE week_start = ${weekStartKey}::date
+    `;
+
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp staff schedule.');
+  }
+}
+
 export async function fetchCampPrintLog(weekStart: Date | string) {
   'use cache'
   cacheTag('camps');

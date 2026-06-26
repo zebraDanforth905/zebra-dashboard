@@ -631,6 +631,12 @@ export type CampActivityScheduleCell = {
   activity: string | null;
 };
 
+export type CampStaffScheduleCell = {
+  row_key: string;
+  weekday: number;
+  content: string | null;
+};
+
 export type CampPrintLogStatus = '' | 'ready' | 'printing' | 'done';
 
 export type CampPrintLogEntry = {

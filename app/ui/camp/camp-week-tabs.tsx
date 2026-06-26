@@ -2,19 +2,21 @@
 
 import { useState, type ReactNode } from 'react';
 
-type TabKey = 'days' | 'prep' | 'lms' | 'schedule' | 'printLog';
+type TabKey = 'days' | 'prep' | 'lms' | 'schedule' | 'staff' | 'printLog';
 
 export default function CampWeekTabs({
   campDays,
   accountPrep,
   lms,
   schedule,
+  staffSchedule,
   printLog,
 }: {
   campDays: ReactNode;
   accountPrep: ReactNode;
   lms: ReactNode;
   schedule?: ReactNode;
+  staffSchedule?: ReactNode;
   printLog?: ReactNode;
 }) {
   const [activeTab, setActiveTab] = useState<TabKey>('days');
@@ -24,6 +26,7 @@ export default function CampWeekTabs({
     { key: 'prep', label: 'Account & Device Prep' },
     { key: 'lms', label: 'LMS Checklist' },
     ...(schedule != null ? [{ key: 'schedule' as const, label: 'Activity Schedule' }] : []),
+    ...(staffSchedule != null ? [{ key: 'staff' as const, label: 'Staff Schedule' }] : []),
     ...(printLog != null ? [{ key: 'printLog' as const, label: 'Print Log' }] : []),
   ];
 
@@ -58,6 +61,9 @@ export default function CampWeekTabs({
       <div className={activeTab === 'lms' ? '' : 'hidden'}>{lms}</div>
       {schedule != null ? (
         <div className={activeTab === 'schedule' ? '' : 'hidden'}>{schedule}</div>
+      ) : null}
+      {staffSchedule != null ? (
+        <div className={activeTab === 'staff' ? '' : 'hidden'}>{staffSchedule}</div>
       ) : null}
       {printLog != null ? (
         <div className={activeTab === 'printLog' ? '' : 'hidden'}>{printLog}</div>

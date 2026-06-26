@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { connection } from 'next/server';
-import { fetchCampActivitySchedule, fetchCampPrintableSchedule } from '@/app/lib/data';
+import { fetchCampActivitySchedule, fetchCampStaffSchedule, fetchCampPrintableSchedule } from '@/app/lib/data';
 import CampPrintableSchedule from '@/app/ui/camp/camp-printable-schedule';
 
 const parseLocalISODate = (value: string) => {
@@ -28,9 +28,10 @@ export default async function PrintableCampSchedulePage({
     notFound();
   }
 
-  const [schedule, activityCells] = await Promise.all([
+  const [schedule, activityCells, staffCells] = await Promise.all([
     fetchCampPrintableSchedule(startDate, endDate),
     fetchCampActivitySchedule(startDate),
+    fetchCampStaffSchedule(startDate),
   ]);
 
   return (
@@ -46,7 +47,7 @@ export default async function PrintableCampSchedulePage({
           </Link>
         </div>
       </div>
-      <CampPrintableSchedule schedule={schedule} activityCells={activityCells} />
+      <CampPrintableSchedule schedule={schedule} activityCells={activityCells} staffCells={staffCells} />
     </div>
   );
 }

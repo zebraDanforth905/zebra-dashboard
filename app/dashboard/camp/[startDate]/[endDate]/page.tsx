@@ -1,4 +1,4 @@
-import { fetchCampAccountPrepChecklist, fetchCampLmsChecklist, fetchCampActivitySchedule, fetchCampPrintLog, fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
+import { fetchCampAccountPrepChecklist, fetchCampLmsChecklist, fetchCampActivitySchedule, fetchCampStaffSchedule, fetchCampPrintLog, fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon, PrinterIcon, UserGroupIcon } from '@heroicons/react/24/outline';
@@ -6,6 +6,7 @@ import CampMonthlyReport from '@/app/ui/camp/camp-monthly-report';
 import CampLmsChecklist from '@/app/ui/camp/camp-lms-checklist';
 import CampAccountPrepChecklist from '@/app/ui/camp/camp-account-prep-checklist';
 import CampActivitySchedule from '@/app/ui/camp/camp-activity-schedule';
+import CampStaffSchedule from '@/app/ui/camp/camp-staff-schedule';
 import CampPrintLog from '@/app/ui/camp/camp-print-log';
 import CampWeekTabs from '@/app/ui/camp/camp-week-tabs';
 import { connection } from 'next/server';
@@ -114,11 +115,12 @@ export default async function CampSessionPage({
   const weekEnd = new Date(parsedWeekEnd);
   weekEnd.setHours(23, 59, 59, 999);
 
-  const [sessions, lmsChecklist, accountPrepChecklist, activityScheduleCells, printLogEntries] = await Promise.all([
+  const [sessions, lmsChecklist, accountPrepChecklist, activityScheduleCells, staffScheduleCells, printLogEntries] = await Promise.all([
     fetchUpcomingCampSessionsWithEnrolments(),
     fetchCampLmsChecklist(startDate, endDate),
     fetchCampAccountPrepChecklist(startDate, endDate),
     fetchCampActivitySchedule(startDate),
+    fetchCampStaffSchedule(startDate),
     fetchCampPrintLog(startDate),
   ]);
 
@@ -242,6 +244,13 @@ export default async function CampSessionPage({
             weekStart={startDate}
             weekLabel={report.label}
             cells={activityScheduleCells}
+          />
+        }
+        staffSchedule={
+          <CampStaffSchedule
+            weekStart={startDate}
+            weekLabel={report.label}
+            cells={staffScheduleCells}
           />
         }
         printLog={

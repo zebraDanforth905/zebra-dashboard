@@ -3729,6 +3729,68 @@ export async function updateCampActivityScheduleCell(input: {
   }
 }
 
+const CAMP_STAFF_SCHEDULE_ROW_KEYS = [
+  'morning_dropoff',
+  'coach_lunch_front',
+  'coach_lunch_back',
+  'camp_programs_front',
+  'camp_programs_back',
+  'extended_care_back',
+  'evening_classes',
+] as const;
+
+const CampStaffScheduleCellSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid week start'),
+  rowKey: z.enum(CAMP_STAFF_SCHEDULE_ROW_KEYS),
+  weekday: z.coerce.number().int().min(1).max(5),
+  content: z.string(),
+});
+
+export async function updateCampStaffScheduleCell(input: {
+  weekStart: string;
+  rowKey: string;
+  weekday: number;
+  content: string;
+}) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const parsed = CampStaffScheduleCellSchema.safeParse(input);
+    if (!parsed.success) {
+      return { ok: false, error: 'Invalid staff schedule cell' };
+    }
+
+    const { weekStart, rowKey, weekday } = parsed.data;
+    const content = parsed.data.content.trim();
+
+    if (!content) {
+      await sql`
+        DELETE FROM camp_staff_schedules
+        WHERE week_start = ${weekStart}::date
+          AND row_key = ${rowKey}
+          AND weekday = ${weekday};
+      `;
+    } else {
+      await sql`
+        INSERT INTO camp_staff_schedules (week_start, row_key, weekday, content, updated_at)
+        VALUES (${weekStart}::date, ${rowKey}, ${weekday}, ${content}, NOW())
+        ON CONFLICT (week_start, row_key, weekday) DO UPDATE
+        SET content = EXCLUDED.content,
+            updated_at = NOW();
+      `;
+    }
+
+    revalidateTag('camps', 'max');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating camp staff schedule:', error);
+    return { ok: false, error: 'Failed to update camp staff schedule' };
+  }
+}
+
 const CampPrintLogStatusSchema = z.enum(['', 'ready', 'printing', 'done']);
 
 const CampPrintLogEntrySchema = z.object({

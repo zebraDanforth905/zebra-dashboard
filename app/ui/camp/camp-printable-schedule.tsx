@@ -4,9 +4,11 @@ import CampPrintableStudentList, {
   type CampPrintableStudentListRow,
 } from '@/app/ui/camp/camp-printable-student-list';
 import CampPrintableActivitySchedule from '@/app/ui/camp/camp-printable-activity-schedule';
+import CampPrintableStaffSchedule from '@/app/ui/camp/camp-printable-staff-schedule';
 import { CakeIcon } from '@heroicons/react/24/outline';
 import type {
   CampActivityScheduleCell,
+  CampStaffScheduleCell,
   CampPrintableScheduleData,
   CampPrintableScheduleRow,
   CampPrintableStudentListField,
@@ -682,9 +684,11 @@ function MedicalAlertSheet({
 export default function CampPrintableSchedule({
   schedule,
   activityCells,
+  staffCells,
 }: {
   schedule: CampPrintableScheduleData;
   activityCells: CampActivityScheduleCell[];
+  staffCells: CampStaffScheduleCell[];
 }) {
   const days = buildWeekdays(schedule);
   const activeRows = schedule.rows.filter((row) =>
@@ -724,6 +728,7 @@ export default function CampPrintableSchedule({
                 weekLabel={weekLabel}
               />
               <CampPrintableActivitySchedule weekLabel={weekLabel} cells={activityCells} />
+              <CampPrintableStaffSchedule weekLabel={weekLabel} cells={staffCells} />
               <PrintableWeeklySeatingCharts rows={activeRows} days={days} />
               <SignInSpecialInstructions students={students} schedule={schedule} />
               <MedicalAlertSheet students={students} schedule={schedule} />
