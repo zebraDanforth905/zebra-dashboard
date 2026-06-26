@@ -7,7 +7,7 @@ import {
   startOfScheduleWeek,
   ymdLocal,
 } from "@/app/lib/schedule-week";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"] as const;
 type Weekday = typeof DAYS[number];
@@ -27,6 +27,9 @@ export default async function SessionPage(props: {
   const targetDate = dateForScheduleWeekday(weekStart, day);
   const isSummer = isSummerScheduleWeek(weekStart);
   const sessions = await fetchSessionsForDay(day, targetDate, { isSummer });
+  if (sessions.length > 0 && !sessions.some(session => session.id === sessionId)) {
+    redirect(`/dashboard/schedule/${day}/${sessions[0].id}?weekStart=${weekStart}`);
+  }
 
   return (
     <div className="space-y-4">

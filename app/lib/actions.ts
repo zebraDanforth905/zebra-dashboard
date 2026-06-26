@@ -3859,7 +3859,6 @@ export async function createSlipsForCampers(enrolments: CampEnrolmentWithStudent
         cs.extended_care,
         JSONB_STRIP_NULLS(
           JSONB_BUILD_OBJECT(
-            'Account #', ce.student_id::bigint::text,
             'Scratch Login', scr.username,
             'Scratch Password', scr.password,
             'Roblox Login', rob.username,
