@@ -42,16 +42,15 @@ body {
     break-inside: avoid;
   }
 
+  /* Each seating chart starts on its own page. Using break-before (rather than
+     break-after + :last-child) keeps the breaks correct even though each chart
+     is now wrapped in its own div by the print-inclusion checkbox; the leading
+     break is ignored by browsers on the first printed element. */
   .camp-print-room {
-    page-break-after: always;
-    break-after: page;
+    page-break-before: always;
+    break-before: page;
     min-height: auto;
     padding: 0.08in;
-  }
-
-  .camp-print-room:last-child {
-    page-break-after: auto;
-    break-after: auto;
   }
 
   .camp-print-roster-row {
@@ -64,9 +63,12 @@ body {
     break-inside: avoid;
   }
 
+  /* Full-page packet sheets (student list, sign-in/special instructions, medical
+     alert) each start on a fresh page. break-before is robust regardless of how
+     the preceding seating charts are wrapped or which ones are excluded. */
   .camp-print-packet-page {
-    page-break-after: always;
-    break-after: page;
+    page-break-before: always;
+    break-before: page;
     min-height: 100vh;
     padding: 0.2in 0;
     -webkit-print-color-adjust: exact;
@@ -79,6 +81,10 @@ body {
   }
 
   .camp-print-student-list-page {
+    /* The student list leads the packet, so it must never push a blank page
+       ahead of itself even though it carries the .camp-print-packet-page class. */
+    page-break-before: auto;
+    break-before: auto;
     min-height: auto;
     padding: 0.05in 0;
   }
@@ -86,11 +92,6 @@ body {
   .camp-print-portrait-page {
     min-height: auto;
     padding: 0.08in 0;
-  }
-
-  .camp-print-packet-page:last-child {
-    page-break-after: auto;
-    break-after: auto;
   }
 
   .camp-print-packet-page thead {
