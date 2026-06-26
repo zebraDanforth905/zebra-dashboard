@@ -79,6 +79,11 @@ export async function upsertSummerEnrolmentWeekFromNormalized(
 
   await sql.begin(async (tx) => {
     for (const r of rows) {
+      if (r.is_summer !== true) {
+        skippedNonSummer += 1;
+        continue;
+      }
+
       const sessionId = await getExistingSummerSessionId(tx, r.day, r.start_time, r.end_time);
       if (!sessionId) {
         skippedNonSummer += 1;
