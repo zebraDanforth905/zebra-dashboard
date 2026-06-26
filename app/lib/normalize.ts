@@ -3,6 +3,38 @@ import { isSummerDateRange } from './tdsb-calendar';
 
 function pad(n: number) { return n.toString().padStart(2, "0"); }
 
+function toISODate(input: unknown): string {
+  if (!input) return "";
+  const s = String(input).trim();
+  if (!s || s === "0000-00-00") return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  const parsed = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2}),\s*(\d{4})$/i.exec(s);
+  if (!parsed) return "";
+
+  const monthMap: Record<string, number> = {
+    jan: 1,
+    feb: 2,
+    mar: 3,
+    apr: 4,
+    may: 5,
+    jun: 6,
+    jul: 7,
+    aug: 8,
+    sep: 9,
+    sept: 9,
+    oct: 10,
+    nov: 11,
+    dec: 12,
+  };
+  const month = monthMap[parsed[1].toLowerCase()];
+  const day = Number(parsed[2]);
+  const year = Number(parsed[3]);
+  if (!month || day < 1 || day > 31) return "";
+
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
 function toHMS(input: unknown): string | null {
   if (!input) return null;
   const s = String(input).trim();
@@ -45,8 +77,8 @@ export function normalizeEnrolmentRows(rows: RawEnrolmentRow[]) {
   return rows.flatMap((r) => {
 
     const day = (r.day || "").toString().trim(); // "Monday"
-    const start_date = (r.start_date || "").toString().trim(); // "YYYY-MM-DD"
-    const end_date = (r.end_date ? r.end_date.toString().trim() : null);     // "YYYY-MM-DD"
+    const start_date = toISODate(r.start_date);
+    const end_date = toISODate(r.end_date) || null;
     const start = toHMS(r.start_time);
     const end   = toHMS(r.end_time);
     const full  = (r.student_name ?? "").toString().trim()
@@ -57,8 +89,8 @@ export function normalizeEnrolmentRows(rows: RawEnrolmentRow[]) {
     const courseCode = r.course_abbr || r.sub_course_code;
 
     // trial / makeup fields if present in source
-    const trial = r.trial_date ? String(r.trial_date) : "";
-    const makeup = r.make_up_date ? String(r.make_up_date) : "";
+    const trial = toISODate(r.trial_date);
+    const makeup = toISODate(r.make_up_date);
 
     const effectiveStartDate = trial || makeup || start_date;
     const effectiveEndDate = trial || makeup || end_date;

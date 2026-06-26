@@ -38,11 +38,14 @@ function compactWeekRange(weekStart: string) {
 export default function WeekSelector({ weekStart }: { weekStart: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const segments = pathname.split("/");
+  const activeDay = segments[3];
+  const scheduleDayPath = activeDay ? `/dashboard/schedule/${activeDay}` : pathname;
 
   const buildHref = (nextWeekStart: string) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("weekStart", nextWeekStart);
-    return `${pathname}?${params.toString()}`;
+    return `${scheduleDayPath}?${params.toString()}`;
   };
 
   const previous = new Date(startOfScheduleWeek(weekStart));
