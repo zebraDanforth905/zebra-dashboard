@@ -3413,6 +3413,170 @@ export async function updateCampSeatAssignment(
   }
 }
 
+export async function autoPopulateCampSeatAssignmentsForDate(date: Date | string) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const dateKey = toLocalDateKey(date);
+    const [year, month, day] = dateKey.split('-').map(Number);
+    const localTargetDate = new Date(year, month - 1, day);
+    const dayOfWeek = localTargetDate.getDay();
+    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const weekStartDate = new Date(localTargetDate);
+    weekStartDate.setDate(localTargetDate.getDate() - daysFromMonday);
+    const weekStartKey = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
+
+    const dayEnrolments = await sql<Array<{
+      enrolment_id: string;
+      camp_type: 'FD' | 'AM' | 'PM';
+      assigned_seat_number: number | null;
+    }>>`
+      SELECT
+        ce.id::text AS enrolment_id,
+        cs.camp_type,
+        ce.assigned_seat_number
+      FROM camp_sessions cs
+      JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      WHERE cs.start_date <= ${dateKey}::date
+        AND cs.end_date >= ${dateKey}::date
+    `;
+
+    if (dayEnrolments.length === 0) {
+      return { ok: true, created: 0, assignments: [] as Array<{ enrolment_id: string; seat: number }> };
+    }
+
+    const enrolmentIds = dayEnrolments.map((row) => row.enrolment_id);
+    const enrolmentById = new Map(dayEnrolments.map((row) => [row.enrolment_id, row]));
+
+    const existingRows = await sql<Array<{ enrolment_id: string; seat: number }>>`
+      SELECT enrolment_id::text AS enrolment_id, seat
+      FROM seat_assignments
+      WHERE date = ${dateKey}::date
+        AND enrolment_id = ANY(${enrolmentIds}::uuid[])
+    `;
+
+    const assignedIds = new Set<string>();
+    const seatOccupancy = new Map<number, { am?: string; pm?: string; fd?: string }>();
+
+    for (const row of existingRows) {
+      const enrolment = enrolmentById.get(row.enrolment_id);
+      if (!enrolment) continue;
+
+      assignedIds.add(row.enrolment_id);
+      const occupancy = seatOccupancy.get(row.seat) ?? {};
+      if (enrolment.camp_type === 'AM') occupancy.am = row.enrolment_id;
+      if (enrolment.camp_type === 'PM') occupancy.pm = row.enrolment_id;
+      if (enrolment.camp_type === 'FD') occupancy.fd = row.enrolment_id;
+      seatOccupancy.set(row.seat, occupancy);
+    }
+
+    const isSeatAvailableForCampType = (seat: number, campType: 'FD' | 'AM' | 'PM') => {
+      const occupancy = seatOccupancy.get(seat);
+      if (!occupancy) return true;
+      if (campType === 'FD') return !occupancy.fd && !occupancy.am && !occupancy.pm;
+      if (campType === 'AM') return !occupancy.fd && !occupancy.am;
+      return !occupancy.fd && !occupancy.pm;
+    };
+
+    const markSeatOccupied = (enrolmentId: string, seat: number) => {
+      const enrolment = enrolmentById.get(enrolmentId);
+      if (!enrolment) return;
+      assignedIds.add(enrolmentId);
+      const occupancy = seatOccupancy.get(seat) ?? {};
+      if (enrolment.camp_type === 'AM') occupancy.am = enrolmentId;
+      if (enrolment.camp_type === 'PM') occupancy.pm = enrolmentId;
+      if (enrolment.camp_type === 'FD') occupancy.fd = enrolmentId;
+      seatOccupancy.set(seat, occupancy);
+    };
+
+    const plannedAssignments = new Map<string, number>();
+
+    const unassignedEnrolments = dayEnrolments.filter((enrolment) => !assignedIds.has(enrolment.enrolment_id));
+
+    if (unassignedEnrolments.length > 0) {
+      const recentRows = await sql<Array<{ enrolment_id: string; seat: number }>>`
+        WITH calendar_days AS (
+          SELECT day::date AS day
+          FROM generate_series(
+            ${weekStartKey}::date,
+            (${dateKey}::date - INTERVAL '1 day')::date,
+            INTERVAL '1 day'
+          ) AS day
+        ),
+        ranked AS (
+          SELECT
+            sa.enrolment_id::text AS enrolment_id,
+            sa.seat,
+            ROW_NUMBER() OVER (
+              PARTITION BY sa.enrolment_id
+              ORDER BY sa.date DESC
+            ) AS rn
+          FROM calendar_days cd
+          JOIN seat_assignments sa ON sa.date = cd.day
+          WHERE sa.enrolment_id = ANY(${unassignedEnrolments.map((row) => row.enrolment_id)}::uuid[])
+        )
+        SELECT enrolment_id, seat
+        FROM ranked
+        WHERE rn = 1
+      `;
+
+      const recentSeatByEnrolmentId = new Map(recentRows.map((row) => [row.enrolment_id, row.seat]));
+
+      for (const enrolment of unassignedEnrolments) {
+        const previousSeat = recentSeatByEnrolmentId.get(enrolment.enrolment_id);
+        if (previousSeat == null) continue;
+        if (!isSeatAvailableForCampType(previousSeat, enrolment.camp_type)) continue;
+
+        plannedAssignments.set(enrolment.enrolment_id, previousSeat);
+        markSeatOccupied(enrolment.enrolment_id, previousSeat);
+      }
+    }
+
+    const stillUnassigned = dayEnrolments.filter((enrolment) => !assignedIds.has(enrolment.enrolment_id));
+    for (const enrolment of stillUnassigned) {
+      const defaultSeat = enrolment.assigned_seat_number;
+      if (defaultSeat == null) continue;
+      if (!isSeatAvailableForCampType(defaultSeat, enrolment.camp_type)) continue;
+
+      plannedAssignments.set(enrolment.enrolment_id, defaultSeat);
+      markSeatOccupied(enrolment.enrolment_id, defaultSeat);
+    }
+
+    for (const [enrolmentId, seat] of plannedAssignments.entries()) {
+      await sql`
+        WITH updated AS (
+          UPDATE seat_assignments
+          SET date = ${dateKey}::date,
+              seat = ${seat}
+          WHERE enrolment_id = ${enrolmentId}::uuid
+          RETURNING enrolment_id
+        )
+        INSERT INTO seat_assignments (enrolment_id, date, seat)
+        SELECT ${enrolmentId}::uuid, ${dateKey}::date, ${seat}
+        WHERE NOT EXISTS (SELECT 1 FROM updated)
+      `;
+    }
+
+    const assignments = await sql<Array<{ enrolment_id: string; seat: number }>>`
+      SELECT enrolment_id::text AS enrolment_id, seat
+      FROM seat_assignments
+      WHERE date = ${dateKey}::date
+        AND enrolment_id = ANY(${enrolmentIds}::uuid[])
+    `;
+
+    revalidateTag('camps', 'max');
+    revalidatePath(`/dashboard/camp/day/${dateKey}`);
+
+    return { ok: true, created: plannedAssignments.size, assignments };
+  } catch (error) {
+    console.error('Error auto-populating seat assignments:', error);
+    return { ok: false, error: `Failed to auto-populate seat assignments: ${String((error as any)?.message ?? error)}` };
+  }
+}
+
 export async function updateCampPrintableStudentListOverride(input: {
   weekStart: string;
   weekEnd: string;
@@ -3507,6 +3671,166 @@ export async function updateCampEnrolmentNote(
   } catch (error) {
     console.error('Error updating camp enrolment note:', error);
     return { ok: false, error: 'Failed to update camp enrolment note' };
+  }
+}
+
+const CampActivityScheduleCellSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid week start'),
+  blockKey: z.enum(['morning', 'afternoon']),
+  room: z.enum(['Front', 'Back']),
+  weekday: z.coerce.number().int().min(1).max(5),
+  activity: z.string(),
+});
+
+export async function updateCampActivityScheduleCell(input: {
+  weekStart: string;
+  blockKey: string;
+  room: string;
+  weekday: number;
+  activity: string;
+}) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const parsed = CampActivityScheduleCellSchema.safeParse(input);
+    if (!parsed.success) {
+      return { ok: false, error: 'Invalid activity schedule cell' };
+    }
+
+    const { weekStart, blockKey, room, weekday } = parsed.data;
+    const activity = parsed.data.activity.trim();
+
+    if (!activity) {
+      await sql`
+        DELETE FROM camp_activity_schedules
+        WHERE week_start = ${weekStart}::date
+          AND block_key = ${blockKey}
+          AND room = ${room}
+          AND weekday = ${weekday};
+      `;
+    } else {
+      await sql`
+        INSERT INTO camp_activity_schedules (week_start, block_key, room, weekday, activity, updated_at)
+        VALUES (${weekStart}::date, ${blockKey}, ${room}, ${weekday}, ${activity}, NOW())
+        ON CONFLICT (week_start, block_key, room, weekday) DO UPDATE
+        SET activity = EXCLUDED.activity,
+            updated_at = NOW();
+      `;
+    }
+
+    revalidateTag('camps', 'max');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating camp activity schedule:', error);
+    return { ok: false, error: 'Failed to update camp activity schedule' };
+  }
+}
+
+const CampPrintLogStatusSchema = z.enum(['', 'ready', 'printing', 'done']);
+
+const CampPrintLogEntrySchema = z.object({
+  id: z.coerce.number().int().positive(),
+  student: z.string(),
+  printDescription: z.string(),
+  status: CampPrintLogStatusSchema,
+  notes: z.string(),
+});
+
+export async function createCampPrintLogEntry(input: { weekStart: string }) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const weekStart = z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid week start')
+      .safeParse(input.weekStart);
+    if (!weekStart.success) {
+      return { ok: false, error: 'Invalid week start' };
+    }
+
+    const rows = await sql<Array<{ id: number }>>`
+      INSERT INTO camp_print_log (week_start, position)
+      VALUES (
+        ${weekStart.data}::date,
+        COALESCE(
+          (SELECT MAX(position) + 1 FROM camp_print_log WHERE week_start = ${weekStart.data}::date),
+          0
+        )
+      )
+      RETURNING id;
+    `;
+
+    revalidateTag('camps', 'max');
+    return { ok: true, id: rows[0].id };
+  } catch (error) {
+    console.error('Error creating camp print log entry:', error);
+    return { ok: false, error: 'Failed to add print log row' };
+  }
+}
+
+export async function updateCampPrintLogEntry(input: {
+  id: number;
+  student: string;
+  printDescription: string;
+  status: string;
+  notes: string;
+}) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const parsed = CampPrintLogEntrySchema.safeParse(input);
+    if (!parsed.success) {
+      return { ok: false, error: 'Invalid print log row' };
+    }
+
+    const { id, student, printDescription, status, notes } = parsed.data;
+
+    await sql`
+      UPDATE camp_print_log
+      SET student = ${student.trim() || null},
+          print_description = ${printDescription.trim() || null},
+          status = ${status || null},
+          notes = ${notes.trim() || null},
+          updated_at = NOW()
+      WHERE id = ${id};
+    `;
+
+    revalidateTag('camps', 'max');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error updating camp print log entry:', error);
+    return { ok: false, error: 'Failed to update print log row' };
+  }
+}
+
+export async function deleteCampPrintLogEntry(input: { id: number }) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return { ok: false, error: 'Unauthorized: Please log in' };
+    }
+
+    const id = z.coerce.number().int().positive().safeParse(input.id);
+    if (!id.success) {
+      return { ok: false, error: 'Invalid print log row' };
+    }
+
+    await sql`DELETE FROM camp_print_log WHERE id = ${id.data};`;
+
+    revalidateTag('camps', 'max');
+    return { ok: true };
+  } catch (error) {
+    console.error('Error deleting camp print log entry:', error);
+    return { ok: false, error: 'Failed to delete print log row' };
   }
 }
 

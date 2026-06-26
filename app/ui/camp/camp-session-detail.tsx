@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { CampSessionWithEnrolments } from '@/app/lib/definitions';
-import { createSlipsForCampers, updateCampEnrolmentNote, updateCampSeatAssignment } from '@/app/lib/actions';
+import { autoPopulateCampSeatAssignmentsForDate, createSlipsForCampers, updateCampEnrolmentNote, updateCampSeatAssignment } from '@/app/lib/actions';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent, DragOverlay, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
@@ -464,7 +464,10 @@ export default function CampSessionDetail({
     colsWithSeats.add(col);
   });
 
-  const initializeSeatsForRoom = (roomConfig: typeof ROOM_1_CONFIG) => {
+  const initializeSeatsForRoom = (
+    roomConfig: typeof ROOM_1_CONFIG,
+    sourceSeatAssignments?: Map<number, string[]>
+  ) => {
     const seats: Seat[] = [];
     for (let row = 0; row < roomConfig.rows; row++) {
       for (let col = 0; col < roomConfig.cols; col++) {
@@ -474,17 +477,19 @@ export default function CampSessionDetail({
         // Only create seats that should be visible for THIS room
         if (!roomConfig.visibleSeats.has(relativeSeatNumber)) continue;
         
-        const assignedIds = seatAssignments?.get(absoluteSeatNumber) ?? [];
+        const assignedIds = sourceSeatAssignments?.get(absoluteSeatNumber)
+          ?? seatAssignments?.get(absoluteSeatNumber)
+          ?? [];
 
-        const amEnrolment = (assignedIds.length > 0
+        const amEnrolment = assignedIds.length > 0
           ? session.enrolments.find(e => assignedIds.includes(e.id) && e.camp_type === 'AM')
-          : null) ?? session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'AM');
-        const pmEnrolment = (assignedIds.length > 0
+          : null;
+        const pmEnrolment = assignedIds.length > 0
           ? session.enrolments.find(e => assignedIds.includes(e.id) && e.camp_type === 'PM')
-          : null) ?? session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'PM');
-        const fdEnrolment = (assignedIds.length > 0
+          : null;
+        const fdEnrolment = assignedIds.length > 0
           ? session.enrolments.find(e => assignedIds.includes(e.id) && e.camp_type === 'FD')
-          : null) ?? session.enrolments.find(e => e.assigned_seat_number === absoluteSeatNumber && e.camp_type === 'FD');
+          : null;
         
         seats.push({
           id: `seat-${absoluteSeatNumber}`,
@@ -507,6 +512,7 @@ export default function CampSessionDetail({
   const setSeats = activeRoom === 'room1' ? setRoom1Seats : setRoom2Seats;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isCreatingSlips, setIsCreatingSlips] = useState(false);
+  const [isAutoPopulating, setIsAutoPopulating] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [noteOverrides, setNoteOverrides] = useState<Record<string, string | null>>({});
 
@@ -702,6 +708,34 @@ export default function CampSessionDetail({
       alert(`Error: ${result.error}`);
     }
     setIsCreatingSlips(false);
+  };
+
+  const handleAutoPopulateSeats = async () => {
+    if (!seatAssignmentsDateKey || isAutoPopulating) return;
+
+    setIsAutoPopulating(true);
+    const result = await autoPopulateCampSeatAssignmentsForDate(seatAssignmentsDateKey);
+    setIsAutoPopulating(false);
+
+    if (!result.ok) {
+      alert(result.error || 'Failed to auto-populate seats');
+      return;
+    }
+
+    const nextSeatMap = new Map<number, string[]>();
+    for (const row of result.assignments ?? []) {
+      const enrolment = enrolmentMap.get(row.enrolment_id);
+      if (!enrolment) continue;
+
+      const existingForSeat = nextSeatMap.get(row.seat) ?? [];
+      if (!existingForSeat.includes(row.enrolment_id)) {
+        existingForSeat.push(row.enrolment_id);
+        nextSeatMap.set(row.seat, existingForSeat);
+      }
+    }
+
+    setRoom1Seats(initializeSeatsForRoom(ROOM_1_CONFIG, nextSeatMap));
+    setRoom2Seats(initializeSeatsForRoom(ROOM_2_CONFIG, nextSeatMap));
   };
 
   const handlePrint = () => {
@@ -925,6 +959,16 @@ export default function CampSessionDetail({
               <PrinterIcon className="h-4 w-4" />
               Print
             </button>
+            {seatAssignmentsDateKey ? (
+              <button
+                onClick={handleAutoPopulateSeats}
+                disabled={isAutoPopulating}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Auto-populate seats from recent and default seat logic"
+              >
+                {isAutoPopulating ? 'Auto-populating...' : 'Auto-populate Seats'}
+              </button>
+            ) : null}
             <button
               onClick={handleCreateSlips}
               disabled={selectedIds.size === 0 || isCreatingSlips}

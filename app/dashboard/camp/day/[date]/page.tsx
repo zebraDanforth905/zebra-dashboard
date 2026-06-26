@@ -1,5 +1,4 @@
 import {
-  fetchMostRecentSeatAssignmentsInWeek,
   fetchUpcomingCampSessionsWithEnrolments,
   fetchSeatAssignments,
 } from '@/app/lib/data';
@@ -127,60 +126,14 @@ export default async function CampDayPage({
   const enrolmentById = new Map(allEnrolments.map((enrolment) => [enrolment.id, enrolment]));
 
   const seatMap = new Map<number, string[]>();
-  const assignedIds = new Set<string>();
-  const seatOccupancy = new Map<number, { am?: string; pm?: string; fd?: string }>();
-
   for (const row of seatRows) {
-    const enrolment = enrolmentById.get(row.enrolment_id);
-    if (!enrolment) continue;
+    if (!enrolmentById.has(row.enrolment_id)) continue;
 
     const existingForSeat = seatMap.get(row.seat) ?? [];
     if (!existingForSeat.includes(row.enrolment_id)) {
       existingForSeat.push(row.enrolment_id);
       seatMap.set(row.seat, existingForSeat);
     }
-
-    assignedIds.add(row.enrolment_id);
-
-    const occupancy = seatOccupancy.get(row.seat) ?? {};
-    if (enrolment.camp_type === 'AM') occupancy.am = row.enrolment_id;
-    if (enrolment.camp_type === 'PM') occupancy.pm = row.enrolment_id;
-    if (enrolment.camp_type === 'FD') occupancy.fd = row.enrolment_id;
-    seatOccupancy.set(row.seat, occupancy);
-  }
-
-  const unassignedEnrolments = allEnrolments.filter((enrolment) => !assignedIds.has(enrolment.id));
-  const recentRows = await fetchMostRecentSeatAssignmentsInWeek(
-    unassignedEnrolments.map((enrolment) => enrolment.id),
-    dayDate,
-  );
-  const recentSeatByEnrolmentId = new Map(recentRows.map((row) => [row.enrolment_id, row.seat]));
-
-  const isSeatAvailableForCampType = (seat: number, campType: 'FD' | 'AM' | 'PM') => {
-    const occupancy = seatOccupancy.get(seat);
-    if (!occupancy) return true;
-    if (campType === 'FD') return !occupancy.fd && !occupancy.am && !occupancy.pm;
-    if (campType === 'AM') return !occupancy.fd && !occupancy.am;
-    return !occupancy.fd && !occupancy.pm;
-  };
-
-  for (const enrolment of unassignedEnrolments) {
-    const previousSeat = recentSeatByEnrolmentId.get(enrolment.id);
-    if (previousSeat == null) continue;
-    if (!isSeatAvailableForCampType(previousSeat, enrolment.camp_type)) continue;
-
-    const existingForSeat = seatMap.get(previousSeat) ?? [];
-    if (!existingForSeat.includes(enrolment.id)) {
-      existingForSeat.push(enrolment.id);
-      seatMap.set(previousSeat, existingForSeat);
-    }
-
-    assignedIds.add(enrolment.id);
-    const occupancy = seatOccupancy.get(previousSeat) ?? {};
-    if (enrolment.camp_type === 'AM') occupancy.am = enrolment.id;
-    if (enrolment.camp_type === 'PM') occupancy.pm = enrolment.id;
-    if (enrolment.camp_type === 'FD') occupancy.fd = enrolment.id;
-    seatOccupancy.set(previousSeat, occupancy);
   }
 
   const formatDate = (date: Date) => {

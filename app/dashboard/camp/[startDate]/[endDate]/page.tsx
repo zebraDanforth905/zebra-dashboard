@@ -1,10 +1,13 @@
-import { fetchCampAccountPrepChecklist, fetchCampLmsChecklist, fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
+import { fetchCampAccountPrepChecklist, fetchCampLmsChecklist, fetchCampActivitySchedule, fetchCampPrintLog, fetchUpcomingCampSessionsWithEnrolments } from '@/app/lib/data';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon, PrinterIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import CampMonthlyReport from '@/app/ui/camp/camp-monthly-report';
 import CampLmsChecklist from '@/app/ui/camp/camp-lms-checklist';
 import CampAccountPrepChecklist from '@/app/ui/camp/camp-account-prep-checklist';
+import CampActivitySchedule from '@/app/ui/camp/camp-activity-schedule';
+import CampPrintLog from '@/app/ui/camp/camp-print-log';
+import CampWeekTabs from '@/app/ui/camp/camp-week-tabs';
 import { connection } from 'next/server';
 
 type DayEnrolments = {
@@ -111,10 +114,12 @@ export default async function CampSessionPage({
   const weekEnd = new Date(parsedWeekEnd);
   weekEnd.setHours(23, 59, 59, 999);
 
-  const [sessions, lmsChecklist, accountPrepChecklist] = await Promise.all([
+  const [sessions, lmsChecklist, accountPrepChecklist, activityScheduleCells, printLogEntries] = await Promise.all([
     fetchUpcomingCampSessionsWithEnrolments(),
     fetchCampLmsChecklist(startDate, endDate),
     fetchCampAccountPrepChecklist(startDate, endDate),
+    fetchCampActivitySchedule(startDate),
+    fetchCampPrintLog(startDate),
   ]);
 
   const report = {
@@ -231,22 +236,36 @@ export default async function CampSessionPage({
 
       <CampMonthlyReport reports={weekReport} heading="Weekly Enrollment Summary" />
 
-      <CampAccountPrepChecklist
-        scopeLabel={report.label}
-        checklist={accountPrepChecklist}
-      />
-
-      <CampLmsChecklist
-        startDate={startDate}
-        endDate={endDate}
-        checklist={lmsChecklist}
-      />
-
+      <CampWeekTabs
+        schedule={
+          <CampActivitySchedule
+            weekStart={startDate}
+            weekLabel={report.label}
+            cells={activityScheduleCells}
+          />
+        }
+        printLog={
+          <CampPrintLog
+            weekStart={startDate}
+            weekLabel={report.label}
+            entries={printLogEntries}
+          />
+        }
+        accountPrep={
+          <CampAccountPrepChecklist
+            scopeLabel={report.label}
+            checklist={accountPrepChecklist}
+          />
+        }
+        lms={
+          <CampLmsChecklist
+            startDate={startDate}
+            endDate={endDate}
+            checklist={lmsChecklist}
+          />
+        }
+        campDays={
       <div className="mt-4">
-        <h2 className="text-lg font-bold text-slate-900 mb-3 pb-2 border-b border-slate-300">
-          Camp Days
-        </h2>
-
         {weekDays.length === 0 ? (
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-6 text-slate-600 text-sm">
             No camp days found for this week.
@@ -313,6 +332,8 @@ export default async function CampSessionPage({
           </div>
         )}
       </div>
+        }
+      />
     </div>
   );
 }

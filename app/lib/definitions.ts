@@ -624,6 +624,23 @@ export type CampPrintableScheduleRow = {
   parent_request_notes: string | null;
 };
 
+export type CampActivityScheduleCell = {
+  block_key: string;
+  room: string;
+  weekday: number;
+  activity: string | null;
+};
+
+export type CampPrintLogStatus = '' | 'ready' | 'printing' | 'done';
+
+export type CampPrintLogEntry = {
+  id: number;
+  student: string | null;
+  print_description: string | null;
+  status: string | null;
+  notes: string | null;
+};
+
 export type CampPrintableStudentListField =
   | 'student'
   | 'birthday'

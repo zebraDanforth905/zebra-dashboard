@@ -3218,6 +3218,56 @@ export async function fetchSeatAssignments(date: Date | string) {
   }
 }
 
+export async function fetchCampActivitySchedule(weekStart: Date | string) {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const weekStartKey = toLocalDateKey(weekStart);
+
+    const rows = await sql<Array<{
+      block_key: string;
+      room: string;
+      weekday: number;
+      activity: string | null;
+    }>>`
+      SELECT block_key, room, weekday, activity
+      FROM camp_activity_schedules
+      WHERE week_start = ${weekStartKey}::date
+    `;
+
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp activity schedule.');
+  }
+}
+
+export async function fetchCampPrintLog(weekStart: Date | string) {
+  'use cache'
+  cacheTag('camps');
+  try {
+    const weekStartKey = toLocalDateKey(weekStart);
+
+    const rows = await sql<Array<{
+      id: number;
+      student: string | null;
+      print_description: string | null;
+      status: string | null;
+      notes: string | null;
+    }>>`
+      SELECT id, student, print_description, status, notes
+      FROM camp_print_log
+      WHERE week_start = ${weekStartKey}::date
+      ORDER BY position ASC, id ASC
+    `;
+
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch camp print log.');
+  }
+}
+
 export async function fetchMostRecentSeatAssignmentsInWeek(
   enrolmentIds: string[],
   targetDate: Date | string,

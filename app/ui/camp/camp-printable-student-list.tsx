@@ -119,36 +119,36 @@ export default function CampPrintableStudentList({
 }) {
   return (
     <section className="camp-print-packet-page camp-print-student-list-page bg-white text-black">
-      <div className="mb-3 flex items-start justify-between gap-4 print:mb-2">
+      <div className="mb-3 flex items-start justify-between gap-4">
         <div>
-          <div className="text-xs font-bold uppercase text-slate-500 print:text-[8px]">Zebra Robotics</div>
-          <h2 className="text-3xl font-bold leading-tight text-slate-950 print:text-xl">Student List</h2>
-          <p className="text-base font-semibold text-slate-700 print:text-[10px]">Week of {weekLabel}</p>
+          <div className="text-xs font-bold uppercase text-slate-500">Zebra Robotics</div>
+          <h2 className="text-3xl font-bold leading-tight text-slate-950">Student List</h2>
+          <p className="text-base font-semibold text-slate-700">Week of {weekLabel}</p>
         </div>
         <div className="text-right">
-          <div className="text-3xl font-bold print:text-xl">{students.length}</div>
-          <div className="text-xs font-bold uppercase text-slate-500 print:text-[8px]">campers</div>
+          <div className="text-3xl font-bold">{students.length}</div>
+          <div className="text-xs font-bold uppercase text-slate-500">campers</div>
         </div>
       </div>
 
       <table className="w-full table-fixed border-collapse text-left">
         <thead>
           <tr className="bg-[#234f8f] text-white">
-            <th className="w-[12%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Student</th>
-            <th className="w-[8%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Birthday</th>
-            <th className="w-[14%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Parent</th>
-            <th className="w-[7%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Type</th>
-            <th className="w-[15%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Camp</th>
-            <th className="w-[8%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Days</th>
-            <th className="w-[7%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Room</th>
-            <th className="w-[15%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Allergy / Medical</th>
-            <th className="w-[14%] border border-slate-700 p-1 text-[8px] uppercase print:p-0.5 print:text-[6.5px]">Notes</th>
+            <th className="w-[12%] border border-slate-700 p-1 text-[8px] uppercase">Student</th>
+            <th className="w-[8%] border border-slate-700 p-1 text-[8px] uppercase">Birthday</th>
+            <th className="w-[14%] border border-slate-700 p-1 text-[8px] uppercase">Parent</th>
+            <th className="w-[7%] border border-slate-700 p-1 text-[8px] uppercase">Type</th>
+            <th className="w-[15%] border border-slate-700 p-1 text-[8px] uppercase">Camp</th>
+            <th className="w-[8%] border border-slate-700 p-1 text-[8px] uppercase">Days</th>
+            <th className="w-[7%] border border-slate-700 p-1 text-[8px] uppercase">Room</th>
+            <th className="w-[15%] border border-slate-700 p-1 text-[8px] uppercase">Allergy / Medical</th>
+            <th className="w-[14%] border border-slate-700 p-1 text-[8px] uppercase">Notes</th>
           </tr>
         </thead>
         <tbody>
           {students.map((student) => (
             <tr key={student.key} className="camp-print-student-row align-top">
-              <td className="border border-slate-400 p-1 text-[8px] font-bold leading-tight print:p-0.5 print:text-[6.8px]">
+              <td className="border border-slate-400 p-1 text-[8px] font-bold leading-tight">
                 <EditableCell
                   field="student"
                   label={`${student.studentName} student name`}
@@ -158,7 +158,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight print:p-0.5 print:text-[6.5px]">
+              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight">
                 <EditableCell
                   field="birthday"
                   label={`${student.studentName} birthday`}
@@ -168,7 +168,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight print:p-0.5 print:text-[6.5px]">
+              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight">
                 <EditableCell
                   field="parent"
                   label={`${student.studentName} parent`}
@@ -178,7 +178,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7.5px] font-bold leading-tight print:p-0.5 print:text-[6.5px]">
+              <td className="border border-slate-400 p-1 text-[7.5px] font-bold leading-tight">
                 <EditableCell
                   field="type"
                   label={`${student.studentName} camp type`}
@@ -188,7 +188,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight print:p-0.5 print:text-[6.5px]">
+              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight">
                 <EditableCell
                   field="camp"
                   label={`${student.studentName} camp`}
@@ -198,7 +198,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight print:p-0.5 print:text-[6.5px]">
+              <td className="border border-slate-400 p-1 text-[7.5px] leading-tight">
                 <EditableCell
                   field="days"
                   label={`${student.studentName} days`}
@@ -208,7 +208,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7.5px] font-bold leading-tight print:p-0.5 print:text-[6.5px]">
+              <td className="border border-slate-400 p-1 text-[7.5px] font-bold leading-tight">
                 <EditableCell
                   field="room"
                   label={`${student.studentName} room`}
@@ -218,7 +218,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7px] leading-tight print:p-0.5 print:text-[6px]">
+              <td className="border border-slate-400 p-1 text-[7px] leading-tight">
                 <EditableCell
                   field="medical"
                   label={`${student.studentName} allergy or medical`}
@@ -228,7 +228,7 @@ export default function CampPrintableStudentList({
                   weekEnd={weekEnd}
                 />
               </td>
-              <td className="border border-slate-400 p-1 text-[7px] leading-tight print:p-0.5 print:text-[6px]">
+              <td className="border border-slate-400 p-1 text-[7px] leading-tight">
                 <EditableCell
                   field="notes"
                   label={`${student.studentName} notes`}

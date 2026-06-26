@@ -27,13 +27,7 @@ body {
   }
   
   @page {
-    size: letter;
     margin: 0.5cm;
-  }
-
-  @page camp-student-list {
-    size: letter landscape;
-    margin: 0.25in;
   }
   
   /* Page break before small slips that follow big slips */
@@ -51,6 +45,8 @@ body {
   .camp-print-room {
     page-break-after: always;
     break-after: page;
+    min-height: auto;
+    padding: 0.08in;
   }
 
   .camp-print-room:last-child {
@@ -73,12 +69,23 @@ body {
     break-after: page;
     min-height: 100vh;
     padding: 0.2in 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .camp-print-packet-page * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .camp-print-student-list-page {
-    page: camp-student-list;
     min-height: auto;
     padding: 0.05in 0;
+  }
+
+  .camp-print-portrait-page {
+    min-height: auto;
+    padding: 0.08in 0;
   }
 
   .camp-print-packet-page:last-child {

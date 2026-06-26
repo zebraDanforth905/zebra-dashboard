@@ -1,4 +1,5 @@
 import PrintButton from '@/app/ui/print-button';
+import CampPrintableSeatingChartCard from '@/app/ui/camp/camp-printable-seating-chart-card';
 import CampPrintableStudentList, {
   type CampPrintableStudentListRow,
 } from '@/app/ui/camp/camp-printable-student-list';
@@ -194,8 +195,18 @@ function normalizeRoomLabel(value: string) {
 
 function assignedSeatForDate(row: CampPrintableScheduleRow, day: Date) {
   const dateKey = getDateKey(day);
-  const datedSeat = (row.seat_assignments ?? []).find((assignment) => assignment.date === dateKey)?.seat;
-  return datedSeat ?? row.assigned_seat_number;
+  const assignments = row.seat_assignments ?? [];
+  const datedSeat = assignments.find((assignment) => assignment.date === dateKey)?.seat;
+  if (datedSeat != null) return datedSeat;
+
+  // Seat assignments are effectively one-per-enrolment (saving a seat moves the
+  // single row's date), so an exact date match only succeeds on the one day the
+  // seat was last saved. Carry the camper's most recent saved seat (then their
+  // default seat) onto every day they attend; otherwise charts for the other
+  // camp days come back empty and the day/room is dropped from the packet.
+  const mostRecentSeat =
+    assignments.length > 0 ? assignments[assignments.length - 1].seat : null;
+  return mostRecentSeat ?? row.assigned_seat_number;
 }
 
 function uniqueCleanValues(values: Array<string | null | undefined>) {
@@ -379,35 +390,35 @@ function PrintableCamperCard({ row }: { row: CampPrintableScheduleRow }) {
   const course = courseLabelForCard(row);
 
   return (
-    <div className="relative bg-white border rounded-md p-1 text-xs border-slate-200">
-      <h3 className="font-semibold text-slate-900 text-xs mb-0.5 pr-1 truncate">{row.student_name}</h3>
+    <div className="relative bg-white border rounded-md p-1 text-xs print:p-0.5 print:text-[10px] border-slate-200">
+      <h3 className="font-semibold text-slate-900 text-xs print:text-[9px] mb-0.5 pr-1 truncate">{row.student_name}</h3>
 
-      <div className="space-y-1">
-        <div className="flex items-center gap-0.5 text-[10px] text-slate-600">
-          <CakeIcon className="h-2.5 w-2.5" />
+      <div className="space-y-1 print:space-y-0.5">
+        <div className="flex items-center gap-0.5 text-[10px] print:text-[8px] text-slate-600">
+          <CakeIcon className="h-2.5 w-2.5 print:h-2 print:w-2" />
           <span>{formatDob(row.dob)}</span>
         </div>
 
         <div className="flex flex-wrap gap-0.5">
-          <span className={`px-1 py-0.5 text-[10px] font-medium rounded ${badge.className}`}>
+          <span className={`px-1 py-0.5 text-[10px] print:text-[8px] font-medium rounded ${badge.className}`}>
             {badge.label}
           </span>
           {row.extended_care && (
-            <span className="px-1 py-0.5 text-[10px] font-medium rounded bg-purple-100 text-purple-700">
+            <span className="px-1 py-0.5 text-[10px] print:text-[8px] font-medium rounded bg-purple-100 text-purple-700">
               Ext Care
             </span>
           )}
           {course && (
-            <span className="px-1 py-0.5 text-[10px] font-medium rounded bg-slate-100 text-slate-700">
+            <span className="px-1 py-0.5 text-[10px] print:text-[8px] font-medium rounded bg-slate-100 text-slate-700">
               {course}
             </span>
           )}
         </div>
 
         {rosterNote && (
-          <div className="mt-1 border border-slate-200 rounded-md p-1 bg-slate-50/80">
-            <span className="text-[10px] font-semibold text-slate-700">Roster Note: </span>
-            <span className="text-[10px] text-slate-700 whitespace-pre-wrap break-words">{rosterNote}</span>
+          <div className="mt-1 border border-slate-200 rounded-md p-1 print:p-0.5 bg-slate-50/80">
+            <span className="text-[10px] print:text-[8px] font-semibold text-slate-700">Roster Note: </span>
+            <span className="text-[10px] print:text-[8px] text-slate-700 whitespace-pre-wrap break-words">{rosterNote}</span>
           </div>
         )}
       </div>
@@ -460,21 +471,21 @@ function renderPrintRoomForDay(roomConfig: PrintableRoomConfig, dayRows: CampPri
   });
 
   return (
-    <section key={`${getDateKey(day)}-${roomConfig.name}`} className="camp-print-room bg-white text-black border border-slate-200 rounded-lg p-2">
-      <div className="mb-2 border-b border-slate-300 pb-1.5">
-        <h2 className="text-lg font-bold tracking-tight text-slate-900">{roomConfig.name}</h2>
-        <p className="text-sm font-semibold text-slate-700">{formatDayLabel(day)}</p>
+    <section key={`${getDateKey(day)}-${roomConfig.name}`} className="camp-print-room bg-white text-black border border-slate-200 rounded-lg p-2 print:p-1.5">
+      <div className="mb-2 print:mb-1 border-b border-slate-300 pb-1.5 print:pb-1">
+        <h2 className="text-lg print:text-base font-bold tracking-tight text-slate-900">{roomConfig.name}</h2>
+        <p className="text-sm print:text-xs font-semibold text-slate-700">{formatDayLabel(day)}</p>
       </div>
 
       <div>
         <div
-          className="mb-1 grid gap-1"
+          className="mb-1 grid gap-1 print:gap-0.5"
           style={{
             gridTemplateColumns: Array.from({ length: roomConfig.cols }, (_, i) =>
               printColsWithSeats.has(i) ? 'minmax(0, 1fr)' : '0.35in'
             ).join(' '),
             gridTemplateRows: Array.from({ length: roomConfig.rows }, (_, i) =>
-              printRowsWithSeats.has(i) ? 'minmax(1.2in, auto)' : '0.14in'
+              printRowsWithSeats.has(i) ? 'minmax(0.9in, auto)' : '0.1in'
             ).join(' ')
           }}
         >
@@ -494,7 +505,7 @@ function renderPrintRoomForDay(roomConfig: PrintableRoomConfig, dayRows: CampPri
             return (
               <div
                 key={`print-seat-${getDateKey(day)}-${absoluteSeatNumber}`}
-                className="relative border border-slate-200 rounded-md p-1 min-h-[98px] bg-slate-50/60"
+                className="relative border border-slate-200 rounded-md p-1 print:p-0.5 min-h-[98px] print:min-h-[72px] bg-slate-50/60"
               >
                 {fdRow ? (
                   <PrintableCamperCard row={fdRow} />
@@ -503,7 +514,7 @@ function renderPrintRoomForDay(roomConfig: PrintableRoomConfig, dayRows: CampPri
                     {amRow ? (
                       <PrintableCamperCard row={amRow} />
                     ) : (
-                      <div className="h-8 flex items-center justify-center text-slate-400 text-[10px] border border-slate-200 rounded bg-yellow-50/50">
+                      <div className="h-8 print:h-6 flex items-center justify-center text-slate-400 text-[10px] print:text-[8px] border border-slate-200 rounded bg-yellow-50/50">
                         AM
                       </div>
                     )}
@@ -511,7 +522,7 @@ function renderPrintRoomForDay(roomConfig: PrintableRoomConfig, dayRows: CampPri
                     {pmRow ? (
                       <PrintableCamperCard row={pmRow} />
                     ) : (
-                      <div className="h-8 flex items-center justify-center text-slate-400 text-[10px] border border-slate-200 rounded bg-orange-50/50">
+                      <div className="h-8 print:h-6 flex items-center justify-center text-slate-400 text-[10px] print:text-[8px] border border-slate-200 rounded bg-orange-50/50">
                         PM
                       </div>
                     )}
@@ -539,7 +550,14 @@ function PrintableWeeklySeatingCharts({
         const dayRows = rows.filter((row) => isActiveOnDate(row, day));
         return PRINTABLE_ROOM_ORDER
           .filter((roomConfig) => getRoomRosterForDay(roomConfig, dayRows, day).length > 0)
-          .map((roomConfig) => renderPrintRoomForDay(roomConfig, dayRows, day));
+          .map((roomConfig) => (
+            <CampPrintableSeatingChartCard
+              key={`${getDateKey(day)}-${roomConfig.name}`}
+              label={`${roomConfig.name} — ${formatDayLabel(day)}`}
+            >
+              {renderPrintRoomForDay(roomConfig, dayRows, day)}
+            </CampPrintableSeatingChartCard>
+          ));
       })}
     </>
   );
@@ -554,27 +572,27 @@ function SignInSpecialInstructions({
 }) {
   const rows = paddedRows(
     students.filter((student) => student.specialInstruction),
-    7
+    9
   );
 
   return (
-    <section className="camp-print-packet-page bg-white text-black">
-      <h2 className="mb-4 text-center text-4xl font-bold leading-tight">
+    <section className="camp-print-packet-page camp-print-portrait-page bg-white text-black">
+      <h2 className="mb-4 print:mb-2 text-center text-4xl print:text-2xl font-bold leading-tight">
         Weekly Sign-in/out Special Instructions
       </h2>
-      <p className="mb-3 text-center text-sm font-semibold text-slate-700">
+      <p className="mb-3 print:mb-2 text-center text-sm print:text-xs font-semibold text-slate-700">
         Week of {formatDateRange(schedule.start_date, schedule.end_date)}
       </p>
       <table className="w-full border-collapse text-left">
         <thead>
           <tr>
-            <th className="w-[25%] border-2 border-black p-6 text-center text-3xl font-bold text-blue-400">
+            <th className="w-[25%] border-2 border-black p-6 print:p-2 text-center text-3xl print:text-lg font-bold text-blue-400">
               Student
             </th>
-            <th className="w-[25%] border-2 border-black p-6 text-center text-3xl font-bold text-blue-400">
+            <th className="w-[25%] border-2 border-black p-6 print:p-2 text-center text-3xl print:text-lg font-bold text-blue-400">
               Parent Info
             </th>
-            <th className="w-[50%] border-2 border-black p-6 text-center text-3xl font-bold text-blue-400">
+            <th className="w-[50%] border-2 border-black p-6 print:p-2 text-center text-3xl print:text-lg font-bold text-blue-400">
               Special Instruction
             </th>
           </tr>
@@ -582,13 +600,13 @@ function SignInSpecialInstructions({
         <tbody>
           {rows.map((student, index) => (
             <tr key={student?.key ?? `blank-sign-in-${index}`}>
-              <td className="h-32 border-2 border-black p-2 text-xl align-top">
+              <td className="h-32 print:h-20 border-2 border-black p-2 print:p-1 text-xl print:text-sm align-top">
                 {student?.studentName}
               </td>
-              <td className="h-32 whitespace-pre-wrap border-2 border-black p-2 text-xl align-top">
+              <td className="h-32 print:h-20 whitespace-pre-wrap border-2 border-black p-2 print:p-1 text-xl print:text-sm align-top">
                 {student ? [student.parentName, student.parentPhone].filter(Boolean).join('\n') : ''}
               </td>
-              <td className="h-32 whitespace-pre-wrap border-2 border-black p-2 text-xl align-top">
+              <td className="h-32 print:h-20 whitespace-pre-wrap border-2 border-black p-2 print:p-1 text-xl print:text-sm align-top">
                 {student?.specialInstruction}
               </td>
             </tr>
@@ -608,30 +626,30 @@ function MedicalAlertSheet({
 }) {
   const rows = paddedRows(
     students.filter((student) => student.medicalAlert),
-    6
+    8
   );
 
   return (
-    <section className="camp-print-packet-page bg-white text-black">
-      <h2 className="mb-4 text-center text-4xl font-bold uppercase leading-tight text-red-400">
+    <section className="camp-print-packet-page camp-print-portrait-page bg-white text-black">
+      <h2 className="mb-4 print:mb-2 text-center text-4xl print:text-2xl font-bold uppercase leading-tight text-red-400">
         Allergy and Medical Alert
       </h2>
-      <p className="mb-3 text-center text-sm font-semibold text-slate-700">
+      <p className="mb-3 print:mb-2 text-center text-sm print:text-xs font-semibold text-slate-700">
         Week of {formatDateRange(schedule.start_date, schedule.end_date)}
       </p>
       <table className="w-full border-collapse text-left">
         <thead>
           <tr>
-            <th className="w-[22%] border-2 border-black p-6 text-center text-3xl font-bold text-blue-400">
+            <th className="w-[22%] border-2 border-black p-6 print:p-2 text-center text-3xl print:text-lg font-bold text-blue-400">
               Student
             </th>
-            <th className="w-[26%] border-2 border-black p-6 text-center text-3xl font-bold text-blue-400">
+            <th className="w-[26%] border-2 border-black p-6 print:p-2 text-center text-3xl print:text-lg font-bold text-blue-400">
               Parent Name
             </th>
-            <th className="w-[21%] border-2 border-black p-6 text-center text-3xl font-bold text-blue-400">
+            <th className="w-[21%] border-2 border-black p-6 print:p-2 text-center text-3xl print:text-lg font-bold text-blue-400">
               Phone Number
             </th>
-            <th className="w-[31%] border-2 border-black p-6 text-center text-3xl font-bold text-blue-400">
+            <th className="w-[31%] border-2 border-black p-6 print:p-2 text-center text-3xl print:text-lg font-bold text-blue-400">
               Allergy/Medical Alert
             </th>
           </tr>
@@ -639,16 +657,16 @@ function MedicalAlertSheet({
         <tbody>
           {rows.map((student, index) => (
             <tr key={student?.key ?? `blank-medical-${index}`}>
-              <td className="h-28 border-2 border-black p-2 text-xl align-top">
+              <td className="h-28 print:h-20 border-2 border-black p-2 print:p-1 text-xl print:text-sm align-top">
                 {student?.studentName}
               </td>
-              <td className="h-28 border-2 border-black p-2 text-xl align-top">
+              <td className="h-28 print:h-20 border-2 border-black p-2 print:p-1 text-xl print:text-sm align-top">
                 {student?.parentName}
               </td>
-              <td className="h-28 border-2 border-black p-2 text-xl align-top">
+              <td className="h-28 print:h-20 border-2 border-black p-2 print:p-1 text-xl print:text-sm align-top">
                 {student?.parentPhone}
               </td>
-              <td className="h-28 whitespace-pre-wrap border-2 border-black p-2 text-xl align-top">
+              <td className="h-28 print:h-20 whitespace-pre-wrap border-2 border-black p-2 print:p-1 text-xl print:text-sm align-top">
                 {student?.medicalAlert}
               </td>
             </tr>
