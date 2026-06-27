@@ -127,7 +127,9 @@ export type PortalStudentEnrolment = {
     start_time?: string;
     end_time?: string;
     enddate?: string | null;
+    startdate?: string | null;
     active_id?: number;
+    is_active?: number; // 1 = the student is currently active in this batch
   }[];
 };
 
@@ -505,4 +507,253 @@ export async function fetchCampEnrolments(opts: {
 
   return data ? [data] : [];
 
-} 
+}
+
+// ── Attendance marking (writes) ───────────────────────────────────────────────
+//
+// POST /batches/attendance records attendance for one batch on one date. The
+// payload mirrors the portal UI's own save (captured via DevTools). The status
+// (Present / Absent / etc.) is carried by `attendance_id` — it is the id of the
+// attendance-value lookup, NOT a per-student record id. Values below are the
+// branch's lookup ids, confirmed against the portal's status dropdown.
+//
+// Like the enrolment writes above, this MUTATES the live portal — keep it behind
+// manual dashboard actions and never call it from the automated scrape.
+
+export const ATTENDANCE_STATUS = {
+  Present: 2660,
+  "Vacation Leave": 2661,
+  "Sick Leave": 2662,
+  "Emergency Leave": 2663,
+  Absent: 2664,
+  Unmarked: 2665,
+} as const;
+
+export type AttendanceStatus = keyof typeof ATTENDANCE_STATUS;
+
+// role_id the portal stamps on student attendance rows (6 = Student).
+const ATTENDANCE_STUDENT_ROLE_ID = 6;
+
+// Normalize a clock time to the portal's "HH:MM:SS" form. Accepts "9:30",
+// "09:30", "09:30:00" (and is forgiving of stray whitespace).
+function normalizeTime(t: string): string {
+  const parts = t.trim().split(":");
+  if (parts.length < 2) throw new Error(`Unrecognized time: "${t}"`);
+  const [h, m, s = "0"] = parts;
+  const pad2 = (n: string) => n.padStart(2, "0");
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
+}
+
+export type AttendanceBatchMatch = {
+  batchId: number;
+  courseId: number;
+  courseName: string;
+  day: string;
+  startTime: string;
+  endTime: string | null;
+  enrolment: PortalStudentEnrolment;
+};
+
+// Resolves which batch an attendance mark applies to, by matching a day + time
+// against the student's current enrolments. This is the "look at all their
+// active enrolments and match to one" step: a student can be in several batches,
+// and the attendance POST is keyed by batch_id, so we pick the batch whose
+// day/start_time (and end_time, if supplied) line up with the slot being marked.
+//
+// Prefers batches the student is still active in (is_active === 1); dedupes by
+// batch_id (the same batch can appear under multiple student_batch rows). Throws
+// a descriptive error if nothing matches, or if the slot is genuinely ambiguous
+// (two different batches share the same day/time).
+export async function findEnrolmentBatchForSlot(
+  studentId: number,
+  day: string,
+  startTime: string,
+  endTime?: string,
+): Promise<AttendanceBatchMatch> {
+  const enrolments = await fetchStudentEnrolments(studentId);
+  const wantDay = day.trim().toLowerCase();
+  const wantStart = normalizeTime(startTime);
+  const wantEnd = endTime ? normalizeTime(endTime) : null;
+
+  type Cand = AttendanceBatchMatch & { active: boolean };
+  const candidates: Cand[] = [];
+
+  for (const enr of enrolments) {
+    for (const b of enr.batches ?? []) {
+      if (!b.day || !b.start_time) continue;
+      if (b.day.trim().toLowerCase() !== wantDay) continue;
+      if (normalizeTime(b.start_time) !== wantStart) continue;
+      if (wantEnd && b.end_time && normalizeTime(b.end_time) !== wantEnd) continue;
+      candidates.push({
+        batchId: b.batch_id,
+        courseId: enr.course_id,
+        courseName: enr.course_name,
+        day: b.day,
+        startTime: b.start_time,
+        endTime: b.end_time ?? null,
+        enrolment: enr,
+        active: b.is_active === 1,
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    throw new Error(
+      `No enrolment for student ${studentId} matches ${day} ${wantStart}` +
+        (wantEnd ? `-${wantEnd}` : ""),
+    );
+  }
+
+  // Prefer batches the student is still active in, then collapse duplicates that
+  // resolve to the same batch_id (same class under multiple enrolment rows).
+  const active = candidates.filter((c) => c.active);
+  const pool = active.length ? active : candidates;
+  const distinct = [...new Map(pool.map((c) => [c.batchId, c])).values()];
+
+  if (distinct.length > 1) {
+    throw new Error(
+      `Ambiguous attendance slot for student ${studentId} on ${day} ${wantStart}: ` +
+        `matches batches ${distinct.map((c) => c.batchId).join(", ")}. Pass endTime to disambiguate.`,
+    );
+  }
+
+  return distinct[0];
+}
+
+// Cached student_id -> {firstName,lastName} map, built from the branch-wide class
+// report (the only readily-available source that pairs student_id with a name).
+// The portal stores first/last separately but the report combines them, so we
+// split on the first space: first token = first name, remainder = last name.
+let studentNameCache: { map: Map<number, { firstName: string; lastName: string }>; exp: number } = {
+  map: new Map(),
+  exp: 0,
+};
+
+async function getStudentNameMap(
+  branchId: number = DEFAULT_BRANCH_ID,
+): Promise<Map<number, { firstName: string; lastName: string }>> {
+  const now = Date.now();
+  if (studentNameCache.map.size && studentNameCache.exp > now) return studentNameCache.map;
+
+  const rows = await fetchEnrolmentReportJSON({
+    endpoint: "class",
+    branchId,
+    activeId: 1,
+    day: "All",
+  });
+
+  const map = new Map<number, { firstName: string; lastName: string }>();
+  for (const r of rows as any[]) {
+    const id = Number(r?.student_id);
+    const full = String(r?.student_name ?? "").trim();
+    if (!id || !full || map.has(id)) continue;
+    const sp = full.indexOf(" ");
+    const firstName = sp === -1 ? full : full.slice(0, sp);
+    const lastName = sp === -1 ? "" : full.slice(sp + 1).trim();
+    map.set(id, { firstName, lastName });
+  }
+
+  studentNameCache = { map, exp: now + 10 * 60 * 1000 }; // 10 min
+  return map;
+}
+
+// Best-effort first/last name for a student id, used to populate the attendance
+// payload when the caller hasn't supplied a name. Returns null if not found.
+export async function resolveStudentName(
+  studentId: number,
+  branchId: number = DEFAULT_BRANCH_ID,
+): Promise<{ firstName: string; lastName: string } | null> {
+  const map = await getStudentNameMap(branchId);
+  return map.get(studentId) ?? null;
+}
+
+export type AttendanceStudentEntry = {
+  user_id: number;
+  role_id: number;
+  first_name: string;
+  last_name: string;
+  attendance_id: number; // status code (see ATTENDANCE_STATUS)
+  modified_on: string;
+  makeup: boolean;
+};
+
+// Low-level write: records the given student_list for one batch on one date.
+// Mirrors the portal's own POST exactly. The portal sends the whole roster in
+// one call; this helper accepts any subset so callers can mark one student or
+// many. Prefer markStudentAttendance for the common single-student case.
+export async function postBatchAttendance(opts: {
+  batchId: number;
+  date: string; // "YYYY-MM-DD"
+  students: AttendanceStudentEntry[];
+  comment?: string;
+  attendanceWeekId?: number | null;
+}): Promise<void> {
+  const modifiedBy = await getPortalUserId();
+  const body = {
+    attendance_week_id: opts.attendanceWeekId ?? null,
+    comment: opts.comment ?? "",
+    attendance_date: opts.date,
+    batch_id: opts.batchId,
+    modified_by: modifiedBy,
+    student_list: opts.students,
+  };
+  await portalWrite("POST", `/batches/attendance`, body);
+}
+
+// One-call attendance mark: given a student + the slot's day/time + the date +
+// makeup flag + status, resolve the batch from the student's enrolments and POST.
+// first/last name are optional — supply them when you already have them (e.g. the
+// roster row being clicked) to skip the name lookup; otherwise they're resolved
+// from the class report.
+export async function markStudentAttendance(opts: {
+  studentId: number;
+  day: string;
+  startTime: string;
+  endTime?: string;
+  date: string; // "YYYY-MM-DD"
+  makeup: boolean;
+  status: AttendanceStatus;
+  firstName?: string;
+  lastName?: string;
+  comment?: string;
+  roleId?: number;
+}): Promise<{ batchId: number; courseName: string }> {
+  const match = await findEnrolmentBatchForSlot(
+    opts.studentId,
+    opts.day,
+    opts.startTime,
+    opts.endTime,
+  );
+
+  let firstName = opts.firstName;
+  let lastName = opts.lastName;
+  if (firstName == null || lastName == null) {
+    const resolved = await resolveStudentName(opts.studentId);
+    if (!resolved) {
+      throw new Error(
+        `Could not resolve name for student ${opts.studentId}; pass firstName/lastName explicitly.`,
+      );
+    }
+    firstName = firstName ?? resolved.firstName;
+    lastName = lastName ?? resolved.lastName;
+  }
+
+  await postBatchAttendance({
+    batchId: match.batchId,
+    date: opts.date,
+    comment: opts.comment,
+    students: [
+      {
+        user_id: opts.studentId,
+        role_id: opts.roleId ?? ATTENDANCE_STUDENT_ROLE_ID,
+        first_name: firstName,
+        last_name: lastName,
+        attendance_id: ATTENDANCE_STATUS[opts.status],
+        modified_on: new Date().toISOString(),
+        makeup: opts.makeup,
+      },
+    ],
+  });
+
+  return { batchId: match.batchId, courseName: match.courseName };
+}

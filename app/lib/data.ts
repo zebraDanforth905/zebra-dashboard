@@ -2,8 +2,9 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { isSummerScheduleWeek } from './schedule-week';
+import { isSummerScheduleWeek, startOfScheduleWeek } from './schedule-week';
 import { isDateInTerm } from './tdsb-calendar';
+import { fetchAttendanceReport } from './scraper_helpers';
 import {
   InvoiceTableData,
   CustomerTableData,
@@ -822,6 +823,60 @@ const Y = (d: Date) => d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
 
 
 
+// Real attendance status (present/absent/unmarked) for every student in a
+// session on a given date, read live from the portal attendance report. The
+// local DB only records absences, so it can't tell "present" from "unmarked" —
+// this fills that gap to seed the schedule's attendance buttons. Keyed by
+// student_id (as string). NOT cached: it's a live portal read and must reflect
+// the latest marks. Returns {} on any failure so the UI falls back to the
+// local absent flag.
+export async function fetchSessionAttendanceMap(
+  sessionId: string,
+  date?: Date,
+): Promise<Record<string, 'present' | 'absent' | 'unmarked'>> {
+  try {
+    const rows = await sql<{ weekday: Weekday; start_time: string }[]>`
+      SELECT weekday, start_time
+      FROM sessions
+      WHERE id = ${sessionId}
+      LIMIT 1;
+    `;
+    const slot = rows[0];
+    if (!slot) return {};
+
+    const targetDate = date ?? nextOccurrenceOf(slot.weekday);
+    const target = Y(targetDate);
+
+    const branchId = Number(process.env.ZEBRA_BRANCH_ID ?? 20);
+    const raw = await fetchAttendanceReport({ startDate: target, endDate: target, branchId });
+
+    const wantDay = String(slot.weekday).trim().toLowerCase();
+    const wantStart = (slot.start_time ?? '').trim().slice(0, 5); // "HH:MM"
+
+    const map: Record<string, 'present' | 'absent' | 'unmarked'> = {};
+    for (const r of raw as any[]) {
+      const sid = Number(r?.student?.user_id);
+      if (!Number.isFinite(sid)) continue;
+      if (String(r?.batch?.day ?? '').trim().toLowerCase() !== wantDay) continue;
+      if (String(r?.batch?.start_time ?? '').trim().slice(0, 5) !== wantStart) continue;
+
+      const label = String(r?.attendance_value ?? '').trim();
+      // Key by the integer id. students.id is numeric in the DB and serializes
+      // as "15876.00", so the caller normalizes its lookup the same way.
+      map[String(sid)] =
+        label === 'Present'
+          ? 'present'
+          : label === '' || label === 'Unmarked'
+            ? 'unmarked'
+            : 'absent';
+    }
+    return map;
+  } catch (error) {
+    console.error('fetchSessionAttendanceMap failed:', error);
+    return {};
+  }
+}
+
 export async function fetchSessionStudents(sessionId: string, date?: Date) {
   'use cache'
   
@@ -844,6 +899,11 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
     }
 
     const target = Y(targetDate);
+    // Compare an enrolment's end date against the start of the schedule week, not
+    // the specific class day: an enrolment whose end date falls anywhere in this
+    // week (e.g. an arbitrary completion date set on the student page) should
+    // still appear for the whole week, and only drop off from the next week on.
+    const weekStart = Y(startOfScheduleWeek(targetDate));
     const isSummer = isDateInTerm(target, 'summer');
     console.log(target)
 
@@ -884,10 +944,20 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
         ON abs.enrolment_id = e.id
        AND abs.date = ${target}::date
       LEFT JOIN latest_note ln ON ln.student_id = s.id
+      -- A queued (not-yet-fired) inactivation gives the enrolment an effective
+      -- end date before the portal scrape sets e.end_date. Linked by student +
+      -- class slot since enrolments store no portal id.
+      LEFT JOIN future_inactivations fi
+        ON fi.student_id = e.student_id
+       AND fi.class_day = sess.weekday
+       AND LEFT(fi.class_start_time, 5) = LEFT(sess.start_time::text, 5)
       WHERE e.session_id = ${sessionId}
         AND sess.is_summer = ${isSummer}
         AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-        AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
+        AND (
+          COALESCE(e.end_date, fi.end_date) IS NULL
+          OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
+        )
       ORDER BY s.name;
     `;
 
@@ -1021,6 +1091,9 @@ export async function fetchSessionsForDay(
           targetDate = nextOccurrenceOf(day);
         }
         const target = Y(targetDate);
+        // See fetchSessionStudents: an enrolment ending mid-week still counts for
+        // the whole week, so the count badge matches the roster shown.
+        const weekStart = Y(startOfScheduleWeek(targetDate));
         const isSummer = options?.isSummer ?? isSummerScheduleWeek(targetDate);
 
         const sessions = await sql<Session[]>
@@ -1038,9 +1111,16 @@ export async function fetchSessionsForDay(
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS student_count
             FROM enrolments e
+            LEFT JOIN future_inactivations fi
+              ON fi.student_id = e.student_id
+             AND fi.class_day = s.weekday
+             AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
             WHERE e.session_id = s.id
               AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
+              AND (
+                COALESCE(e.end_date, fi.end_date) IS NULL
+                OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
+              )
           ) ec ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS makeup_count
@@ -1058,10 +1138,17 @@ export async function fetchSessionsForDay(
             SELECT COUNT(*) AS absence_count
             FROM absences a
             JOIN enrolments e ON e.id = a.enrolment_id
+            LEFT JOIN future_inactivations fi
+              ON fi.student_id = e.student_id
+             AND fi.class_day = s.weekday
+             AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
             WHERE e.session_id = s.id
               AND a.date = ${target}
               AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-              AND (e.end_date IS NULL OR e.end_date >= ${target}::date)
+              AND (
+                COALESCE(e.end_date, fi.end_date) IS NULL
+                OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
+              )
           ) ac ON true
           WHERE s.weekday = ${day}
             AND s.is_summer = ${isSummer}
@@ -1405,6 +1492,23 @@ export async function fetchStudentsForAssignment(query: string) {
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch students for assignment.');
+  }
+}
+
+// Minimal student record for the edit page header (name + assigned customer).
+export async function fetchStudentName(id: string) {
+  try {
+    const rows = await sql<{ id: string; name: string; customer_name: string | null }[]>`
+      SELECT s.id::text AS id, s.name, c.name AS customer_name
+      FROM students s
+      LEFT JOIN customers c ON c.id = s.customer_id
+      WHERE s.id = ${id}
+      LIMIT 1;
+    `;
+    return rows[0] ?? null;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch student.');
   }
 }
 

@@ -2,10 +2,11 @@
 
 import { useState, type ReactNode } from 'react';
 
-type TabKey = 'days' | 'prep' | 'lms' | 'schedule' | 'staff' | 'printLog';
+type TabKey = 'days' | 'slips' | 'prep' | 'lms' | 'schedule' | 'staff' | 'printLog';
 
 export default function CampWeekTabs({
   campDays,
+  slips,
   accountPrep,
   lms,
   schedule,
@@ -13,6 +14,7 @@ export default function CampWeekTabs({
   printLog,
 }: {
   campDays: ReactNode;
+  slips?: ReactNode;
   accountPrep: ReactNode;
   lms: ReactNode;
   schedule?: ReactNode;
@@ -23,6 +25,7 @@ export default function CampWeekTabs({
 
   const tabs: Array<{ key: TabKey; label: string }> = [
     { key: 'days', label: 'Camp Days' },
+    ...(slips != null ? [{ key: 'slips' as const, label: 'Slips' }] : []),
     { key: 'prep', label: 'Account & Device Prep' },
     { key: 'lms', label: 'LMS Checklist' },
     ...(schedule != null ? [{ key: 'schedule' as const, label: 'Activity Schedule' }] : []),
@@ -57,6 +60,9 @@ export default function CampWeekTabs({
 
       {/* Keep every panel mounted so in-tab state survives tab switches. */}
       <div className={activeTab === 'days' ? '' : 'hidden'}>{campDays}</div>
+      {slips != null ? (
+        <div className={activeTab === 'slips' ? '' : 'hidden'}>{slips}</div>
+      ) : null}
       <div className={activeTab === 'prep' ? '' : 'hidden'}>{accountPrep}</div>
       <div className={activeTab === 'lms' ? '' : 'hidden'}>{lms}</div>
       {schedule != null ? (
