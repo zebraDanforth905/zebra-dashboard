@@ -6,8 +6,10 @@ import {
   listStudentPortalEnrolments,
   loadSummerEnrolOptions,
   addPortalEnrolmentForSummerSession,
-  markPortalEnrolmentInactive,
 } from '@/app/lib/actions';
+import { listPendingInactivations } from '@/app/lib/inactivation-actions';
+import ManageInactivationModal from '@/app/ui/students/manage-inactivation-modal';
+import type { EnrolmentView } from '@/app/ui/students/student-enrolments';
 import {
   SessionChoiceSummary,
   SummerResponseRow,
@@ -951,11 +953,37 @@ type PortalEnrolmentRow = {
   batches: Array<{ batch_id: number; day?: string; start_time?: string }>;
 };
 
-function CurrentEnrolmentsCell({ studentId }: { studentId: string }) {
+// Map a portal enrolment row into the EnrolmentView shape the shared
+// ManageInactivationModal expects (it reuses the same scheduling action as the
+// students edit page).
+function toEnrolmentView(enrolment: PortalEnrolmentRow): EnrolmentView {
+  const batch = enrolment.batches[0];
+  return {
+    studentBatchId: enrolment.student_batch_id,
+    courseName: enrolment.course_name,
+    subCourseCode: enrolment.sub_course_code,
+    totalAmount: enrolment.total_amount,
+    enrolledOn: null,
+    isCurrent: true,
+    batch: batch
+      ? {
+          batchId: batch.batch_id,
+          day: batch.day ?? '',
+          startTime: batch.start_time ?? '',
+          endTime: '',
+          endDate: null,
+        }
+      : null,
+  };
+}
+
+function CurrentEnrolmentsCell({ studentId, studentName }: { studentId: string; studentName: string }) {
   const [enrolments, setEnrolments] = useState<PortalEnrolmentRow[] | null>(null);
+  // student_batch_id -> queued end date (YYYY-MM-DD) for a scheduled unenrol.
+  const [pending, setPending] = useState<Record<number, string>>({});
+  const [ending, setEnding] = useState<EnrolmentView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isPending, startTransition] = useTransition();
 
   const parsedStudentId = Number(studentId);
 
@@ -967,8 +995,11 @@ function CurrentEnrolmentsCell({ studentId }: { studentId: string }) {
     }
     setIsLoading(true);
     setError(null);
-    listStudentPortalEnrolments(parsedStudentId)
-      .then((result) => {
+    Promise.all([
+      listStudentPortalEnrolments(parsedStudentId),
+      listPendingInactivations(parsedStudentId),
+    ])
+      .then(([result, pendingRows]) => {
         if (!isMounted) return;
         if (!result.ok) {
           setError(result.error);
@@ -976,6 +1007,7 @@ function CurrentEnrolmentsCell({ studentId }: { studentId: string }) {
           return;
         }
         setEnrolments(result.enrolments as PortalEnrolmentRow[]);
+        setPending(Object.fromEntries(pendingRows.map((row) => [row.studentBatchId, row.endDate])));
       })
       .catch((e) => {
         if (!isMounted) return;
@@ -991,6 +1023,24 @@ function CurrentEnrolmentsCell({ studentId }: { studentId: string }) {
     };
   }, [parsedStudentId]);
 
+  function handleInactivationChanged(
+    studentBatchId: number,
+    endDate: string | null,
+    action: 'now' | 'scheduled' | 'cancelled',
+  ) {
+    setPending((prev) => {
+      const next = { ...prev };
+      if (endDate) next[studentBatchId] = endDate;
+      else delete next[studentBatchId];
+      return next;
+    });
+    // Inactivated immediately -> the enrolment is no longer active, drop it.
+    // A scheduled date or an undo keeps the enrolment in the list.
+    if (action === 'now') {
+      setEnrolments((prev) => (prev ?? []).filter((item) => item.student_batch_id !== studentBatchId));
+    }
+  }
+
   if (isLoading && enrolments === null) {
     return <span className="text-slate-400">Loading…</span>;
   }
@@ -1005,38 +1055,49 @@ function CurrentEnrolmentsCell({ studentId }: { studentId: string }) {
 
   return (
     <div className="space-y-1 min-w-[240px]">
-      {enrolments.map((enrolment) => (
-        <div key={enrolment.student_batch_id} className="rounded border border-slate-200 bg-slate-50 p-2">
-          <div className="text-[11px] font-medium text-slate-700">{enrolment.course_name}</div>
-          <div className="text-[10px] text-slate-500">
-            {(enrolment.sub_course_code ?? 'No level')} · ${enrolment.total_amount}
-          </div>
-          {enrolment.batches.length > 0 && (
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              {enrolment.batches.map((batch) => `${batch.day ?? 'Day TBD'} ${formatTime(batch.start_time ?? null)}`).join(', ')}
+      {enrolments.map((enrolment) => {
+        const pendingEndDate = pending[enrolment.student_batch_id] ?? null;
+        return (
+          <div key={enrolment.student_batch_id} className="rounded border border-slate-200 bg-slate-50 p-2">
+            <div className="text-[11px] font-medium text-slate-700">{enrolment.course_name}</div>
+            <div className="text-[10px] text-slate-500">
+              {(enrolment.sub_course_code ?? 'No level')} · ${enrolment.total_amount}
             </div>
-          )}
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => startTransition(async () => {
-              const result = await markPortalEnrolmentInactive({
-                studentId: parsedStudentId,
-                studentBatchId: enrolment.student_batch_id,
-              });
-              if (!result.ok) {
-                setError(result.error);
-                return;
+            {enrolment.batches.length > 0 && (
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {enrolment.batches.map((batch) => `${batch.day ?? 'Day TBD'} ${formatTime(batch.start_time ?? null)}`).join(', ')}
+              </div>
+            )}
+            {pendingEndDate && (
+              <div className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-amber-100">
+                Unenrolling {formatDate(pendingEndDate)}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setEnding(toEnrolmentView(enrolment))}
+              className={
+                pendingEndDate
+                  ? 'mt-1 block text-[11px] px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 transition'
+                  : 'mt-1 block text-[11px] px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition'
               }
-              setEnrolments((prev) => (prev ?? []).filter((item) => item.student_batch_id !== enrolment.student_batch_id));
-            })}
-            className="mt-1 text-[11px] px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition disabled:opacity-50"
-            title="Mark this portal enrolment inactive"
-          >
-            {isPending ? 'Unenrolling…' : 'Unenrol'}
-          </button>
-        </div>
-      ))}
+              title={pendingEndDate ? 'Edit or undo the scheduled unenrol date' : 'Unenrol now or schedule a future date'}
+            >
+              {pendingEndDate ? 'Edit unenrol date' : 'Unenrol'}
+            </button>
+          </div>
+        );
+      })}
+      {ending && (
+        <ManageInactivationModal
+          studentId={parsedStudentId}
+          studentName={studentName}
+          enrolment={ending}
+          pendingEndDate={pending[ending.studentBatchId] ?? null}
+          onClose={() => setEnding(null)}
+          onChanged={handleInactivationChanged}
+        />
+      )}
     </div>
   );
 }
@@ -1679,7 +1740,7 @@ export default function ResponsesTab({
                     <FallPlanCell row={row} />
                   </td>
                   <td className="px-3 py-2 align-top min-w-[260px]">
-                    <CurrentEnrolmentsCell studentId={row.student_id} />
+                    <CurrentEnrolmentsCell studentId={row.student_id} studentName={row.student_name} />
                   </td>
                   <td className="px-3 py-2 align-top">
                     <RecurringInvoicesCell

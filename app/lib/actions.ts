@@ -6,7 +6,7 @@ import { revalidatePath, revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
 import {z} from 'zod';
-import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON, fetchStudentEnrolments, setEnrolmentInactive, fetchPrograms, fetchCourseBatches, fetchCourseFees, createEnrolment } from './scraper_helpers';
+import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON, fetchStudentEnrolments, setEnrolmentInactive, fetchPrograms, fetchCourseBatches, fetchCourseFees, createEnrolment, markStudentAttendance, type AttendanceStatus } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized, upsertSummerEnrolmentWeekFromNormalized } from './insert_from_portal';
 import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampLmsCanvasCourseSearchResult, type CampPrintableStudentListField, type CampPrintLogEntry } from './definitions';
@@ -5088,4 +5088,68 @@ export async function deleteMyAbsenceRequest(formData: FormData) {
   `;
   revalidatePath('/dashboard/my-schedule');
   revalidatePath('/dashboard/staff-schedule');
+}
+
+// The three attendance states the portal tracks for an enrolled student on a
+// given session date.
+export type PortalAttendanceValue = 'present' | 'absent' | 'unmarked';
+
+export type SetPortalAttendanceInput = {
+  // Identifiers from the schedule row. The portal write helper will resolve
+  // these (plus the session's batch) into the portal's attendance mutation.
+  enrolmentId: string;
+  studentId: string;
+  // The session date this attendance applies to, as 'YYYY-MM-DD'.
+  date: string;
+  value: PortalAttendanceValue;
+};
+
+// Maps the UI's attendance value to the portal's attendance status label.
+const PORTAL_ATTENDANCE_STATUS: Record<PortalAttendanceValue, AttendanceStatus> = {
+  present: 'Present',
+  absent: 'Absent',
+  unmarked: 'Unmarked',
+};
+
+/**
+ * Set a student's attendance value in the Zebra portal for a session date.
+ *
+ * Resolves the session's day/time from the enrolment (the portal helper matches
+ * that slot against the student's active portal enrolments to find the batch),
+ * then writes the attendance via markStudentAttendance. The schedule row only
+ * carries regular enrolments here, so makeup is always false.
+ * See the portal-write-api-contract memory for the auth/endpoint pattern.
+ */
+export async function setPortalAttendance(
+  input: SetPortalAttendanceInput,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const rows = await sql<{ weekday: string; start_time: string; end_time: string | null }[]>`
+      SELECT sess.weekday, sess.start_time, sess.end_time
+      FROM enrolments e
+      JOIN sessions sess ON sess.id = e.session_id
+      WHERE e.id = ${input.enrolmentId}
+      LIMIT 1;
+    `;
+    const session = rows[0];
+    if (!session) {
+      return { ok: false, error: `Enrolment ${input.enrolmentId} not found.` };
+    }
+
+    await markStudentAttendance({
+      studentId: Number(input.studentId),
+      day: session.weekday,
+      startTime: session.start_time,
+      endTime: session.end_time ?? undefined,
+      date: input.date,
+      makeup: false,
+      status: PORTAL_ATTENDANCE_STATUS[input.value],
+    });
+
+    revalidatePath('/dashboard/schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('[setPortalAttendance] failed:', error);
+    return { ok: false, error: error instanceof Error ? error.message : 'Failed to set attendance.' };
+  }
 }
