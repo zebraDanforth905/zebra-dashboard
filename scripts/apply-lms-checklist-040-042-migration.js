@@ -1,18 +1,18 @@
 // Brings a target db up to date for the LMS checklist + camp prep flow.
-// Applies (idempotent, safe to re-run): 033 app_settings, 038 create_user
-// action, 039 sync_state rename, 040 PA day-camp assignments. Then reports
+// Applies (idempotent, safe to re-run): 033 app_settings, 040 PA day-camp
+// assignments, 041 create_user action, 042 sync_state rename. Then reports
 // the exact schema_ready gate the dashboard uses.
 //
 // Optional Canvas token seeding (check-first: only writes if no row exists):
-//   CANVAS_SEED_TOKEN='<token>' node scripts/apply-lms-checklist-038-040-migration.js
+//   CANVAS_SEED_TOKEN='<token>' node scripts/apply-lms-checklist-040-042-migration.js
 //
 // Run in a shell where POSTGRES_URL points at the TARGET db (kyle-dev):
-//   node scripts/apply-lms-checklist-038-040-migration.js
+//   node scripts/apply-lms-checklist-040-042-migration.js
 const fs = require('fs');
 const postgres = require('postgres');
 
 // Full LMS chain, in dependency order. All idempotent. 026 creates the
-// canvas snapshots table; 039 renames it to camp_lms_canvas_sync_state.
+// canvas snapshots table; 042 renames it to camp_lms_canvas_sync_state.
 const FILES = [
   'migrations/025_lms_camp_checklist.sql',
   'migrations/026_canvas_lms_workflow.sql',
@@ -20,9 +20,9 @@ const FILES = [
   'migrations/030_lms_canvas_activate_course_action.sql',
   'migrations/032_lms_mapping_additional_courses.sql',
   'migrations/033_create_app_settings.sql',
-  'migrations/038_lms_canvas_create_user_action.sql',
-  'migrations/039_rename_lms_canvas_sync_state.sql',
   'migrations/040_pa_day_camp_course_assignments.sql',
+  'migrations/041_lms_canvas_create_user_action.sql',
+  'migrations/042_rename_lms_canvas_sync_state.sql',
 ];
 
 const CANVAS_TOKEN_KEY = 'CANVAS_API_TOKEN';

@@ -48,7 +48,7 @@ export default async function Page(props: {
       ? searchParams.school
       : "Frankland";
 
-  const sessions = await fetchSessionsForDay(day, targetDate, { isSummer });
+  const sessions = await fetchSessionsForDay(day, targetDate);
   const pickups = isSummer ? [] : await fetchPickupsForDay(day, activeSchool, targetDate);
 
   return (
@@ -73,7 +73,6 @@ export default async function Page(props: {
                 Total: <span className="font-semibold">{pickups.length}</span>
               </div>
             <div className="inline-flex rounded-full bg-slate-100 p-1">
-              
               {SCHOOLS.map((s) => {
                 const schoolParams = new URLSearchParams();
                 schoolParams.set("school", s);

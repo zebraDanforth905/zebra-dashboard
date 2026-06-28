@@ -32,6 +32,10 @@ export function isDateInTerm(iso: string | null | undefined, term: TermKey): boo
   return iso >= start && iso <= end;
 }
 
+export function getTermRange(term: TermKey): { start: string; end: string } {
+  return { ...TERMS[term] };
+}
+
 export function isSummerDateRange(startISO: string | null | undefined, endISO?: string | null): boolean {
   if (!startISO || !/^\d{4}-\d{2}-\d{2}$/.test(startISO)) return false;
   const rangeEnd = endISO && /^\d{4}-\d{2}-\d{2}$/.test(endISO) ? endISO : startISO;

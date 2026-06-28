@@ -29,6 +29,14 @@ export type CanvasEnrollment = {
   updated_at?: string | null;
 };
 
+export type CanvasLogin = {
+  id: string | number;
+  account_id?: string | number | null;
+  unique_id?: string | null;
+  user_id?: string | number | null;
+  workflow_state?: string | null;
+};
+
 export type NormalizedCanvasEnrollment = {
   enrollment_id: string;
   course_id: string;
@@ -195,6 +203,8 @@ export async function getCanvasPublicConfig() {
   return {
     baseUrl: canvasBaseUrl(),
     configured: tokenSettings.configured,
+    source: tokenSettings.source,
+    maskedToken: tokenSettings.maskedToken,
   };
 }
 
@@ -398,6 +408,7 @@ export class CanvasClient {
     const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
     const body = new URLSearchParams({
       'user[name]': name,
+      'user[skip_registration]': 'true',
       'pseudonym[unique_id]': loginId,
       'pseudonym[send_confirmation]': 'false',
       'communication_channel[type]': 'email',
@@ -414,6 +425,42 @@ export class CanvasClient {
     );
 
     return result.data;
+  }
+
+  async getUserLogins(userId: string) {
+    return this.requestAll<CanvasLogin>(`/api/v1/users/${encodeURIComponent(userId)}/logins`, {
+      per_page: 50,
+    });
+  }
+
+  async updateLoginPassword(loginId: string, password: string, accountId = process.env.CANVAS_ACCOUNT_ID || 'self') {
+    const body = new URLSearchParams({
+      'login[password]': password,
+    });
+
+    const result = await this.request<CanvasLogin>(
+      `/api/v1/accounts/${accountId}/logins/${encodeURIComponent(loginId)}`,
+      {
+        method: 'PUT',
+        body,
+      }
+    );
+
+    return result.data;
+  }
+
+  async setUserLoginPassword(userId: string, loginId: string, password: string) {
+    const logins = await this.getUserLogins(userId);
+    const normalizedLoginId = loginId.trim().toLowerCase();
+    const login = logins.find((candidate) =>
+      String(candidate.unique_id ?? '').trim().toLowerCase() === normalizedLoginId
+    ) ?? logins[0];
+
+    if (!login?.id) {
+      throw new Error('Canvas login was not found for this user.');
+    }
+
+    return this.updateLoginPassword(String(login.id), password, String(login.account_id ?? process.env.CANVAS_ACCOUNT_ID ?? 'self'));
   }
 
   async reactivateEnrollment(courseId: string, enrollmentId: string) {

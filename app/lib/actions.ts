@@ -27,7 +27,7 @@ import { formatDate } from './utils';
 import { localMidnightFromISODate } from './utils';
 
 import { ymd } from './utils';
-import { endOfScheduleWeek, isSummerScheduleWeek, startOfScheduleWeek, ymdLocal } from './schedule-week';
+import { endOfScheduleWeek, startOfScheduleWeek, ymdLocal } from './schedule-week';
 import bcrypt from 'bcrypt';
 import { auth } from '@/auth';
 import { userAgent } from 'next/server';
@@ -905,15 +905,9 @@ export async function generateInvoiceFromRecurring(formData: FormData) {
 
 
 
-export async function forceScheduleRefresh(formData: FormData){
-  const weekStart = formData.get('weekStart')?.toString();
-
-  if (weekStart && isSummerScheduleWeek(weekStart)) {
-    await scrapeSummerEnrolmentWeek({ weekStart });
-  } else {
-    await scrapeEnrolmentNow()
-    await syncAbsencesForCurrentWeek()
-  }
+export async function forceScheduleRefresh(_formData: FormData){
+  await scrapeEnrolmentNow()
+  await syncAbsencesForCurrentWeek()
 
   revalidateTag('schedule', 'max')
   
@@ -2502,6 +2496,8 @@ export async function saveCanvasApiToken(formData: FormData) {
 
     clearCanvasTokenCache();
     revalidatePath('/dashboard/settings');
+    revalidatePath('/dashboard/camp');
+    updateTag('camps');
 
     const settings = await getCanvasTokenSettings();
     const isCleared = shouldClear || !token;
@@ -2776,6 +2772,72 @@ function canvasCourseSummary(course: CanvasCourse): CampLmsCanvasCourseSearchRes
   };
 }
 
+async function searchLocalMappedCanvasCourses(term: string): Promise<CanvasCourse[]> {
+  const normalizedTerm = normalizeCanvasLookupValue(term);
+  if (normalizedTerm.length < 2) return [];
+
+  const rows = await sql<Array<{
+    course_id: string;
+    lms_course_name: string | null;
+    canvas_beginner_course_id: string | null;
+    canvas_beginner_course_name: string | null;
+    canvas_intermediate_course_id: string | null;
+    canvas_intermediate_course_name: string | null;
+    canvas_advanced_course_id: string | null;
+    canvas_advanced_course_name: string | null;
+    canvas_additional_course_ids: unknown;
+  }>>`
+    SELECT
+      course_id,
+      lms_course_name,
+      canvas_beginner_course_id,
+      canvas_beginner_course_name,
+      canvas_intermediate_course_id,
+      canvas_intermediate_course_name,
+      canvas_advanced_course_id,
+      canvas_advanced_course_name,
+      canvas_additional_course_ids
+    FROM camp_lms_course_mappings
+    WHERE canvas_beginner_course_id IS NOT NULL
+      OR canvas_intermediate_course_id IS NOT NULL
+      OR canvas_advanced_course_id IS NOT NULL
+      OR jsonb_array_length(COALESCE(canvas_additional_course_ids, '[]'::jsonb)) > 0
+    ORDER BY lms_course_name NULLS LAST, course_id ASC;
+  `;
+
+  const courses: CanvasCourse[] = [];
+  const addCourse = (row: typeof rows[number], id: string | null, name: string | null) => {
+    if (!id) return;
+    const courseName = name || row.lms_course_name || row.course_id || id;
+    const values = [
+      id,
+      courseName,
+      row.course_id,
+      row.lms_course_name,
+    ].map(normalizeCanvasLookupValue);
+    if (!values.some((value) => value.includes(normalizedTerm))) return;
+
+    courses.push({
+      id,
+      name: courseName,
+      course_code: row.course_id,
+      workflow_state: null,
+    });
+  };
+
+  rows.forEach((row) => {
+    addCourse(row, row.canvas_beginner_course_id, row.canvas_beginner_course_name);
+    addCourse(row, row.canvas_intermediate_course_id, row.canvas_intermediate_course_name);
+    addCourse(row, row.canvas_advanced_course_id, row.canvas_advanced_course_name);
+    parseCanvasCourseIdList(Array.isArray(row.canvas_additional_course_ids)
+      ? row.canvas_additional_course_ids.join(',')
+      : ''
+    ).forEach((courseId) => addCourse(row, courseId, null));
+  });
+
+  return courses;
+}
+
 function dedupeCanvasUsers(users: CanvasUser[]) {
   const seen = new Set<string>();
   const deduped: CanvasUser[] = [];
@@ -2822,6 +2884,32 @@ function splitCanvasEnrollments(enrollments: NormalizedCanvasEnrollment[]) {
 
 function canvasErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function makeLmsPassword(fullName: string) {
+  const first = (fullName || '').trim().split(/\s+/)[0] || '';
+  let password = first.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (password.length >= 8) return password;
+
+  password += '123';
+  const sequence = '4567890';
+  let index = 0;
+  while (password.length < 8) {
+    password += sequence[index % sequence.length];
+    index += 1;
+  }
+  return password;
+}
+
+function primaryExpectedCanvasCourseId(row: CampLmsCanvasActionRow) {
+  return row.canvas_beginner_course_id
+    || row.canvas_intermediate_course_id
+    || row.canvas_advanced_course_id
+    || parseCanvasCourseIdList(Array.isArray(row.canvas_additional_course_ids)
+      ? row.canvas_additional_course_ids.join(',')
+      : ''
+    )[0]
+    || null;
 }
 
 async function fetchCampLmsSyncRows(startDate: string, endDate: string) {
@@ -3136,7 +3224,7 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 038_lms_canvas_create_user_action.sql, 039_rename_lms_canvas_sync_state.sql, and 040_pa_day_camp_course_assignments.sql before syncing Canvas' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 040_pa_day_camp_course_assignments.sql, 041_lms_canvas_create_user_action.sql, and 042_rename_lms_canvas_sync_state.sql before syncing Canvas' };
     }
     if (!(await isCanvasTokenConfigured())) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas sync' };
@@ -3212,7 +3300,7 @@ export async function saveCampLmsCourseMapping(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 038_lms_canvas_create_user_action.sql, 039_rename_lms_canvas_sync_state.sql, and 040_pa_day_camp_course_assignments.sql before saving LMS mappings' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 040_pa_day_camp_course_assignments.sql, 041_lms_canvas_create_user_action.sql, and 042_rename_lms_canvas_sync_state.sql before saving LMS mappings' };
     }
 
     await sql`
@@ -3285,12 +3373,18 @@ export async function searchCampLmsCanvasCourses(input: { term: string }) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas search', courses: [] };
     }
 
-    const client = createCanvasClient();
     const term = parsed.data.term;
-    const courses: CanvasCourse[] = [];
-    const directCourse = /^\d+$/.test(term) ? await client.getCourse(term) : null;
-    if (directCourse) courses.push(directCourse);
-    courses.push(...await client.searchCourses(term));
+    const client = createCanvasClient();
+    const courses: CanvasCourse[] = await searchLocalMappedCanvasCourses(term);
+
+    try {
+      const directCourse = /^\d+$/.test(term) ? await client.getCourse(term) : null;
+      if (directCourse) courses.push(directCourse);
+      courses.push(...await client.searchCourses(term));
+    } catch (error) {
+      if (courses.length === 0) throw error;
+      console.warn('Canvas course search failed; using local LMS mapping results:', canvasErrorMessage(error));
+    }
 
     const seen = new Set<string>();
     const deduped = courses
@@ -3326,7 +3420,7 @@ export async function importCampLmsCourseMappings(input: { tableText: string }) 
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 038_lms_canvas_create_user_action.sql, 039_rename_lms_canvas_sync_state.sql, and 040_pa_day_camp_course_assignments.sql before importing LMS mappings' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 040_pa_day_camp_course_assignments.sql, 041_lms_canvas_create_user_action.sql, and 042_rename_lms_canvas_sync_state.sql before importing LMS mappings' };
     }
 
     const lines = parsed.data.tableText
@@ -3483,7 +3577,7 @@ export async function updateCampLmsStatus(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 038_lms_canvas_create_user_action.sql, 039_rename_lms_canvas_sync_state.sql, and 040_pa_day_camp_course_assignments.sql before saving LMS statuses' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 040_pa_day_camp_course_assignments.sql, 041_lms_canvas_create_user_action.sql, and 042_rename_lms_canvas_sync_state.sql before saving LMS statuses' };
     }
 
     if (!status) {
@@ -3548,7 +3642,7 @@ export async function runCampLmsCanvasTestAction(input: {
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 038_lms_canvas_create_user_action.sql, 039_rename_lms_canvas_sync_state.sql, and 040_pa_day_camp_course_assignments.sql before running Canvas actions' };
+      return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 040_pa_day_camp_course_assignments.sql, 041_lms_canvas_create_user_action.sql, and 042_rename_lms_canvas_sync_state.sql before running Canvas actions' };
     }
     if (!(await isCanvasTokenConfigured())) {
       return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas test actions' };
@@ -3620,6 +3714,8 @@ export async function runCampLmsCanvasTestAction(input: {
     try {
       if (type === 'create_user') {
         const login = `${row.student_id}@zebrarobotics.com`;
+        const setupWarnings: string[] = [];
+        const setupPayload: Record<string, unknown> = {};
         requestPayload.name = row.student_name;
         requestPayload.loginId = login;
         requestPayload.email = login;
@@ -3628,14 +3724,48 @@ export async function runCampLmsCanvasTestAction(input: {
           loginId: login,
           email: login,
         });
-        responsePayload = created;
+        setupPayload.createdUser = created;
         const newId = (created as { id?: unknown })?.id;
         if (newId != null) {
           auditCanvasUserId = String(newId);
         }
+        const createdUserId = auditCanvasUserId;
+        const expectedCourseId = primaryExpectedCanvasCourseId(row);
+
+        if (createdUserId && expectedCourseId) {
+          courseId = expectedCourseId;
+          requestPayload.canvasCourseId = expectedCourseId;
+          requestPayload.canvasUserId = createdUserId;
+
+          try {
+            setupPayload.expectedEnrollment = await client.enrollStudent(expectedCourseId, createdUserId);
+          } catch (error) {
+            setupWarnings.push(`Canvas user was created, but the expected course could not be added: ${canvasErrorMessage(error)}`);
+          }
+
+          if (setupPayload.expectedEnrollment) {
+            try {
+              const password = makeLmsPassword(row.student_name);
+              requestPayload.password = '[generated]';
+              await client.setUserLoginPassword(createdUserId, login, password);
+              setupPayload.passwordSet = true;
+            } catch (error) {
+              setupPayload.passwordSet = false;
+              setupWarnings.push(`Expected course was added, but Canvas password setup failed: ${canvasErrorMessage(error)}`);
+            }
+          }
+        } else {
+          setupWarnings.push('Canvas user was created, but no expected course is mapped. Add a course manually before setting the password.');
+        }
+
+        responsePayload = setupPayload;
+        if (setupWarnings.length > 0) {
+          warning = setupWarnings.join(' ');
+        }
       } else if (type === 'add_expected_beginner') {
-        courseId = canvasCourseId || row.canvas_beginner_course_id;
-        if (!courseId || courseId !== row.canvas_beginner_course_id) {
+        const expectedCourseId = primaryExpectedCanvasCourseId(row);
+        courseId = canvasCourseId || expectedCourseId;
+        if (!courseId || courseId !== expectedCourseId) {
           throw new Error('Expected Canvas course is not mapped for this camper.');
         }
         const alreadyActive = activeEnrollments.some((candidate) => expectedCourseIds.has(String(candidate.course_id)));
@@ -3724,22 +3854,6 @@ export async function runCampLmsCanvasTestAction(input: {
         }
         if (expectedCourseIds.has(courseId)) {
           throw new Error('Refusing to set an expected Canvas course inactive for this camper.');
-        }
-
-        const [mappedCourse] = await sql<{ exists: boolean }[]>`
-          SELECT EXISTS (
-            SELECT 1
-            FROM camp_lms_course_mappings
-            WHERE ${courseId} IN (
-              canvas_beginner_course_id,
-              canvas_intermediate_course_id,
-              canvas_advanced_course_id
-            )
-            OR canvas_additional_course_ids ? ${courseId}
-          ) AS exists;
-        `;
-        if (!mappedCourse?.exists) {
-          throw new Error('The selected enrollment is not one of the mapped Canvas camp courses.');
         }
 
         requestPayload.canvasCourseId = courseId;

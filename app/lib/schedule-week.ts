@@ -1,3 +1,5 @@
+import { getTermRange, isSummerDateRange } from './tdsb-calendar';
+
 export const SCHEDULE_DAYS = [
   'Monday',
   'Tuesday',
@@ -59,13 +61,20 @@ export function dateForScheduleWeekday(weekStart: string | Date, weekday: Schedu
 
 export function isSummerScheduleWeek(weekStart: string | Date): boolean {
   const start = startOfScheduleWeek(weekStart);
-  for (let offset = 0; offset < 7; offset += 1) {
-    const date = new Date(start);
-    date.setDate(start.getDate() + offset);
-    const month = date.getMonth();
-    if (month === 6 || month === 7) return true;
-  }
-  return false;
+  const end = endOfScheduleWeek(start);
+  return isSummerDateRange(ymdLocal(start), ymdLocal(end));
+}
+
+export function summerScheduleWeekNumber(weekStart: string | Date): number | null {
+  const summer = getTermRange('summer');
+  const summerStart = startOfScheduleWeek(summer.start);
+  const summerEnd = startOfScheduleWeek(summer.end);
+  const selectedStart = startOfScheduleWeek(weekStart);
+
+  if (selectedStart < summerStart || selectedStart > summerEnd) return null;
+
+  const millisecondsPerWeek = 7 * 24 * 60 * 60 * 1000;
+  return Math.round((selectedStart.getTime() - summerStart.getTime()) / millisecondsPerWeek) + 1;
 }
 
 export function formatScheduleWeekRange(weekStart: string | Date): string {

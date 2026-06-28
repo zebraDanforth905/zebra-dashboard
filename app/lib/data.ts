@@ -2,8 +2,7 @@
 
 import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
-import { isSummerScheduleWeek, startOfScheduleWeek } from './schedule-week';
-import { isDateInTerm } from './tdsb-calendar';
+import { startOfScheduleWeek } from './schedule-week';
 import { fetchAttendanceReport } from './scraper_helpers';
 import {
   InvoiceTableData,
@@ -906,8 +905,6 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
     // week (e.g. an arbitrary completion date set on the student page) should
     // still appear for the whole week, and only drop off from the next week on.
     const weekStart = Y(startOfScheduleWeek(targetDate));
-    const isSummer = isDateInTerm(target, 'summer');
-    console.log(target)
 
     // Join absences ON the specific date and project a boolean
     const students = await sql<ScheduleRow[]>`
@@ -954,7 +951,6 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
        AND fi.class_day = sess.weekday
        AND LEFT(fi.class_start_time, 5) = LEFT(sess.start_time::text, 5)
       WHERE e.session_id = ${sessionId}
-        AND sess.is_summer = ${isSummer}
         AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
         AND (
           COALESCE(e.end_date, fi.end_date) IS NULL
@@ -1082,7 +1078,6 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
 export async function fetchSessionsForDay(
   day: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday',
   date?: Date,
-  options?: { isSummer?: boolean },
 ) {
   'use cache'
   
@@ -1096,7 +1091,6 @@ export async function fetchSessionsForDay(
         // See fetchSessionStudents: an enrolment ending mid-week still counts for
         // the whole week, so the count badge matches the roster shown.
         const weekStart = Y(startOfScheduleWeek(targetDate));
-        const isSummer = options?.isSummer ?? isSummerScheduleWeek(targetDate);
 
         const sessions = await sql<Session[]>
         `
@@ -1153,7 +1147,6 @@ export async function fetchSessionsForDay(
               )
           ) ac ON true
           WHERE s.weekday = ${day}
-            AND s.is_summer = ${isSummer}
             AND (
               COALESCE(ec.student_count, 0) > 0
               OR COALESCE(mc.makeup_count, 0) > 0
@@ -2556,7 +2549,7 @@ function suggestedCanvasFix(params: {
   if (status === 'missing_canvas_user') return `Create or locate the Canvas user for ${login}, then sync again.`;
   if (status === 'missing_expected_course') {
     return beginnerCourseId
-      ? `Test-add this camper to expected Canvas course ${beginnerCourseId}.`
+      ? `Add this camper to expected Canvas course ${beginnerCourseId}.`
       : 'Add this camper to one of the mapped Canvas courses.';
   }
   if (status === 'inactive_expected_course') {
@@ -2586,18 +2579,19 @@ function suggestedCanvasActions(params: {
   row: CampLmsChecklistDbRow;
   expectedCourses: CampLmsExpectedCourse[];
   activeExpected: CampLmsCanvasEnrollment[];
+  inactiveExpected: CampLmsCanvasEnrollment[];
   extraActive: CampLmsCanvasEnrollment[];
 }): CampLmsSuggestedAction[] {
-  const { row, expectedCourses, activeExpected, extraActive } = params;
+  const { row, expectedCourses, activeExpected, inactiveExpected, extraActive } = params;
 
   if (row.canvas_sync_status !== 'synced' || !row.canvas_user_found) return [];
 
   const actions: CampLmsSuggestedAction[] = [];
   const primaryExpectedCourse = expectedCourses.find((course) => course.level === 'beginner') ?? expectedCourses[0];
-  if (primaryExpectedCourse && activeExpected.length === 0) {
+  if (primaryExpectedCourse && activeExpected.length === 0 && inactiveExpected.length === 0) {
     actions.push({
       type: 'add_expected_beginner',
-      label: 'Test add expected',
+      label: 'Add expected',
       canvas_course_id: primaryExpectedCourse.course_id,
       canvas_course_name: primaryExpectedCourse.course_name,
     });
@@ -2606,7 +2600,7 @@ function suggestedCanvasActions(params: {
   extraActive.forEach((enrollment) => {
     actions.push({
       type: 'inactivate_enrollment',
-      label: 'Test set inactive',
+      label: 'Make inactive',
       canvas_course_id: enrollment.course_id,
       canvas_course_name: enrollment.course_name,
       canvas_enrollment_id: enrollment.enrollment_id,
@@ -2648,6 +2642,7 @@ function buildCampLmsRows(rows: CampLmsChecklistDbRow[], allMappedCanvasCourseId
       row,
       expectedCourses,
       activeExpected,
+      inactiveExpected,
       extraActive,
     });
 
@@ -2822,6 +2817,10 @@ export async function fetchCampPrintableSchedule(
 function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSummary {
   const summary: CampLmsChecklistSummary = { ...EMPTY_LMS_SUMMARY };
   const students = new Set<string>();
+  const lmsAccountKeys = new Set<string>();
+  const dayCampAssignmentKeys = new Set<string>();
+  const unmappedAssignedCampKeys = new Set<string>();
+  const lmsCourseFixKeys = new Set<string>();
 
   rows.forEach((row) => {
     const mapped = row.expected_canvas_course_ids.length > 0;
@@ -2852,21 +2851,30 @@ function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSumm
       && !row.canvas_user_found
       && row.canvas_user_matches.length === 0
     ) {
-      summary.lms_accounts_needed += 1;
+      lmsAccountKeys.add(row.suggested_lms_login || row.student_id);
     }
     if (row.is_day_camp) summary.day_camp_total += 1;
     if (row.is_day_camp && !row.day_camp_assigned_course_id) {
-      summary.day_camp_assignments_needed += 1;
+      dayCampAssignmentKeys.add(`${row.student_id}:${row.camp_enrolment_id}`);
     }
     if (row.canvas_issues.includes('unmapped_course')) {
-      summary.unmapped_assigned_camps += 1;
+      unmappedAssignedCampKeys.add(`${row.student_id}:${row.course_id ?? row.camp_enrolment_id}`);
     }
     if (needsCourseFix) {
-      summary.lms_course_fixes_needed += 1;
+      const expectedKey = row.expected_canvas_course_ids.join(',');
+      const extraActiveKey = row.extra_active_mapped_enrollments
+        .map((enrollment) => enrollment.course_id)
+        .sort()
+        .join(',');
+      lmsCourseFixKeys.add(`${row.student_id}:${row.course_id ?? ''}:${expectedKey}:${extraActiveKey}`);
     }
   });
 
   summary.total = students.size;
+  summary.lms_accounts_needed = lmsAccountKeys.size;
+  summary.day_camp_assignments_needed = dayCampAssignmentKeys.size;
+  summary.unmapped_assigned_camps = unmappedAssignedCampKeys.size;
+  summary.lms_course_fixes_needed = lmsCourseFixKeys.size;
   return summary;
 }
 
@@ -2975,6 +2983,8 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       return {
         schema_ready: false,
         canvas_configured: canvasConfig.configured,
+        canvas_token_source: canvasConfig.source,
+        canvas_masked_token: canvasConfig.maskedToken,
         canvas_base_url: canvasConfig.baseUrl,
         canvas_last_synced_at: null,
         day_camp_course_options: [],
@@ -3095,6 +3105,8 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
     return {
       schema_ready: true,
       canvas_configured: canvasConfig.configured,
+      canvas_token_source: canvasConfig.source,
+      canvas_masked_token: canvasConfig.maskedToken,
       canvas_base_url: canvasConfig.baseUrl,
       canvas_last_synced_at: canvasLastSyncedAt,
       day_camp_course_options: dayCampCourseOptions,

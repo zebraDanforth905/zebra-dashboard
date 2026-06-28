@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import {
-  isSummerScheduleWeek,
   startOfScheduleWeek,
+  summerScheduleWeekNumber,
   ymdLocal,
 } from "@/app/lib/schedule-week";
 
@@ -60,6 +60,7 @@ export default function WeekSelector({ weekStart }: { weekStart: string }) {
   const todayParams = new URLSearchParams(searchParams.toString());
   todayParams.set("weekStart", todayWeekStart);
   const todayHref = `/dashboard/schedule/${todayDay}?${todayParams.toString()}`;
+  const summerWeekNumber = summerScheduleWeekNumber(weekStart);
 
   return (
     <div className="flex items-center justify-end gap-2">
@@ -74,9 +75,9 @@ export default function WeekSelector({ weekStart }: { weekStart: string }) {
         <p className="whitespace-nowrap text-sm font-semibold text-slate-900">
           {compactWeekRange(weekStart)}
         </p>
-        {isSummerScheduleWeek(weekStart) && (
+        {summerWeekNumber !== null && (
           <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-            Summer
+            Summer Week {summerWeekNumber}
           </p>
         )}
       </div>
