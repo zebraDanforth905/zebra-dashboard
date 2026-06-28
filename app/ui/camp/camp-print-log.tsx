@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import {
   createCampPrintLogEntry,
   updateCampPrintLogEntry,
   deleteCampPrintLogEntry,
+  seedCampPrintLogEntries,
 } from '@/app/lib/actions';
 import { CampPrintLogEntry } from '@/app/lib/definitions';
 
@@ -117,10 +118,12 @@ export default function CampPrintLog({
   weekStart,
   weekLabel,
   entries,
+  enrolledStudents = [],
 }: {
   weekStart: string;
   weekLabel: string;
   entries: CampPrintLogEntry[];
+  enrolledStudents?: string[];
 }) {
   const [rows, setRows] = useState<Row[]>(() =>
     entries.map((e) => ({
@@ -132,6 +135,37 @@ export default function CampPrintLog({
     }))
   );
   const [isPending, startTransition] = useTransition();
+
+  // By default, seed an empty log with one row per unique enrolled student
+  // (student name only, other fields blank). The server only inserts when the
+  // week has no rows, so this runs once and a deliberately emptied log stays
+  // empty. The ref guards against React re-running the effect.
+  const seedAttempted = useRef(false);
+  useEffect(() => {
+    if (seedAttempted.current) return;
+    if (entries.length > 0 || enrolledStudents.length === 0) return;
+    seedAttempted.current = true;
+
+    startTransition(async () => {
+      const result = await seedCampPrintLogEntries({
+        weekStart,
+        students: enrolledStudents,
+      });
+      if (result.ok && result.rows && result.rows.length > 0) {
+        setRows((prev) =>
+          prev.length > 0
+            ? prev
+            : result.rows!.map((e) => ({
+                id: e.id,
+                student: e.student ?? '',
+                print_description: e.print_description ?? '',
+                status: e.status ?? '',
+                notes: e.notes ?? '',
+              }))
+        );
+      }
+    });
+  }, [entries.length, enrolledStudents, weekStart]);
 
   const persist = (row: Row) => {
     startTransition(async () => {
@@ -184,7 +218,7 @@ export default function CampPrintLog({
     <div className="bg-white border border-slate-200 rounded-lg p-4">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Print Log</h2>
+          <h2 className="text-lg font-semibold text-slate-900">3D Print Log</h2>
           <p className="text-sm text-slate-600">
             {weekLabel}. Track 3D print projects for the week. Click any cell to edit; changes save automatically.
           </p>

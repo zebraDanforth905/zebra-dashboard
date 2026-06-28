@@ -1000,7 +1000,7 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
         COALESCE(pt.export_count, 0)::int                                     AS token_export_count,
         pr.added_to_portal_at,
         pr.added_to_portal_by,
-        '[]'::json                                                            AS recurring_invoices,
+        COALESCE(ri.recurring_invoices, '[]'::json)                          AS recurring_invoices,
         COALESCE(history.previous_submission_count, 0)::int                 AS previous_submission_count,
         history.previous_submitted_at,
         COALESCE(history.submission_history, '[]'::json)                    AS submission_history
@@ -1008,6 +1008,21 @@ export async function fetchSummerResponseRows(): Promise<SummerResponseRow[]> {
       JOIN students s  ON s.id  = pr.student_id
       JOIN customers c ON c.id  = s.customer_id
       LEFT JOIN parent_tokens pt ON pt.id = pr.token_id
+      LEFT JOIN LATERAL (
+        SELECT
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'id', r.id::text,
+              'amount', r.amount,
+              'every', r.every,
+              'next_date', r.next_date,
+              'description', r.description
+            )
+            ORDER BY r.next_date
+          ) AS recurring_invoices
+        FROM recurring_invoices r
+        WHERE r.customer_id = c.id
+      ) ri ON true
       LEFT JOIN LATERAL (
         SELECT
           COALESCE(

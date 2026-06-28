@@ -8,8 +8,10 @@ import CampAccountPrepChecklist from '@/app/ui/camp/camp-account-prep-checklist'
 import CampActivitySchedule from '@/app/ui/camp/camp-activity-schedule';
 import CampStaffSchedule from '@/app/ui/camp/camp-staff-schedule';
 import CampPrintLog from '@/app/ui/camp/camp-print-log';
+import CampWeekSlips from '@/app/ui/camp/camp-week-slips';
 import CampWeekTabs from '@/app/ui/camp/camp-week-tabs';
 import { connection } from 'next/server';
+import { CampEnrolmentWithStudent } from '@/app/lib/definitions';
 
 type DayEnrolments = {
   date: Date;
@@ -135,6 +137,13 @@ export default async function CampSessionPage({
   };
 
   const dateMap = new Map<string, DayEnrolments>();
+  // Unique students enrolled in the week, keyed by student id, used to seed the
+  // print log by default. Stored by id so the same student in multiple sessions
+  // only appears once.
+  const uniqueStudentMap = new Map<string, string>();
+  // Unique students keyed by student id, holding one enrolment each, used by the
+  // Slips tab so a student enrolled across multiple days only yields one slip.
+  const uniqueStudentEnrolments = new Map<string, CampEnrolmentWithStudent>();
   let matchedSessionCount = 0;
 
   sessions.forEach(session => {
@@ -168,6 +177,12 @@ export default async function CampSessionPage({
       report.byCourse[courseKey] = (report.byCourse[courseKey] || 0) + 1;
       report.byLength[length] = (report.byLength[length] || 0) + 1;
       report.uniqueStudents.add(e.student_id);
+      if (!uniqueStudentMap.has(e.student_id)) {
+        uniqueStudentMap.set(e.student_id, e.student_name);
+      }
+      if (!uniqueStudentEnrolments.has(e.student_id)) {
+        uniqueStudentEnrolments.set(e.student_id, e);
+      }
     });
 
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -194,6 +209,14 @@ export default async function CampSessionPage({
 
   const weekDays = Array.from(dateMap.values()).sort((a, b) =>
     a.date.getTime() - b.date.getTime()
+  );
+
+  const enrolledStudents = Array.from(uniqueStudentMap.values()).sort((a, b) =>
+    a.localeCompare(b)
+  );
+
+  const slipEnrolments = Array.from(uniqueStudentEnrolments.values()).sort((a, b) =>
+    a.student_name.localeCompare(b.student_name)
   );
 
   const weekReport = [{
@@ -239,6 +262,12 @@ export default async function CampSessionPage({
       <CampMonthlyReport reports={weekReport} heading="Weekly Enrollment Summary" />
 
       <CampWeekTabs
+        slips={
+          <CampWeekSlips
+            weekLabel={report.label}
+            enrolments={slipEnrolments}
+          />
+        }
         schedule={
           <CampActivitySchedule
             weekStart={startDate}
@@ -258,6 +287,7 @@ export default async function CampSessionPage({
             weekStart={startDate}
             weekLabel={report.label}
             entries={printLogEntries}
+            enrolledStudents={enrolledStudents}
           />
         }
         accountPrep={

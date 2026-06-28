@@ -1,6 +1,15 @@
 'use client';
 
-import { Fragment, useMemo, useState, useTransition } from 'react';
+import { Fragment, useEffect, useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  listStudentPortalEnrolments,
+  loadSummerEnrolOptions,
+  addPortalEnrolmentForSummerSession,
+} from '@/app/lib/actions';
+import { listPendingInactivations } from '@/app/lib/inactivation-actions';
+import ManageInactivationModal from '@/app/ui/students/manage-inactivation-modal';
+import type { EnrolmentView } from '@/app/ui/students/student-enrolments';
 import {
   SessionChoiceSummary,
   SummerResponseRow,
@@ -54,6 +63,40 @@ function formatStartSuffix(date: string | null): string {
 function formatCurrentSession(weekday: string | null, startTime: string | null): string | null {
   if (!weekday) return null;
   return `${weekday} ${formatTime(startTime)}`;
+}
+
+function formatIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function nextUpcomingWeekdayDate(weekday: SessionChoiceSummary['weekday']): string {
+  const weekdayIndex: Record<SessionChoiceSummary['weekday'], number> = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6,
+  };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = weekdayIndex[weekday];
+  const delta = (target - today.getDay() + 7) % 7;
+  today.setDate(today.getDate() + delta);
+  return formatIsoDate(today);
+}
+
+// Default the enrol start-date picker to the session's own start date when the
+// plan carries one, otherwise the next upcoming matching weekday.
+function defaultEnrolStartDate(choice: SessionChoiceSummary): string {
+  if (choice.start_date && /^\d{4}-\d{2}-\d{2}$/.test(choice.start_date)) {
+    return choice.start_date;
+  }
+  return nextUpcomingWeekdayDate(choice.weekday);
 }
 
 function formatCurrentSessions(row: SummerResponseRow): string {
@@ -503,6 +546,206 @@ function SessionChoicesCell({
   );
 }
 
+type EnrolProgramOption = {
+  course_id: number;
+  name: string;
+  course_code: string;
+  sub_courses: { sub_course_id: number; code: string; name: string }[];
+};
+
+function SummerSessionEnrolControl({
+  studentId,
+  choice,
+}: {
+  studentId: string;
+  choice: SessionChoiceSummary;
+}) {
+  const router = useRouter();
+  const [expanded, setExpanded] = useState(false);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [programs, setPrograms] = useState<EnrolProgramOption[]>([]);
+  const [courseId, setCourseId] = useState<number | null>(null);
+  const [subCourseId, setSubCourseId] = useState<number | null>(null);
+  const [startDate, setStartDate] = useState(() => defaultEnrolStartDate(choice));
+  const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<'error' | 'success'>('success');
+  const [isPending, startTransition] = useTransition();
+
+  const selectedProgram = programs.find((program) => program.course_id === courseId) ?? null;
+  const canConfirm = courseId != null && subCourseId != null && Boolean(startDate);
+
+  async function openEnrol() {
+    setStartDate(defaultEnrolStartDate(choice));
+    setMessage(null);
+    setExpanded(true);
+    setOptionsLoading(true);
+    const result = await loadSummerEnrolOptions(Number(studentId));
+    setOptionsLoading(false);
+    if (!result.ok) {
+      setMessage(result.error);
+      setMessageTone('error');
+      return;
+    }
+    setPrograms(result.programs);
+    // Autopopulate from the most recently ended enrolment when available.
+    if (result.suggested) {
+      setCourseId(result.suggested.course_id);
+      setSubCourseId(result.suggested.sub_course_id);
+    }
+  }
+
+  function handleCourseChange(nextCourseId: number) {
+    setCourseId(nextCourseId);
+    const program = programs.find((candidate) => candidate.course_id === nextCourseId) ?? null;
+    setSubCourseId(program?.sub_courses[0]?.sub_course_id ?? null);
+  }
+
+  function confirmEnrol() {
+    if (courseId == null || subCourseId == null) {
+      setMessage('Select a course and level first.');
+      setMessageTone('error');
+      return;
+    }
+    startTransition(async () => {
+      const result = await addPortalEnrolmentForSummerSession({
+        studentId: Number(studentId),
+        sessionId: choice.session_id,
+        startDate,
+        courseId,
+        subCourseId,
+      });
+      if (!result.ok) {
+        setMessage(result.error);
+        setMessageTone('error');
+        return;
+      }
+      setMessage('Portal enrolment created.');
+      setMessageTone('success');
+      setExpanded(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800">
+          {choice.weekday} {formatTime(choice.start_time)}
+        </span>
+        {!expanded && (
+          <button
+            type="button"
+            onClick={openEnrol}
+            className="text-[11px] px-2 py-0.5 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700"
+          >
+            Enrol
+          </button>
+        )}
+      </div>
+
+      {expanded && (
+        <div className="flex flex-col gap-1.5 rounded border border-emerald-100 bg-emerald-50/60 p-2">
+          {optionsLoading ? (
+            <span className="text-[11px] text-slate-500">Loading courses…</span>
+          ) : (
+            <>
+              <label className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Course</label>
+              <select
+                value={courseId ?? ''}
+                onChange={(event) => handleCourseChange(Number(event.target.value))}
+                className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700"
+              >
+                <option value="" disabled>Select course…</option>
+                {programs.map((program) => (
+                  <option key={program.course_id} value={program.course_id}>
+                    {program.name} ({program.course_code})
+                  </option>
+                ))}
+              </select>
+
+              {selectedProgram && selectedProgram.sub_courses.length > 0 && (
+                <>
+                  <label className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Level</label>
+                  <select
+                    value={subCourseId ?? ''}
+                    onChange={(event) => setSubCourseId(Number(event.target.value))}
+                    className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700"
+                  >
+                    <option value="" disabled>Select level…</option>
+                    {selectedProgram.sub_courses.map((sub) => (
+                      <option key={sub.sub_course_id} value={sub.sub_course_id}>
+                        {sub.name} ({sub.code})
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              <label className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Start date</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+                className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700"
+              />
+
+              <div className="flex items-center gap-2 pt-0.5">
+                <button
+                  type="button"
+                  disabled={isPending || !canConfirm}
+                  onClick={confirmEnrol}
+                  className="text-[11px] px-2 py-0.5 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 disabled:opacity-50"
+                >
+                  {isPending ? 'Enrolling…' : 'Confirm'}
+                </button>
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => {
+                    setExpanded(false);
+                    setMessage(null);
+                  }}
+                  className="text-[11px] px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {message && (
+        <span className={messageTone === 'error' ? 'text-[11px] text-red-600' : 'text-[11px] text-emerald-700'}>
+          {message}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function SummerSessionChoicesCell({
+  studentId,
+  choices,
+  fallbackLabels,
+}: {
+  studentId: string;
+  choices: SessionChoiceSummary[];
+  fallbackLabels: string[];
+}) {
+  if (choices.length === 0) {
+    return <SessionChoicesCell choices={choices} fallbackLabels={fallbackLabels} />;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {choices.map((choice) => (
+        <SummerSessionEnrolControl key={choice.session_id} studentId={studentId} choice={choice} />
+      ))}
+    </div>
+  );
+}
+
 function LabelListCell({
   labels,
   emptyLabel = '—',
@@ -543,7 +786,11 @@ function SummerPlanCell({ row }: { row: SummerResponseRow }) {
       </div>
       <div>
         <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Summer sessions</div>
-        <SessionChoicesCell choices={row.session_choices} fallbackLabels={row.session_labels} />
+        <SummerSessionChoicesCell
+          studentId={row.student_id}
+          choices={row.session_choices}
+          fallbackLabels={row.session_labels}
+        />
         <WaitlistLabelsCell labels={row.waitlist_session_labels} />
       </div>
       <div>
@@ -698,6 +945,163 @@ function RecurringInvoicesCell({
   );
 }
 
+type PortalEnrolmentRow = {
+  student_batch_id: number;
+  course_name: string;
+  sub_course_code: string | null;
+  total_amount: string;
+  batches: Array<{ batch_id: number; day?: string; start_time?: string }>;
+};
+
+// Map a portal enrolment row into the EnrolmentView shape the shared
+// ManageInactivationModal expects (it reuses the same scheduling action as the
+// students edit page).
+function toEnrolmentView(enrolment: PortalEnrolmentRow): EnrolmentView {
+  const batch = enrolment.batches[0];
+  return {
+    studentBatchId: enrolment.student_batch_id,
+    courseName: enrolment.course_name,
+    subCourseCode: enrolment.sub_course_code,
+    totalAmount: enrolment.total_amount,
+    enrolledOn: null,
+    isCurrent: true,
+    batch: batch
+      ? {
+          batchId: batch.batch_id,
+          day: batch.day ?? '',
+          startTime: batch.start_time ?? '',
+          endTime: '',
+          endDate: null,
+        }
+      : null,
+  };
+}
+
+function CurrentEnrolmentsCell({ studentId, studentName }: { studentId: string; studentName: string }) {
+  const [enrolments, setEnrolments] = useState<PortalEnrolmentRow[] | null>(null);
+  // student_batch_id -> queued end date (YYYY-MM-DD) for a scheduled unenrol.
+  const [pending, setPending] = useState<Record<number, string>>({});
+  const [ending, setEnding] = useState<EnrolmentView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const parsedStudentId = Number(studentId);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!Number.isFinite(parsedStudentId)) {
+      setError('Invalid student ID');
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    Promise.all([
+      listStudentPortalEnrolments(parsedStudentId),
+      listPendingInactivations(parsedStudentId),
+    ])
+      .then(([result, pendingRows]) => {
+        if (!isMounted) return;
+        if (!result.ok) {
+          setError(result.error);
+          setEnrolments([]);
+          return;
+        }
+        setEnrolments(result.enrolments as PortalEnrolmentRow[]);
+        setPending(Object.fromEntries(pendingRows.map((row) => [row.studentBatchId, row.endDate])));
+      })
+      .catch((e) => {
+        if (!isMounted) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setEnrolments([]);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [parsedStudentId]);
+
+  function handleInactivationChanged(
+    studentBatchId: number,
+    endDate: string | null,
+    action: 'now' | 'scheduled' | 'cancelled',
+  ) {
+    setPending((prev) => {
+      const next = { ...prev };
+      if (endDate) next[studentBatchId] = endDate;
+      else delete next[studentBatchId];
+      return next;
+    });
+    // Inactivated immediately -> the enrolment is no longer active, drop it.
+    // A scheduled date or an undo keeps the enrolment in the list.
+    if (action === 'now') {
+      setEnrolments((prev) => (prev ?? []).filter((item) => item.student_batch_id !== studentBatchId));
+    }
+  }
+
+  if (isLoading && enrolments === null) {
+    return <span className="text-slate-400">Loading…</span>;
+  }
+
+  if (error) {
+    return <span className="text-red-600 text-[11px]">{error}</span>;
+  }
+
+  if (!enrolments || enrolments.length === 0) {
+    return <span className="text-slate-400">—</span>;
+  }
+
+  return (
+    <div className="space-y-1 min-w-[240px]">
+      {enrolments.map((enrolment) => {
+        const pendingEndDate = pending[enrolment.student_batch_id] ?? null;
+        return (
+          <div key={enrolment.student_batch_id} className="rounded border border-slate-200 bg-slate-50 p-2">
+            <div className="text-[11px] font-medium text-slate-700">{enrolment.course_name}</div>
+            <div className="text-[10px] text-slate-500">
+              {(enrolment.sub_course_code ?? 'No level')} · ${enrolment.total_amount}
+            </div>
+            {enrolment.batches.length > 0 && (
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {enrolment.batches.map((batch) => `${batch.day ?? 'Day TBD'} ${formatTime(batch.start_time ?? null)}`).join(', ')}
+              </div>
+            )}
+            {pendingEndDate && (
+              <div className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-amber-100">
+                Unenrolling {formatDate(pendingEndDate)}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setEnding(toEnrolmentView(enrolment))}
+              className={
+                pendingEndDate
+                  ? 'mt-1 block text-[11px] px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 transition'
+                  : 'mt-1 block text-[11px] px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition'
+              }
+              title={pendingEndDate ? 'Edit or undo the scheduled unenrol date' : 'Unenrol now or schedule a future date'}
+            >
+              {pendingEndDate ? 'Edit unenrol date' : 'Unenrol'}
+            </button>
+          </div>
+        );
+      })}
+      {ending && (
+        <ManageInactivationModal
+          studentId={parsedStudentId}
+          studentName={studentName}
+          enrolment={ending}
+          pendingEndDate={pending[ending.studentBatchId] ?? null}
+          onClose={() => setEnding(null)}
+          onChanged={handleInactivationChanged}
+        />
+      )}
+    </div>
+  );
+}
+
 function StudentCell({ row, currentUserName }: { row: SummerResponseRow; currentUserName: string }) {
   const [showModal, setShowModal] = useState(false);
 
@@ -782,7 +1186,7 @@ function ResponseHistoryRows({ row, currentUserName }: { row: SummerResponseRow;
   if (row.submission_history.length === 0) return null;
   return (
     <tr className="bg-indigo-50/40">
-      <td colSpan={10} className="px-3 py-3">
+      <td colSpan={11} className="px-3 py-3">
         <div className="rounded-lg border border-indigo-100 bg-white">
           <div className="border-b border-indigo-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-700">
             Previous Submissions
@@ -1297,6 +1701,7 @@ export default function ResponsesTab({
                 <th className="px-3 py-2">Family</th>
                 <th className="px-3 py-2">Summer Plan</th>
                 <th className="px-3 py-2">Fall Plan</th>
+                <th className="px-3 py-2">Current Enrolments</th>
                 <th className="px-3 py-2">Recurring Invoices</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Submitted</th>
@@ -1308,7 +1713,7 @@ export default function ResponsesTab({
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-3 py-6 text-center text-slate-400 text-sm">
+                  <td colSpan={11} className="px-3 py-6 text-center text-slate-400 text-sm">
                     No matching responses.
                   </td>
                 </tr>
@@ -1333,6 +1738,9 @@ export default function ResponsesTab({
                   </td>
                   <td className="px-3 py-2 align-top min-w-[240px]">
                     <FallPlanCell row={row} />
+                  </td>
+                  <td className="px-3 py-2 align-top min-w-[260px]">
+                    <CurrentEnrolmentsCell studentId={row.student_id} studentName={row.student_name} />
                   </td>
                   <td className="px-3 py-2 align-top">
                     <RecurringInvoicesCell
