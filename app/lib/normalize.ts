@@ -239,8 +239,22 @@ type RawCampEnrolment = {
   course_status: string;
   alternate_emails: string;
   dob: string;
-  allergies: string;
-  special_need: string;
+  allergies?: unknown;
+  allergy?: unknown;
+  allergy_info?: unknown;
+  allergy_information?: unknown;
+  allergy_notes?: unknown;
+  medical?: unknown;
+  medical_alert?: unknown;
+  medical_alerts?: unknown;
+  medical_info?: unknown;
+  medical_information?: unknown;
+  medical_notes?: unknown;
+  special_need?: unknown;
+  special_needs?: unknown;
+  special_need_notes?: unknown;
+  special_needs_notes?: unknown;
+  [key: string]: unknown;
 };
 
 export type NormalizedCampEnrolment = {
@@ -307,11 +321,58 @@ function parseCampType(campType: string): 'FD' | 'PM' | 'AM' | null {
   return typeMap[campType] || null;
 }
 
+function textValue(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+}
+
+function firstTextValue(row: RawCampEnrolment, keys: string[]): string {
+  for (const key of keys) {
+    const value = textValue(row[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+function uniqueTextValues(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function allergyText(row: RawCampEnrolment) {
+  return uniqueTextValues([
+    firstTextValue(row, [
+      'allergies',
+      'allergy',
+      'allergy_info',
+      'allergy_information',
+      'allergy_notes',
+    ]),
+    firstTextValue(row, [
+      'medical',
+      'medical_alert',
+      'medical_alerts',
+      'medical_info',
+      'medical_information',
+      'medical_notes',
+    ]),
+  ]).join('\n');
+}
+
+function specialNeedsText(row: RawCampEnrolment) {
+  return firstTextValue(row, [
+    'special_need',
+    'special_needs',
+    'special_need_notes',
+    'special_needs_notes',
+  ]);
+}
+
 export function normalizeCampEnrolments(results: RawCampEnrolment[]): NormalizedCampEnrolment[] {
   console.log("normalizing camp enrolments");
   
   return results
-    .filter(r => r.course_status === "Active")
+    .filter(r => textValue(r.course_status) === "Active")
     .map(r => {
       const dates = parseCampWeek(r.camp_week);
       const times = parseCampTimes(r.camp_times);
@@ -341,8 +402,8 @@ export function normalizeCampEnrolments(results: RawCampEnrolment[]): Normalized
         end_time: times.end,
         camp_type: parsedCampType,
         extended_care,
-        allergies: r.allergies || '',
-        special_needs: r.special_need || '',
+        allergies: allergyText(r),
+        special_needs: specialNeedsText(r),
         course_id: r.course_abbr || ''
       };
     })

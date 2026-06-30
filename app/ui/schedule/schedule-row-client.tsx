@@ -147,12 +147,12 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
       </div>
 
       {/* Scrollable list */}
-      <div className="max-h-[60vh] md:max-h-80 overflow-y-auto divide-y divide-slate-100">
+      <div className="max-h-[60vh] md:max-h-80 overflow-auto divide-y divide-slate-100">
         {/* Trials */}
         {trials.map((student) => (
           <div
             key={student.trial_id + student.name}
-            className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm bg-amber-50"
+            className="grid min-w-[680px] grid-cols-[minmax(220px,1fr)_minmax(260px,1.2fr)] items-center gap-3 px-3 md:px-4 py-2 text-sm bg-amber-50"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
@@ -171,13 +171,11 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               </div>
             </div>
 
-            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
-              <div className="w-full md:min-w-[250px]">
+            <div className="min-w-0">
                 <TrialNoteCell 
                   trial={student}
                   currentUserName={currentUserName} 
                 />
-              </div>
             </div>
           </div>
         ))}
@@ -186,7 +184,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
         {makeups.map((student) => (
           <div
             key={student.makeup_id + student.name}
-            className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm bg-sky-50"
+            className="grid min-w-[760px] grid-cols-[minmax(220px,1fr)_minmax(260px,1.2fr)_auto] items-center gap-3 px-3 md:px-4 py-2 text-sm bg-sky-50"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
@@ -210,8 +208,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               </div>
             </div>
 
-            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
-              <div className="w-full md:min-w-[250px]">
+            <div className="min-w-0">
                 <StudentNoteCell 
                   student={{ 
                     id: student.student_id, 
@@ -220,7 +217,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
                   } as any} 
                   currentUserName={currentUserName} 
                 />
-              </div>
+            </div>
               <button
                 type="button"
                 onClick={() => handleCancelMakeup(student.makeup_id)}
@@ -229,7 +226,6 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               >
                 {cancellingMakeupId === student.makeup_id ? 'Cancelling...' : 'Cancel'}
               </button>
-            </div>
           </div>
         ))}
 
@@ -240,7 +236,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
           <div
             key={student.enrolment_id}
             className={clsx(
-              "flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm",
+              "grid min-w-[820px] grid-cols-[minmax(220px,1fr)_auto_minmax(260px,1.2fr)_auto] items-center gap-3 px-3 md:px-4 py-2 text-sm",
               status === "absent"
                 ? "bg-rose-50"
                 : status === "present"
@@ -274,14 +270,13 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               </div>
             </div>
 
-            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
               <AttendanceButtons
                 value={status}
                 isSaving={savingEnrolmentId === student.enrolment_id}
                 disabled={!sessionDate}
                 onSelect={(next) => handleSetAttendance(student, next)}
               />
-              <div className="w-full md:min-w-[250px]">
+              <div className="min-w-0">
                 <StudentNoteCell
                   student={{
                     id: student.student_id,
@@ -297,7 +292,6 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               >
                 Edit
               </Link>
-            </div>
           </div>
           );
         })}

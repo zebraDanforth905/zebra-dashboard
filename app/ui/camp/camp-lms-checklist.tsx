@@ -11,58 +11,26 @@ import {
 import {
   refreshCampLmsWeek,
   runCampLmsCanvasTestAction,
+  saveCanvasApiToken,
+  searchCampLmsCanvasCourses,
   syncCampLmsCanvasWeek,
-  updateCampLmsStatus,
+  updatePaDayCampAssignment,
 } from '@/app/lib/actions';
 import Link from 'next/link';
 import type {
   CampLmsCanvasActionType,
-  CampLmsCanvasIssue,
+  CampLmsCanvasCourseSearchResult,
   CampLmsCanvasEnrollment,
   CampLmsChecklistData,
   CampLmsChecklistRow,
-  CampLmsStatus,
   CampLmsSuggestedAction,
 } from '@/app/lib/definitions';
 
 type Props = {
   startDate: string;
   endDate: string;
+  scopeLabel: string;
   checklist: CampLmsChecklistData;
-};
-
-const STATUS_OPTIONS: Array<{ value: CampLmsStatus; label: string; className: string }> = [
-  { value: 'verified', label: 'Verified', className: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' },
-  { value: 'missing_user', label: 'Missing user', className: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100' },
-  { value: 'missing_course', label: 'Missing course', className: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100' },
-  { value: 'needs_followup', label: 'Follow-up', className: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' },
-  { value: 'not_applicable', label: 'N/A', className: 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100' },
-];
-
-const STATUS_LABELS: Record<CampLmsStatus, string> = {
-  verified: 'Verified',
-  missing_user: 'Missing user',
-  missing_course: 'Missing course',
-  needs_followup: 'Needs follow-up',
-  not_applicable: 'Not applicable',
-};
-
-const STATUS_BADGES: Record<CampLmsStatus, string> = {
-  verified: 'bg-emerald-100 text-emerald-800',
-  missing_user: 'bg-rose-100 text-rose-800',
-  missing_course: 'bg-orange-100 text-orange-800',
-  needs_followup: 'bg-amber-100 text-amber-800',
-  not_applicable: 'bg-slate-100 text-slate-700',
-};
-
-const CANVAS_BADGES: Record<CampLmsCanvasIssue, string> = {
-  ok: 'bg-emerald-100 text-emerald-800',
-  not_synced: 'bg-slate-100 text-slate-700',
-  unmapped_course: 'bg-orange-100 text-orange-800',
-  missing_canvas_user: 'bg-rose-100 text-rose-800',
-  missing_expected_course: 'bg-amber-100 text-amber-800',
-  inactive_expected_course: 'bg-violet-100 text-violet-800',
-  extra_active_course: 'bg-sky-100 text-sky-800',
 };
 
 function formatDateTime(value: Date | string | null) {
@@ -83,14 +51,14 @@ function courseLabel(row: CampLmsChecklistRow) {
     : row.course_id ?? 'No course ID';
 }
 
-function makeInitialNotes(rows: CampLmsChecklistRow[]) {
-  return Object.fromEntries(
-    rows.map((row) => [row.camp_enrolment_id, row.status_note ?? ''])
-  );
+function originalCourseLabel(row: CampLmsChecklistRow) {
+  return row.original_course_name && row.original_course_name !== row.original_course_id
+    ? row.original_course_name
+    : row.original_course_id ?? 'Day Camp';
 }
 
 function isManualDayCamp(row: CampLmsChecklistRow) {
-  return `${row.course_id ?? ''} ${row.course_name ?? ''}`.toLowerCase().includes('day camp');
+  return row.is_day_camp && !row.day_camp_assigned_course_id;
 }
 
 function expectedMappingLabel(row: CampLmsChecklistRow) {
@@ -100,6 +68,61 @@ function expectedMappingLabel(row: CampLmsChecklistRow) {
   return row.expected_canvas_courses
     .map((course) => course.course_name ? `${course.course_name} (#${course.course_id})` : `#${course.course_id}`)
     .join(', ');
+}
+
+function lmsSummaryCards(checklist: CampLmsChecklistData) {
+  const cards = [
+    {
+      label: 'Total LMS Students',
+      value: checklist.summary.total,
+      hint: 'Unique campers this week',
+    },
+    {
+      label: 'Create LMS Accounts',
+      value: checklist.summary.lms_accounts_needed,
+      hint: 'Synced rows with no Canvas user',
+    },
+  ];
+
+  if (checklist.summary.day_camp_total > 0) {
+    cards.push({
+      label: 'Assign Day Camp',
+      value: checklist.summary.day_camp_assignments_needed,
+      hint: 'Day Camp campers missing a camp',
+    });
+  }
+
+  cards.push(
+    {
+      label: 'Map Assigned Camps',
+      value: checklist.summary.unmapped_assigned_camps,
+      hint: 'Camp assignments without LMS mapping',
+    },
+    {
+      label: 'Fix LMS Courses',
+      value: checklist.summary.lms_course_fixes_needed,
+      hint: 'Add, reactivate, or remove courses',
+    }
+  );
+
+  return cards;
+}
+
+function syncErrorMessage(error: string) {
+  return `Canvas status is stale or needs attention. Last error: ${error}`;
+}
+
+function uniqueRowsBy(
+  rows: CampLmsChecklistRow[],
+  keyForRow: (row: CampLmsChecklistRow) => string
+) {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = keyForRow(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function makeChecklistText(rows: CampLmsChecklistRow[]) {
@@ -112,10 +135,6 @@ function makeChecklistText(rows: CampLmsChecklistRow[]) {
     'Expected Mapping',
     'Active Canvas Courses',
     'Inactive Canvas Courses',
-    'Canvas Status',
-    'Suggested Fix',
-    'Office Status',
-    'Office Note',
   ].join('\t');
 
   const body = rows.map((row) => [
@@ -127,10 +146,6 @@ function makeChecklistText(rows: CampLmsChecklistRow[]) {
     expectedMappingLabel(row),
     row.active_canvas_enrollments.map((enrollment) => enrollment.course_name ?? enrollment.course_id).join(', '),
     row.inactive_canvas_enrollments.map((enrollment) => enrollment.course_name ?? enrollment.course_id).join(', '),
-    row.canvas_status_label,
-    row.suggested_fix,
-    row.status ? STATUS_LABELS[row.status] : 'Unchecked',
-    row.status_note ?? '',
   ].join('\t'));
 
   return [header, ...body].join('\n');
@@ -142,42 +157,74 @@ function EnrollmentList({
   actionType,
   disabled,
   onRun,
+  expanded,
+  onToggleExpanded,
+  canRun,
 }: {
   enrollments: CampLmsCanvasEnrollment[];
   actionLabel?: string;
   actionType?: CampLmsCanvasActionType;
   disabled?: boolean;
   onRun?: (enrollment: CampLmsCanvasEnrollment) => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  canRun?: (enrollment: CampLmsCanvasEnrollment) => boolean;
 }) {
   if (enrollments.length === 0) {
     return <span className="text-xs text-slate-400">None</span>;
   }
 
+  const visibleEnrollments = expanded ? enrollments : enrollments.slice(0, 3);
+  const hiddenCount = enrollments.length - visibleEnrollments.length;
+
   return (
     <div className="space-y-1">
-      {enrollments.map((enrollment) => (
+      {visibleEnrollments.map((enrollment) => (
         <div key={enrollment.enrollment_id} className="space-y-1 rounded-md border border-slate-100 bg-slate-50 p-2 text-xs leading-5 text-slate-700">
           <div>
             <span className="font-medium">{enrollment.course_name ?? enrollment.course_id}</span>
             <span className="ml-1 text-slate-400">#{enrollment.course_id}</span>
           </div>
-          {actionLabel && actionType && onRun && (
+          {actionLabel && actionType && onRun && (!canRun || canRun(enrollment)) && (
             <button
               type="button"
               onClick={() => onRun(enrollment)}
               disabled={disabled}
+              data-lms-action={actionType}
+              data-lms-course-id={enrollment.course_id}
+              data-lms-enrollment-id={enrollment.enrollment_id}
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title={`${actionLabel} ${enrollment.course_name ?? enrollment.course_id}`}
             >
               {actionLabel}
             </button>
           )}
         </div>
       ))}
+      {enrollments.length > 3 && (
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          {expanded ? 'Show less' : `Show ${hiddenCount} more`}
+        </button>
+      )}
     </div>
   );
 }
 
-function ExpectedCourses({ row }: { row: CampLmsChecklistRow }) {
+function ExpectedCourses({
+  row,
+  addExpectedAction,
+  disabled,
+  onRun,
+}: {
+  row: CampLmsChecklistRow;
+  addExpectedAction?: CampLmsSuggestedAction;
+  disabled: boolean;
+  onRun: (row: CampLmsChecklistRow, action: CampLmsSuggestedAction) => void;
+}) {
   if (row.expected_canvas_courses.length === 0) {
     if (isManualDayCamp(row)) {
       return (
@@ -205,6 +252,19 @@ function ExpectedCourses({ row }: { row: CampLmsChecklistRow }) {
         </div>
       ))}
       {row.mapping_notes && <div className="text-slate-500">{row.mapping_notes}</div>}
+      {row.inactive_expected_enrollments.length > 0 && (
+        <div className="text-violet-700">Expected course is inactive. Use Make active.</div>
+      )}
+      {addExpectedAction && (
+        <div className="pt-1">
+          <CanvasActionButton
+            action={addExpectedAction}
+            row={row}
+            disabled={disabled}
+            onRun={onRun}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -225,6 +285,9 @@ function CanvasActionButton({
       type="button"
       onClick={() => onRun(row, action)}
       disabled={disabled}
+      data-lms-action={action.type}
+      data-lms-course-id={action.canvas_course_id}
+      data-lms-enrollment-id={action.canvas_enrollment_id}
       className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-medium text-sky-800 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
       title={action.canvas_course_name ?? action.canvas_course_id ?? action.canvas_enrollment_id}
     >
@@ -233,14 +296,17 @@ function CanvasActionButton({
   );
 }
 
-export default function CampLmsChecklist({ startDate, endDate, checklist }: Props) {
+export default function CampLmsChecklist({ startDate, endDate, scopeLabel, checklist }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
-  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>(
-    () => makeInitialNotes(checklist.rows)
-  );
-  const [courseDrafts, setCourseDrafts] = useState<Record<string, string>>({});
+  const [courseSearchTerms, setCourseSearchTerms] = useState<Record<string, string>>({});
+  const [courseSearchResults, setCourseSearchResults] = useState<Record<string, CampLmsCanvasCourseSearchResult[]>>({});
+  const [selectedCourseIds, setSelectedCourseIds] = useState<Record<string, string>>({});
+  const [dayCampDrafts, setDayCampDrafts] = useState<Record<string, string>>({});
+  const [expandedEnrollments, setExpandedEnrollments] = useState<Record<string, boolean>>({});
+  const [canvasTokenDraft, setCanvasTokenDraft] = useState('');
+  const [isSavingCanvasToken, setIsSavingCanvasToken] = useState(false);
 
   const unmappedCourses = useMemo(() => {
     const courses = new Map<string, { courseId: string; label: string; count: number }>();
@@ -264,7 +330,80 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
   }, [checklist.rows]);
 
   const rowsWithoutCourseId = checklist.rows.filter((row) => !row.course_id).length;
-  const suggestedActionCount = checklist.rows.reduce((count, row) => count + row.suggested_actions.length, 0);
+  const showCanvasTokenPrompt = checklist.schema_ready && (!checklist.canvas_configured || !checklist.canvas_token_ok);
+  const canvasTokenLooksGood = checklist.schema_ready && checklist.canvas_configured && checklist.canvas_token_ok;
+  const addExpectedActionFor = (row: CampLmsChecklistRow) =>
+    row.suggested_actions.find((action) => action.type === 'add_expected_beginner');
+  const rowsNeedingLmsAccount = uniqueRowsBy(
+    checklist.rows.filter((row) =>
+      row.canvas_sync_status === 'synced'
+      && !row.canvas_user_found
+      && row.canvas_user_matches.length === 0
+    ),
+    (row) => row.suggested_lms_login || row.student_id
+  );
+  const rowsNeedingExpectedCourse = uniqueRowsBy(
+    checklist.rows.filter((row) =>
+      row.canvas_user_found && Boolean(addExpectedActionFor(row))
+    ),
+    (row) => {
+      const action = addExpectedActionFor(row);
+      return `${row.canvas_user_id ?? row.student_id}:${action?.canvas_course_id ?? row.course_id ?? row.camp_enrolment_id}`;
+    }
+  );
+  const resolveAllCount = rowsNeedingLmsAccount.length + rowsNeedingExpectedCourse.length;
+  const tokenSourceLabel =
+    checklist.canvas_token_source === 'user_database'
+      ? 'your dashboard setting'
+      : checklist.canvas_token_source === 'environment'
+      ? 'environment variable'
+      : checklist.canvas_token_source === 'legacy_database'
+        ? 'legacy shared dashboard setting'
+        : 'not configured';
+  const refreshChecklistView = () => {
+    router.refresh();
+    window.setTimeout(() => router.refresh(), 750);
+  };
+
+  const handleCanvasTokenSave = async (formData: FormData) => {
+    setIsSavingCanvasToken(true);
+    setMessage(null);
+    console.debug('[canvas token save] submitting token save', {
+      draftLength: canvasTokenDraft.trim().length,
+      currentSource: checklist.canvas_token_source,
+      currentMaskedToken: checklist.canvas_masked_token,
+    });
+
+    const result = await saveCanvasApiToken(formData);
+    console.debug('[canvas token save] result', result);
+    if (!result.ok) {
+      setMessage(result.error ?? 'Canvas API token save failed.');
+      setIsSavingCanvasToken(false);
+      return;
+    }
+
+    setCanvasTokenDraft('');
+    if (result.tokenTest?.ok) {
+      setMessage('Canvas API token saved and tested. Refreshing LMS status...');
+      const syncResult = await syncCampLmsCanvasWeek(startDate, endDate);
+      if (!syncResult.ok) {
+        setMessage(`Canvas API token saved and tested, but LMS status refresh failed: ${syncResult.error ?? 'unknown error'}`);
+        setIsSavingCanvasToken(false);
+        refreshChecklistView();
+        return;
+      }
+
+      const errorCount = syncResult.errors?.length ?? 0;
+      setMessage(errorCount > 0
+        ? `Canvas API token saved and tested. LMS status refreshed for ${syncResult.synced} row(s); ${errorCount} row(s) still need attention.`
+        : `Canvas API token saved and tested. LMS status refreshed for ${syncResult.synced} row(s).`
+      );
+    } else {
+      setMessage(result.message ?? 'Canvas API token saved and tested.');
+    }
+    setIsSavingCanvasToken(false);
+    refreshChecklistView();
+  };
 
   const handleRefresh = () => {
     setMessage(null);
@@ -275,7 +414,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         return;
       }
       setMessage('Portal roster refreshed.');
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -292,7 +431,66 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         ? `Canvas sync finished for ${result.synced} row(s); ${errorCount} row(s) need attention.`
         : `Canvas sync finished for ${result.synced} row(s).`
       );
-      router.refresh();
+      refreshChecklistView();
+    });
+  };
+
+  const handleResolveAllLmsAccounts = () => {
+    if (resolveAllCount === 0) {
+      setMessage('No LMS accounts or expected courses need automatic fixes.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Resolve ${resolveAllCount} LMS item(s)? This will create missing Canvas users and add expected LMS courses where the mapping is ready.`
+    );
+    if (!confirmed) return;
+
+    setMessage(null);
+    startTransition(async () => {
+      let createdUsers = 0;
+      let addedExpectedCourses = 0;
+      const errors: string[] = [];
+
+      for (const row of rowsNeedingLmsAccount) {
+        const result = await runCampLmsCanvasTestAction({
+          campEnrolmentId: row.camp_enrolment_id,
+          type: 'create_user',
+          startDate,
+          endDate,
+        });
+        if (result.ok) {
+          createdUsers += 1;
+        } else {
+          errors.push(`${row.student_name}: ${result.error ?? 'Create LMS user failed'}`);
+        }
+      }
+
+      for (const row of rowsNeedingExpectedCourse) {
+        const action = addExpectedActionFor(row);
+        if (!action) continue;
+
+        const result = await runCampLmsCanvasTestAction({
+          campEnrolmentId: row.camp_enrolment_id,
+          type: action.type,
+          canvasCourseId: action.canvas_course_id,
+          canvasEnrollmentId: action.canvas_enrollment_id,
+          startDate,
+          endDate,
+        });
+        if (result.ok) {
+          addedExpectedCourses += 1;
+        } else {
+          errors.push(`${row.student_name}: ${result.error ?? 'Add expected course failed'}`);
+        }
+      }
+
+      const summary = `Resolved LMS accounts: ${createdUsers} user setup(s) run, ${addedExpectedCourses} existing user course(s) added.`;
+      setMessage(errors.length > 0
+        ? `${summary} ${errors.length} issue(s): ${errors.slice(0, 3).join(' | ')}`
+        : summary
+      );
+      refreshChecklistView();
     });
   };
 
@@ -305,26 +503,116 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
     }
   };
 
-  const handleStatus = (row: CampLmsChecklistRow, status: CampLmsStatus | null) => {
+  const enrollmentListKey = (row: CampLmsChecklistRow, kind: 'active' | 'inactive') =>
+    `${row.camp_enrolment_id}:${kind}`;
+
+  const toggleEnrollmentList = (row: CampLmsChecklistRow, kind: 'active' | 'inactive') => {
+    const key = enrollmentListKey(row, kind);
+    setExpandedEnrollments((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  };
+
+  const dayCampDraftFor = (row: CampLmsChecklistRow) =>
+    dayCampDrafts[row.camp_enrolment_id] ?? row.day_camp_assigned_course_id ?? '';
+
+  const handleDayCampAssignment = (row: CampLmsChecklistRow) => {
+    const assignedCourseId = dayCampDraftFor(row) || null;
+
     setMessage(null);
     startTransition(async () => {
-      const result = await updateCampLmsStatus({
-        enrolmentId: row.camp_enrolment_id,
-        status,
-        note: noteDrafts[row.camp_enrolment_id] ?? '',
+      const result = await updatePaDayCampAssignment({
+        campEnrolmentId: row.camp_enrolment_id,
+        assignedCourseId,
       });
+
       if (!result.ok) {
-        setMessage(result.error ?? 'Status update failed.');
+        setMessage(result.error ?? 'Day Camp assignment failed.');
         return;
       }
-      setMessage(status ? 'LMS status updated.' : 'LMS status cleared.');
+
+      setDayCampDrafts((current) => ({
+        ...current,
+        [row.camp_enrolment_id]: assignedCourseId ?? '',
+      }));
+      setMessage(
+        assignedCourseId
+          ? 'Day Camp assignment saved.'
+          : 'Day Camp assignment cleared.'
+      );
       router.refresh();
     });
   };
 
+  const renderCampCourse = (row: CampLmsChecklistRow) => {
+    if (!row.is_day_camp) {
+      return (
+        <>
+          <div>{courseLabel(row)}</div>
+          <div className="mt-1 text-xs text-slate-500">{row.camp_type}{row.extended_care ? ' EX' : ''}</div>
+        </>
+      );
+    }
+
+    const draftValue = dayCampDraftFor(row);
+    const currentValue = row.day_camp_assigned_course_id ?? '';
+    const canSave = draftValue !== currentValue;
+    const draftOption = checklist.day_camp_course_options.find((course) => course.id === draftValue);
+    const visibleCourseName = draftOption?.label ?? row.day_camp_assigned_course_name ?? row.course_name ?? 'Day Camp';
+
+    return (
+      <div className="w-72 space-y-1.5">
+        <div className="font-medium text-slate-900">
+          {visibleCourseName}
+        </div>
+        <div className="text-xs text-slate-500">
+          {row.camp_type}{row.extended_care ? ' EX' : ''} · Portal: {originalCourseLabel(row)}
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+          <select
+            value={draftValue}
+            onChange={(event) =>
+              setDayCampDrafts((current) => ({
+                ...current,
+                [row.camp_enrolment_id]: event.target.value,
+              }))
+            }
+            disabled={isPending || !checklist.schema_ready}
+            className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 disabled:bg-slate-100"
+          >
+            <option value="">Assign camp</option>
+            {checklist.day_camp_course_options.map((course) => (
+              <option key={course.id} value={course.id}>
+                {course.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => handleDayCampAssignment(row)}
+            disabled={isPending || !checklist.schema_ready || !canSave}
+            className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+        {draftValue ? (
+          <div className="text-xs text-slate-600">Effective: {visibleCourseName}</div>
+        ) : (
+          <div className="text-xs text-amber-700">Camp assignment needed</div>
+        )}
+      </div>
+    );
+  };
+
   const handleCanvasAction = (row: CampLmsChecklistRow, action: CampLmsSuggestedAction) => {
     const target = action.canvas_course_name ?? action.canvas_course_id ?? action.canvas_enrollment_id ?? 'Canvas';
-    const confirmed = window.confirm(`Run one-student Canvas test for ${row.student_name}: ${action.label} (${target})?`);
+    const confirmation =
+      action.type === 'add_expected_beginner'
+        ? `Add the expected LMS course for ${row.student_name}: ${target}?`
+        : `Run Canvas action for ${row.student_name}: ${action.label} (${target})?`;
+    const confirmed = window.confirm(confirmation);
     if (!confirmed) return;
 
     setMessage(null);
@@ -334,13 +622,19 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         type: action.type,
         canvasCourseId: action.canvas_course_id,
         canvasEnrollmentId: action.canvas_enrollment_id,
+        startDate,
+        endDate,
       });
       if (!result.ok) {
         setMessage(result.error ?? 'Canvas test action failed.');
         return;
       }
-      setMessage('Canvas test action completed and audited.');
-      router.refresh();
+      setMessage(
+        action.type === 'add_expected_beginner'
+          ? 'Expected LMS course added and synced.'
+          : 'Canvas action completed and synced.'
+      );
+      refreshChecklistView();
     });
   };
 
@@ -361,24 +655,49 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         type,
         canvasCourseId: enrollment.course_id,
         canvasEnrollmentId: enrollment.enrollment_id,
+        startDate,
+        endDate,
       });
       if (!result.ok) {
         setMessage(result.error ?? 'Canvas course update failed.');
         return;
       }
       setMessage(type === 'activate_course' ? 'Canvas course set active.' : 'Canvas course set inactive.');
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
-  const handleAddActiveCourse = (row: CampLmsChecklistRow) => {
-    const canvasCourseId = courseDrafts[row.camp_enrolment_id]?.trim();
-    if (!canvasCourseId) {
-      setMessage('Enter a Canvas course ID before adding an active course.');
+  const handleSearchCourses = (row: CampLmsChecklistRow) => {
+    const term = courseSearchTerms[row.camp_enrolment_id]?.trim() ?? '';
+    if (term.length < 2) {
+      setMessage('Search with at least 2 characters.');
       return;
     }
 
-    const confirmed = window.confirm(`Canvas write for ${row.student_name}: add course ${canvasCourseId} as active?`);
+    setMessage(null);
+    startTransition(async () => {
+      const result = await searchCampLmsCanvasCourses({ term });
+      if (!result.ok) {
+        setMessage(result.error ?? 'LMS course search failed.');
+        return;
+      }
+
+      setCourseSearchResults((current) => ({
+        ...current,
+        [row.camp_enrolment_id]: result.courses,
+      }));
+      setMessage(result.courses.length === 0 ? 'No LMS courses found.' : `Found ${result.courses.length} LMS course(s).`);
+    });
+  };
+
+  const handleAddSelectedCourse = (row: CampLmsChecklistRow) => {
+    const canvasCourseId = selectedCourseIds[row.camp_enrolment_id]?.trim();
+    if (!canvasCourseId) {
+      setMessage('Search for and select an LMS course before adding it.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Canvas write for ${row.student_name}: add course ${canvasCourseId} as active if it is not already on their account?`);
     if (!confirmed) return;
 
     setMessage(null);
@@ -387,17 +706,41 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         campEnrolmentId: row.camp_enrolment_id,
         type: 'activate_course',
         canvasCourseId,
+        startDate,
+        endDate,
       });
       if (!result.ok) {
         setMessage(result.error ?? 'Canvas course add failed.');
         return;
       }
-      setCourseDrafts((current) => ({
-        ...current,
-        [row.camp_enrolment_id]: '',
-      }));
+      setCourseSearchTerms((current) => ({ ...current, [row.camp_enrolment_id]: '' }));
+      setCourseSearchResults((current) => ({ ...current, [row.camp_enrolment_id]: [] }));
+      setSelectedCourseIds((current) => ({ ...current, [row.camp_enrolment_id]: '' }));
       setMessage('Canvas course added as active.');
-      router.refresh();
+      refreshChecklistView();
+    });
+  };
+
+  const handleCreateUser = (row: CampLmsChecklistRow) => {
+    const confirmed = window.confirm(
+      `Create a Canvas user for ${row.student_name} with login ${row.suggested_lms_login}?`
+    );
+    if (!confirmed) return;
+
+    setMessage(null);
+    startTransition(async () => {
+      const result = await runCampLmsCanvasTestAction({
+        campEnrolmentId: row.camp_enrolment_id,
+        type: 'create_user',
+        startDate,
+        endDate,
+      });
+      if (!result.ok) {
+        setMessage(result.error ?? 'Canvas user creation failed.');
+        return;
+      }
+      setMessage('warning' in result && result.warning ? result.warning : 'Canvas user created and synced.');
+      refreshChecklistView();
     });
   };
 
@@ -406,6 +749,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-slate-900">LMS Checklist</h2>
+          <p className="mt-1 text-sm text-slate-600">{scopeLabel}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <span>Canvas: {checklist.canvas_base_url}</span>
             <span>|</span>
@@ -433,11 +777,12 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           </button>
           <button
             type="button"
-            disabled
-            className="inline-flex cursor-not-allowed items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-400"
+            onClick={handleResolveAllLmsAccounts}
+            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || resolveAllCount === 0}
+            className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <CheckCircleIcon className="h-4 w-4" />
-            Add All Preview ({suggestedActionCount})
+            Resolve LMS Accounts
+            {resolveAllCount > 0 && <span className="rounded bg-white/20 px-1.5 py-0.5 text-xs">{resolveAllCount}</span>}
           </button>
           <button
             type="button"
@@ -458,14 +803,95 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
 
       {!checklist.schema_ready && (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          Apply migrations <span className="font-mono">025_lms_camp_checklist.sql</span>, <span className="font-mono">026_canvas_lms_workflow.sql</span>, <span className="font-mono">027_rename_lms_status_note.sql</span>, <span className="font-mono">030_lms_canvas_activate_course_action.sql</span>, and <span className="font-mono">032_lms_mapping_additional_courses.sql</span>.
+          Apply migrations <span className="font-mono">025_lms_camp_checklist.sql</span>, <span className="font-mono">026_canvas_lms_workflow.sql</span>, <span className="font-mono">027_rename_lms_status_note.sql</span>, <span className="font-mono">030_lms_canvas_activate_course_action.sql</span>, <span className="font-mono">032_lms_mapping_additional_courses.sql</span>, <span className="font-mono">040_pa_day_camp_course_assignments.sql</span>, <span className="font-mono">041_lms_canvas_create_user_action.sql</span>, and <span className="font-mono">042_rename_lms_canvas_sync_state.sql</span>.
         </div>
       )}
 
-      {checklist.schema_ready && !checklist.canvas_configured && (
-        <div className="mt-4 flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-none" />
-          <span><span className="font-mono">CANVAS_API_TOKEN</span> is not configured.</span>
+      {(showCanvasTokenPrompt || canvasTokenLooksGood) && (
+        <div className={
+          canvasTokenLooksGood
+            ? "mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
+            : "mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        }>
+          <div className="flex gap-2">
+            {canvasTokenLooksGood ? (
+              <CheckCircleIcon className="mt-0.5 h-4 w-4 flex-none" />
+            ) : (
+              <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-none" />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">
+                {canvasTokenLooksGood
+                  ? 'Canvas API token is valid.'
+                  : checklist.canvas_configured
+                  ? 'Canvas API token is not working.'
+                  : 'Canvas API token is not configured.'}
+              </div>
+              {canvasTokenLooksGood ? (
+                <details className="mt-1 text-emerald-800">
+                  <summary className="cursor-pointer select-none text-sm font-medium hover:text-emerald-950">
+                    Token details
+                  </summary>
+                  <div className="mt-1">
+                    Current source: {tokenSourceLabel}
+                    {checklist.canvas_masked_token ? ` (${checklist.canvas_masked_token})` : ''}. Canvas sync can read from the configured token.
+                  </div>
+                  {checklist.canvas_token_source === 'environment' && (
+                    <div className="mt-1 text-xs text-emerald-800">
+                      This is falling back to the server environment token because you do not have a working dashboard-saved token yet.
+                    </div>
+                  )}
+                  {checklist.canvas_token_source === 'legacy_database' && (
+                    <div className="mt-1 text-xs text-emerald-800">
+                      This is falling back to the old shared dashboard token. Saving here will store a token for only your user.
+                    </div>
+                  )}
+                </details>
+              ) : (
+                <div className="mt-1 text-amber-800">
+                  Current source: {tokenSourceLabel}
+                  {checklist.canvas_masked_token ? ` (${checklist.canvas_masked_token})` : ''}. Paste a valid Canvas token here; the dashboard will test it and refresh LMS status once it works.
+                </div>
+              )}
+              {showCanvasTokenPrompt && (
+                <>
+                  {checklist.canvas_token_error && (
+                    <div className="mt-2 rounded border border-amber-200 bg-white/60 px-2 py-1 text-xs font-medium text-amber-900">
+                      Last token test: {checklist.canvas_token_error}
+                    </div>
+                  )}
+                  <ol className="mt-2 list-decimal space-y-0.5 pl-4 text-xs text-amber-800">
+                    <li>Go to LMS.</li>
+                    <li>Open Settings.</li>
+                    <li>Click + New Access Token.</li>
+                    <li>Click Create.</li>
+                    <li>Copy the long token into this dashboard field.</li>
+                  </ol>
+                  <form action={handleCanvasTokenSave} className="mt-3 flex flex-wrap gap-2">
+                    <input
+                      type="password"
+                      name="canvasApiToken"
+                      value={canvasTokenDraft}
+                      onChange={(event) => setCanvasTokenDraft(event.target.value)}
+                      placeholder="Paste Canvas API token"
+                      disabled={isSavingCanvasToken || isPending}
+                      autoComplete="off"
+                      className="min-w-[260px] flex-1 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-slate-100"
+                    />
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="save"
+                      disabled={isSavingCanvasToken || isPending || canvasTokenDraft.trim().length === 0}
+                      className="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isSavingCanvasToken ? 'Saving...' : 'Save Canvas Token'}
+                    </button>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -475,36 +901,12 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
-        {[
-          ['Total', checklist.summary.total],
-          ['Canvas OK', checklist.summary.canvas_ok],
-          ['Not synced', checklist.summary.canvas_not_synced],
-          ['Missing user', checklist.summary.canvas_missing_user],
-          ['Missing course', checklist.summary.canvas_missing_course],
-          ['Inactive expected', checklist.summary.canvas_inactive_expected],
-          ['Extra active', checklist.summary.canvas_extra_active],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-md border border-slate-200 bg-white p-3">
-            <div className="text-xs font-medium uppercase text-slate-500">{label}</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
-        {[
-          ['Verified', checklist.summary.verified],
-          ['Missing setup', checklist.summary.missing_setup],
-          ['Follow-up', checklist.summary.needs_followup],
-          ['Unmapped', checklist.summary.canvas_unmapped],
-          ['Unchecked', checklist.summary.unchecked],
-          ['N/A', checklist.summary.not_applicable],
-          ['No course ID', rowsWithoutCourseId],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-md border border-slate-200 bg-white p-3">
-            <div className="text-xs font-medium uppercase text-slate-500">{label}</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{value}</div>
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        {lmsSummaryCards(checklist).map((card) => (
+          <div key={card.label} className="rounded-md border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase text-slate-500">{card.label}</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{card.value}</div>
+            <div className="mt-1 text-xs text-slate-500">{card.hint}</div>
           </div>
         ))}
       </div>
@@ -512,7 +914,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       {(unmappedCourses.length > 0 || rowsWithoutCourseId > 0) && (
         <div className="mt-5 rounded-md border border-orange-200 bg-orange-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-orange-900">Unmapped Camp Courses</h3>
+            <h3 className="text-sm font-semibold text-orange-900">Assigned Camps Missing LMS Mapping</h3>
             <Link
               href="/dashboard/camp/lms-mappings"
               className="rounded-md bg-orange-600 px-3 py-2 text-sm font-medium text-white hover:bg-orange-700"
@@ -522,7 +924,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           </div>
           {rowsWithoutCourseId > 0 && (
             <p className="mt-2 text-sm text-orange-800">
-              {rowsWithoutCourseId} camper row(s) have no portal course id.
+              {rowsWithoutCourseId} camper row(s) have no assigned camp course id.
             </p>
           )}
           {unmappedCourses.length > 0 && (
@@ -539,7 +941,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       )}
 
       <div className="mt-5 overflow-x-auto rounded-md border border-slate-200 bg-white">
-        <table className="min-w-[1600px] w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-[1250px] w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Student</th>
@@ -548,22 +950,24 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
               <th className="px-3 py-2 text-left font-medium text-slate-600">Expected</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Active LMS</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Inactive LMS</th>
-              <th className="px-3 py-2 text-left font-medium text-slate-600">Canvas Status</th>
-              <th className="px-3 py-2 text-left font-medium text-slate-600">Suggested Fix</th>
-              <th className="px-3 py-2 text-left font-medium text-slate-600">Test Action</th>
-              <th className="px-3 py-2 text-left font-medium text-slate-600">Office</th>
+              <th className="px-3 py-2 text-left font-medium text-slate-600">Add Course</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {checklist.rows.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-slate-500">
+                <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
                   No campers found for this week.
                 </td>
               </tr>
             ) : (
               checklist.rows.map((row) => (
-                <tr key={row.camp_enrolment_id} className="align-top">
+                <tr
+                  key={row.camp_enrolment_id}
+                  className="align-top"
+                  data-camp-enrolment-id={row.camp_enrolment_id}
+                  data-student-id={row.student_id}
+                >
                   <td className="px-3 py-3">
                     <div className="font-medium text-slate-900">{row.student_name}</div>
                     <div className="text-xs text-slate-500">ID {row.student_id}</div>
@@ -579,31 +983,57 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                     ) : (
                       <div className="space-y-1">
                         <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800">
-                          Not found
+                          {row.canvas_sync_status === 'synced'
+                            ? 'Not found'
+                            : row.canvas_sync_status === 'error'
+                              ? 'Sync error'
+                              : 'Not synced'}
                         </span>
                         {row.canvas_user_matches.length > 0 && (
                           <div className="text-xs text-slate-500">{row.canvas_user_matches.length} candidate(s)</div>
                         )}
                         {row.canvas_sync_error && (
-                          <div className="max-w-48 text-xs text-rose-700">{row.canvas_sync_error}</div>
+                          <div className="max-w-48 text-xs text-rose-700">{syncErrorMessage(row.canvas_sync_error)}</div>
+                        )}
+                        <div className="font-mono text-xs text-slate-600">{row.suggested_lms_login}</div>
+                        {row.canvas_user_matches.length === 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => handleCreateUser(row)}
+                            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                            data-lms-action="create_user"
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Create LMS user
+                          </button>
+                        ) : (
+                          <div className="max-w-48 text-xs text-slate-500">
+                            Review candidate matches before creating a new user.
+                          </div>
                         )}
                       </div>
                     )}
                   </td>
                   <td className="px-3 py-3 text-slate-700">
-                    <div>{courseLabel(row)}</div>
-                    <div className="mt-1 text-xs text-slate-500">{row.camp_type}{row.extended_care ? ' EX' : ''}</div>
+                    {renderCampCourse(row)}
                   </td>
                   <td className="px-3 py-3">
-                    <ExpectedCourses row={row} />
+                    <ExpectedCourses
+                      row={row}
+                      addExpectedAction={addExpectedActionFor(row)}
+                      disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                      onRun={handleCanvasAction}
+                    />
                   </td>
                   <td className="px-3 py-3">
                     <EnrollmentList
                       enrollments={row.active_canvas_enrollments}
-                      actionLabel="Set inactive"
+                      actionLabel="Make inactive"
                       actionType="inactivate_enrollment"
                       disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
                       onRun={(enrollment) => handleCanvasEnrollmentAction(row, 'inactivate_enrollment', enrollment)}
+                      expanded={Boolean(expandedEnrollments[enrollmentListKey(row, 'active')])}
+                      onToggleExpanded={() => toggleEnrollmentList(row, 'active')}
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -613,116 +1043,75 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                       actionType="activate_course"
                       disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
                       onRun={(enrollment) => handleCanvasEnrollmentAction(row, 'activate_course', enrollment)}
+                      expanded={Boolean(expandedEnrollments[enrollmentListKey(row, 'inactive')])}
+                      onToggleExpanded={() => toggleEnrollmentList(row, 'inactive')}
                     />
                   </td>
                   <td className="px-3 py-3">
-                    <div className="space-y-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CANVAS_BADGES[row.canvas_status]}`}>
-                        {row.canvas_status_label}
-                      </span>
-                      {row.canvas_issues.length > 1 && (
-                        <div className="space-y-1">
-                          {row.canvas_issues
-                            .filter((issue) => issue !== row.canvas_status)
-                            .map((issue) => (
-                              <div key={issue} className="text-xs text-slate-500">
-                                {issue.replaceAll('_', ' ')}
-                              </div>
-                            ))}
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="max-w-72 text-xs leading-5 text-slate-700">{row.suggested_fix}</div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="w-52 space-y-2">
-                      {row.suggested_actions.length === 0 ? (
-                        <span className="text-xs text-slate-400">None</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1.5">
-                        {row.suggested_actions.map((action) => (
-                          <CanvasActionButton
-                            key={`${action.type}-${action.canvas_course_id ?? ''}-${action.canvas_enrollment_id ?? ''}`}
-                            action={action}
-                            row={row}
-                            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
-                            onRun={handleCanvasAction}
-                          />
-                        ))}
-                        </div>
-                      )}
-                      <div className="flex gap-1.5">
+                    <div className="w-64 space-y-2">
+                      <div className="space-y-1.5">
+                        <div className="flex gap-1.5">
                         <input
-                          value={courseDrafts[row.camp_enrolment_id] ?? ''}
-                          onChange={(event) => setCourseDrafts((current) => ({
+                          value={courseSearchTerms[row.camp_enrolment_id] ?? ''}
+                          onChange={(event) => setCourseSearchTerms((current) => ({
                             ...current,
                             [row.camp_enrolment_id]: event.target.value,
                           }))}
-                          placeholder="Course ID"
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              handleSearchCourses(row);
+                            }
+                          }}
+                          placeholder="Search LMS course"
                           className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs"
-                          disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                          disabled={!checklist.schema_ready || !checklist.canvas_configured || !row.canvas_user_found || isPending}
                         />
                         <button
                           type="button"
-                          onClick={() => handleAddActiveCourse(row)}
-                          disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
-                          className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => handleSearchCourses(row)}
+                          disabled={!checklist.schema_ready || !checklist.canvas_configured || !row.canvas_user_found || isPending}
+                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Add
+                          Search
                         </button>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="w-72 space-y-2">
-                      {row.status ? (
-                        <div className="space-y-1">
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGES[row.status]}`}>
-                            {STATUS_LABELS[row.status]}
-                          </span>
-                          <div className="text-xs text-slate-500">
-                            {formatDateTime(row.checked_at)}
-                            {row.checked_by_name ? ` by ${row.checked_by_name}` : ''}
-                          </div>
                         </div>
-                      ) : (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-                          Unchecked
-                        </span>
-                      )}
-                      <textarea
-                        value={noteDrafts[row.camp_enrolment_id] ?? ''}
-                        onChange={(event) => setNoteDrafts((current) => ({
-                          ...current,
-                          [row.camp_enrolment_id]: event.target.value,
-                        }))}
-                        rows={2}
-                        className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
-                        placeholder="Office note"
-                        disabled={!checklist.schema_ready || isPending}
-                      />
-                      <div className="flex flex-wrap gap-1.5">
-                        {STATUS_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => handleStatus(row, option.value)}
-                            disabled={!checklist.schema_ready || isPending}
-                            className={`rounded-md border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${option.className}`}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
+                        {(courseSearchResults[row.camp_enrolment_id] ?? []).length > 0 && (
+                          <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-1">
+                            {(courseSearchResults[row.camp_enrolment_id] ?? []).map((course) => {
+                              const selected = selectedCourseIds[row.camp_enrolment_id] === course.id;
+                              return (
+                                <button
+                                  key={course.id}
+                                  type="button"
+                                  onClick={() => setSelectedCourseIds((current) => ({
+                                    ...current,
+                                    [row.camp_enrolment_id]: course.id,
+                                  }))}
+                                  className={`block w-full rounded px-2 py-1 text-left text-xs ${
+                                    selected
+                                      ? 'bg-sky-100 text-sky-900'
+                                      : 'bg-white text-slate-700 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  <span className="block font-medium">{course.name ?? course.course_code ?? `Course ${course.id}`}</span>
+                                  <span className="block text-slate-500">#{course.id}{course.course_code ? ` · ${course.course_code}` : ''}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                         <button
                           type="button"
-                          onClick={() => handleStatus(row, null)}
-                          disabled={!checklist.schema_ready || isPending}
-                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => handleAddSelectedCourse(row)}
+                          disabled={!checklist.schema_ready || !checklist.canvas_configured || !row.canvas_user_found || isPending || !selectedCourseIds[row.camp_enrolment_id]}
+                          className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Clear
+                          Add selected
                         </button>
+                        {!row.canvas_user_found && (
+                          <div className="text-xs text-slate-500">Create LMS user first.</div>
+                        )}
                       </div>
                     </div>
                   </td>

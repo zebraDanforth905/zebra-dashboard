@@ -49,9 +49,8 @@ export default function CreateUserForm() {
             type="text"
             id="name"
             name="name"
-            required
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="John Doe"
+            placeholder="Optional display name"
             disabled={isSubmitting}
           />
         </div>
@@ -99,8 +98,8 @@ export default function CreateUserForm() {
             disabled={isSubmitting}
           >
             <option value="user">User</option>
+            <option value="admin">Admin</option>
           </select>
-          <p className="text-xs text-gray-500 mt-1">Note: Admin users cannot be created through this interface</p>
         </div>
 
         <button

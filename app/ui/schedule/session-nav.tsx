@@ -44,7 +44,7 @@ export default function SessionNav({
                   {s.student_count ?? 0}
                 </span>
 
-                {(s.absences? s.absences > 0: s.absences)&&
+                {(s.absences ?? 0) > 0 &&
                 <span className={clsx(
                   "grid h-7 w-7 place-items-center rounded-lg text-xs bg-red-400",
                 )}>
@@ -52,7 +52,7 @@ export default function SessionNav({
                 </span>
                 }
                 
-                {(s.makeup_count? s.makeup_count > 0: s.makeup_count) &&
+                {(s.makeup_count ?? 0) > 0 &&
                 <span className={clsx(
                   "grid h-7 w-7 place-items-center rounded-lg text-xs bg-sky-400",
                 )}>
@@ -60,7 +60,7 @@ export default function SessionNav({
                 </span>
                 } 
 
-                {(s.trial_count? s.trial_count > 0: s.trial_count)&&
+                {(s.trial_count ?? 0) > 0 &&
                 <span className={clsx(
                   "grid h-7 w-7 place-items-center rounded-lg text-xs bg-yellow-400",
                 )}>

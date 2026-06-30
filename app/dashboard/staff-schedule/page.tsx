@@ -154,6 +154,7 @@ export default async function StaffSchedulePage(props: { searchParams?: SearchPa
           qualifications={qualifications}
           adminUsers={adminUsers}
           isAdmin={isAdmin}
+          currentUserId={(session?.user as { id?: string } | undefined)?.id ?? null}
         />
       )}
     </div>

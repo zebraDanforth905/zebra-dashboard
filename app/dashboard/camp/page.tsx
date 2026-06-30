@@ -4,6 +4,7 @@ import { CalendarIcon } from '@heroicons/react/24/outline';
 import ScrapeCampsButton from '@/app/ui/camp/scrape-camps-button';
 import CampMonthlyReport from '@/app/ui/camp/camp-monthly-report';
 import { connection } from 'next/server';
+import { formatCampWeekLabel } from '@/app/lib/camp-week-label';
 
 const parseLocalISODate = (value: string) => {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -59,12 +60,6 @@ const getWeekEnd = (weekStart: Date) => {
   weekEnd.setDate(weekEnd.getDate() + 6);
   weekEnd.setHours(23, 59, 59, 999);
   return weekEnd;
-};
-
-const formatDateRange = (start: Date, end: Date) => {
-  const startStr = new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const endStr = new Date(end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  return `${startStr} - ${endStr}`;
 };
 
 export default async function CampPage() {
@@ -132,7 +127,7 @@ export default async function CampPage() {
     .sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime())
     .map(r => ({
       id: r.id,
-      label: `Week of ${formatDateRange(r.weekStart, r.weekEnd)}`,
+      label: formatCampWeekLabel(r.weekStart, r.weekEnd),
       href: `/dashboard/camp/${r.id}/${getDateKey(r.weekEnd)}`,
       totalEnrolments: r.totalEnrolments,
       byType: r.byType,

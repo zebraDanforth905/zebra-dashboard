@@ -90,6 +90,7 @@ export type Payment = {
 
 export type Session = {
   id: string;
+  session_ids?: string[];
   start_time: string;
   end_time: string;
   weekday: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
@@ -398,7 +399,8 @@ export type CampLmsCanvasIssue =
 export type CampLmsCanvasActionType =
   | 'add_expected_beginner'
   | 'activate_course'
-  | 'inactivate_enrollment';
+  | 'inactivate_enrollment'
+  | 'create_user';
 
 export type CampLmsCanvasMatch = {
   id: string;
@@ -439,6 +441,11 @@ export type CampLmsChecklistRow = {
   suggested_lms_login: string;
   course_id: string | null;
   course_name: string | null;
+  original_course_id: string | null;
+  original_course_name: string | null;
+  is_day_camp: boolean;
+  day_camp_assigned_course_id: string | null;
+  day_camp_assigned_course_name: string | null;
   camp_type: 'FD' | 'PM' | 'AM';
   extended_care: boolean;
   start_date: Date;
@@ -497,13 +504,28 @@ export type CampLmsChecklistSummary = {
   canvas_inactive_expected: number;
   canvas_extra_active: number;
   canvas_unmapped: number;
+  lms_accounts_needed: number;
+  day_camp_total: number;
+  day_camp_assignments_needed: number;
+  unmapped_assigned_camps: number;
+  lms_course_fixes_needed: number;
+};
+
+export type CampLmsDayCampCourseOption = {
+  id: string;
+  label: string;
 };
 
 export type CampLmsChecklistData = {
   schema_ready: boolean;
   canvas_configured: boolean;
+  canvas_token_source: 'user_database' | 'environment' | 'legacy_database' | 'none';
+  canvas_masked_token: string | null;
+  canvas_token_ok: boolean;
+  canvas_token_error: string | null;
   canvas_base_url: string;
   canvas_last_synced_at: Date | null;
+  day_camp_course_options: CampLmsDayCampCourseOption[];
   rows: CampLmsChecklistRow[];
   summary: CampLmsChecklistSummary;
 };
@@ -547,12 +569,22 @@ export type CampAccountPrepInventoryItem = {
   password: string | null;
 };
 
+export type CampAccountPrepCourseOption = {
+  id: string;
+  label: string;
+};
+
 export type CampAccountPrepRow = {
   camp_enrolment_id: string;
   student_id: string;
   student_name: string;
   course_id: string | null;
   course_name: string | null;
+  original_course_id: string | null;
+  original_course_name: string | null;
+  is_pa_day_camp: boolean;
+  pa_day_assigned_course_id: string | null;
+  pa_day_assigned_course_name: string | null;
   camp_type: 'FD' | 'PM' | 'AM';
   extended_care: boolean;
   start_date: Date;
@@ -590,6 +622,7 @@ export type CampAccountPrepChecklistData = {
     roblox_accounts: CampAccountPrepInventoryItem[];
     laptops: CampAccountPrepInventoryItem[];
   };
+  pa_day_course_options: CampAccountPrepCourseOption[];
   summary: CampAccountPrepSummary;
 };
 

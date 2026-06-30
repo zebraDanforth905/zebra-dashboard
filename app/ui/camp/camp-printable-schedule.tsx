@@ -14,6 +14,7 @@ import type {
   CampPrintableStudentListField,
   CampPrintableStudentListOverride,
 } from '@/app/lib/definitions';
+import { formatCampWeekLabel, formatCampWeekRange } from '@/app/lib/camp-week-label';
 
 type WeekdaySchedule = {
   day: Date;
@@ -101,24 +102,6 @@ function getDateKey(date: Date) {
 function isWeekday(date: Date) {
   const day = date.getDay();
   return day >= 1 && day <= 5;
-}
-
-function formatDateRange(startDate: string, endDate: string) {
-  const start = parseLocalISODate(startDate);
-  const end = parseLocalISODate(endDate);
-  if (!start || !end) return `${startDate} to ${endDate}`;
-
-  const startText = start.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
-  const endText = end.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-  return `${startText} - ${endText}`;
 }
 
 function formatDayLabel(date: Date) {
@@ -569,10 +552,10 @@ function PrintableWeeklySeatingCharts({
 
 function SignInSpecialInstructions({
   students,
-  schedule,
+  weekLabel,
 }: {
   students: PrintableStudent[];
-  schedule: CampPrintableScheduleData;
+  weekLabel: string;
 }) {
   const rows = paddedRows(
     students.filter((student) => student.specialInstruction),
@@ -585,7 +568,7 @@ function SignInSpecialInstructions({
         Weekly Sign-in/out Special Instructions
       </h2>
       <p className="mb-3 print:mb-2 text-center text-sm print:text-xs font-semibold text-slate-700">
-        Week of {formatDateRange(schedule.start_date, schedule.end_date)}
+        Week of {weekLabel}
       </p>
       <table className="w-full border-collapse text-left">
         <thead>
@@ -623,10 +606,10 @@ function SignInSpecialInstructions({
 
 function MedicalAlertSheet({
   students,
-  schedule,
+  weekLabel,
 }: {
   students: PrintableStudent[];
-  schedule: CampPrintableScheduleData;
+  weekLabel: string;
 }) {
   const rows = paddedRows(
     students.filter((student) => student.medicalAlert),
@@ -639,7 +622,7 @@ function MedicalAlertSheet({
         Allergy and Medical Alert
       </h2>
       <p className="mb-3 print:mb-2 text-center text-sm print:text-xs font-semibold text-slate-700">
-        Week of {formatDateRange(schedule.start_date, schedule.end_date)}
+        Week of {weekLabel}
       </p>
       <table className="w-full border-collapse text-left">
         <thead>
@@ -699,7 +682,8 @@ export default function CampPrintableSchedule({
     days,
     schedule.student_list_overrides
   );
-  const weekLabel = formatDateRange(schedule.start_date, schedule.end_date);
+  const weekLabel = formatCampWeekRange(schedule.start_date, schedule.end_date);
+  const fullWeekLabel = formatCampWeekLabel(schedule.start_date, schedule.end_date);
 
   return (
     <div className="bg-slate-700 px-3 py-4 print:bg-white print:p-0">
@@ -708,7 +692,7 @@ export default function CampPrintableSchedule({
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Printable Camp Packet</h1>
             <p className="text-sm text-slate-600">
-              Week of {formatDateRange(schedule.start_date, schedule.end_date)}
+              {fullWeekLabel}
             </p>
           </div>
           <PrintButton label="Print PDF" title="Print or save camp packet PDF" />
@@ -730,8 +714,8 @@ export default function CampPrintableSchedule({
               <CampPrintableActivitySchedule weekLabel={weekLabel} cells={activityCells} />
               <CampPrintableStaffSchedule weekLabel={weekLabel} cells={staffCells} />
               <PrintableWeeklySeatingCharts rows={activeRows} days={days} />
-              <SignInSpecialInstructions students={students} schedule={schedule} />
-              <MedicalAlertSheet students={students} schedule={schedule} />
+              <SignInSpecialInstructions students={students} weekLabel={weekLabel} />
+              <MedicalAlertSheet students={students} weekLabel={weekLabel} />
             </>
           )}
         </div>

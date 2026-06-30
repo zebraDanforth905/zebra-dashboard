@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { saveCanvasApiToken } from '@/app/lib/actions';
 
-type CanvasTokenSource = 'environment' | 'database' | 'none';
+type CanvasTokenSource = 'user_database' | 'environment' | 'legacy_database' | 'none';
 
 type Props = {
   configured: boolean;
@@ -23,10 +23,12 @@ export default function CanvasApiTokenForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const sourceLabel =
-    source === 'environment'
+    source === 'user_database'
+      ? 'Your dashboard setting'
+      : source === 'environment'
       ? 'Environment variable'
-      : source === 'database'
-        ? 'Database setting (via dashboard)'
+      : source === 'legacy_database'
+        ? 'Legacy shared dashboard setting'
         : 'Not configured';
 
   async function handleSubmit(formData: FormData) {
@@ -58,15 +60,21 @@ export default function CanvasApiTokenForm({
             Canvas token source: <strong>{sourceLabel}</strong>
           </p>
 
-          {configured && maskedToken && source === 'database' && (
+          {configured && maskedToken && source === 'user_database' && (
             <p className="text-sm text-gray-600 mb-4">
-              Stored token: <span className="font-mono">{maskedToken}</span>
+              Your stored token: <span className="font-mono">{maskedToken}</span>
             </p>
           )}
 
           {configured && source === 'environment' && (
             <p className="text-sm text-gray-600 mb-4">
               Stored environment token: <span className="font-mono">{maskedToken}</span>
+            </p>
+          )}
+
+          {configured && maskedToken && source === 'legacy_database' && (
+            <p className="text-sm text-gray-600 mb-4">
+              Legacy shared token fallback: <span className="font-mono">{maskedToken}</span>
             </p>
           )}
         </>
@@ -93,17 +101,22 @@ export default function CanvasApiTokenForm({
             type="password"
             id="canvasApiToken"
             name="canvasApiToken"
-            placeholder="Paste a token to store in app settings"
+            placeholder="Paste a token to store for your dashboard user"
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isSubmitting}
             autoComplete="off"
           />
           <p className="mt-1 text-xs text-gray-500">
-            Leave blank and save to clear the dashboard-stored token.
+            Leave blank and save to clear your dashboard-stored token.
           </p>
           {source === 'environment' && (
             <p className="mt-1 text-xs text-amber-700">
-              Environment token is active and will override the dashboard setting.
+              Environment token is active only because you do not have a working user token saved.
+            </p>
+          )}
+          {source === 'legacy_database' && (
+            <p className="mt-1 text-xs text-amber-700">
+              The old shared dashboard token is active only as a fallback. Saving here stores a token for your user.
             </p>
           )}
         </div>

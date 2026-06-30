@@ -21,6 +21,7 @@ type SettingsViewProps = {
     user_type: string;
   }>;
   isAdmin: boolean;
+  currentUserId?: string | null;
 };
 
 export function SettingsView({
@@ -29,6 +30,7 @@ export function SettingsView({
   qualifications,
   adminUsers,
   isAdmin,
+  currentUserId,
 }: SettingsViewProps) {
   const [isPending, startTransition] = useTransition();
   const [capacityByUser, setCapacityByUser] = useState<Record<string, string>>(() =>
@@ -113,7 +115,7 @@ export function SettingsView({
               </div>
               <div className="xl:col-span-2">
                 <h3 className="mb-3 text-sm font-semibold text-gray-800">Manage Users</h3>
-                <UsersList users={adminUsers} />
+                <UsersList users={adminUsers} currentUserId={currentUserId} />
               </div>
             </div>
           ) : (
