@@ -1,9 +1,9 @@
 // Brings a target db up to date for the LMS checklist + camp prep flow.
 // Applies (idempotent, safe to re-run): 033 app_settings, 040 PA day-camp
-// assignments, 041 create_user action, 042 sync_state rename. Then reports
-// the exact schema_ready gate the dashboard uses.
+// assignments, 041 create_user action, 042 sync_state rename, 043 per-user
+// Canvas tokens. Then reports the exact schema_ready gate the dashboard uses.
 //
-// Optional Canvas token seeding (check-first: only writes if no row exists):
+// Optional legacy Canvas token seeding (check-first: only writes if no row exists):
 //   CANVAS_SEED_TOKEN='<token>' node scripts/apply-lms-checklist-040-042-migration.js
 //
 // Run in a shell where POSTGRES_URL points at the TARGET db (kyle-dev):
@@ -23,6 +23,7 @@ const FILES = [
   'migrations/040_pa_day_camp_course_assignments.sql',
   'migrations/041_lms_canvas_create_user_action.sql',
   'migrations/042_rename_lms_canvas_sync_state.sql',
+  'migrations/043_create_user_canvas_api_tokens.sql',
 ];
 
 const CANVAS_TOKEN_KEY = 'CANVAS_API_TOKEN';
@@ -44,7 +45,7 @@ async function main() {
   const sql = postgres(url, { ssl: 'require' });
   try {
     if (process.env.PREFLIGHT) {
-      const [s] = await sql.unsafe(`SELECT to_regclass('public.camp_lms_canvas_sync_state') IS NOT NULL AS sync_state, to_regclass('public.app_settings') IS NOT NULL AS app_settings, to_regclass('public.camp_pa_day_course_assignments') IS NOT NULL AS pa_day`);
+      const [s] = await sql.unsafe(`SELECT to_regclass('public.camp_lms_canvas_sync_state') IS NOT NULL AS sync_state, to_regclass('public.app_settings') IS NOT NULL AS app_settings, to_regclass('public.user_canvas_api_tokens') IS NOT NULL AS user_canvas_api_tokens, to_regclass('public.camp_pa_day_course_assignments') IS NOT NULL AS pa_day`);
       console.log('PREFLIGHT (no writes). current:', s);
       return;
     }
@@ -55,7 +56,7 @@ async function main() {
       console.log('applied:', file);
     }
 
-    // Canvas token: check first, only seed if absent.
+    // Legacy shared Canvas token: check first, only seed if absent.
     const existing = await sql.unsafe(
       `SELECT setting_value FROM app_settings WHERE setting_key = '${CANVAS_TOKEN_KEY}' LIMIT 1`
     );

@@ -2903,11 +2903,11 @@ function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSumm
   return summary;
 }
 
-export async function fetchCampLmsChecklist(startDate: string, endDate: string): Promise<CampLmsChecklistData> {
+export async function fetchCampLmsChecklist(startDate: string, endDate: string, userId?: string | null): Promise<CampLmsChecklistData> {
   try {
-    const canvasConfig = await getCanvasPublicConfig();
+    const canvasConfig = await getCanvasPublicConfig(userId);
     const canvasTokenTest = canvasConfig.configured
-      ? await testCanvasApiToken()
+      ? await testCanvasApiToken(userId)
       : { ok: false, error: 'Canvas API token is not configured.' };
     const [schema] = await sql<{ schema_ready: boolean }[]>`
       SELECT (

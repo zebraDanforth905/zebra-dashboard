@@ -13,6 +13,7 @@ import CampWeekTabs from '@/app/ui/camp/camp-week-tabs';
 import { connection } from 'next/server';
 import { CampEnrolmentWithStudent } from '@/app/lib/definitions';
 import { formatCampWeekLabel } from '@/app/lib/camp-week-label';
+import { auth } from '@/auth';
 
 type DayEnrolments = {
   date: Date;
@@ -99,6 +100,8 @@ export default async function CampSessionPage({
 }) {
   await connection();
   const { startDate, endDate } = await params;
+  const session = await auth();
+  const userId = (session?.user as { id?: string } | undefined)?.id ?? null;
 
   const parsedWeekStart = parseLocalISODate(startDate);
   const parsedWeekEnd = parseLocalISODate(endDate);
@@ -114,7 +117,7 @@ export default async function CampSessionPage({
 
   const [sessions, lmsChecklist, accountPrepChecklist, activityScheduleCells, staffScheduleCells, printLogEntries] = await Promise.all([
     fetchUpcomingCampSessionsWithEnrolments(),
-    fetchCampLmsChecklist(startDate, endDate),
+    fetchCampLmsChecklist(startDate, endDate, userId),
     fetchCampAccountPrepChecklist(startDate, endDate),
     fetchCampActivitySchedule(startDate),
     fetchCampStaffSchedule(startDate),

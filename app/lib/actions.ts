@@ -2469,8 +2469,12 @@ export async function fetchCanvasApiSettings() {
     if (getSessionUserType(session) !== 'admin') {
       return { ok: false, error: 'Unauthorized: Admin access required' };
     }
+    const userId = getSessionUserId(session);
+    if (!userId) {
+      return { ok: false, error: 'Unauthorized: Missing user id' };
+    }
 
-    const settings = await getCanvasTokenSettings();
+    const settings = await getCanvasTokenSettings(userId);
     return { ok: true, settings };
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
@@ -2483,6 +2487,10 @@ export async function saveCanvasApiToken(formData: FormData) {
     if (getSessionUserType(session) !== 'admin') {
       return { ok: false, error: 'Unauthorized: Admin access required' };
     }
+    const userId = getSessionUserId(session);
+    if (!userId) {
+      return { ok: false, error: 'Unauthorized: Missing user id' };
+    }
 
     const rawToken = formData.get('canvasApiToken');
     const intent = formData.get('intent');
@@ -2490,17 +2498,17 @@ export async function saveCanvasApiToken(formData: FormData) {
     const token = typeof rawToken === 'string' && !shouldClear ? rawToken.trim() : null;
 
     if (!shouldClear && token && token.length > 0) {
-      await saveCanvasApiTokenToDb(token);
+      await saveCanvasApiTokenToDb(userId, token);
     } else {
-      await saveCanvasApiTokenToDb(null);
+      await saveCanvasApiTokenToDb(userId, null);
     }
 
-    clearCanvasTokenCache();
+    clearCanvasTokenCache(userId);
     revalidatePath('/dashboard/settings');
     revalidatePath('/dashboard/camp');
     updateTag('camps');
 
-    const settings = await getCanvasTokenSettings();
+    const settings = await getCanvasTokenSettings(userId);
     const isCleared = shouldClear || !token;
     console.log('[canvas token save] saved token setting', {
       cleared: isCleared,
@@ -2516,7 +2524,7 @@ export async function saveCanvasApiToken(formData: FormData) {
           effectiveSource: settings.source,
           maskedToken: settings.maskedToken,
         });
-        const testResult = await testCanvasApiToken();
+        const testResult = await testCanvasApiToken(userId);
         tokenTest = {
           ok: testResult.ok,
           resultCount: testResult.resultCount,
@@ -2550,12 +2558,12 @@ export async function saveCanvasApiToken(formData: FormData) {
       settings,
       tokenTest,
       message: isCleared
-        ? 'Canvas API token entry removed from dashboard settings.'
+        ? 'Your Canvas API token entry was removed from dashboard settings.'
         : tokenTest?.ok
-          ? 'Canvas API token saved and tested successfully.'
+          ? 'Your Canvas API token was saved and tested successfully.'
           : tokenTest
-            ? `Canvas API token saved, but the test failed: ${tokenTest.error}`
-            : 'Canvas API token saved to dashboard settings.',
+            ? `Your Canvas API token was saved, but the test failed: ${tokenTest.error}`
+            : 'Your Canvas API token was saved to dashboard settings.',
     };
   } catch (error) {
     console.error('[canvas token save] failed', {
@@ -2563,7 +2571,7 @@ export async function saveCanvasApiToken(formData: FormData) {
     });
     const pgError = error as { code?: string } | undefined;
     if (pgError?.code === '42P01') {
-      return { ok: false, error: 'Apply migration 033_create_app_settings.sql before saving the Canvas API token setting.' };
+      return { ok: false, error: 'Apply migration 043_create_user_canvas_api_tokens.sql before saving per-user Canvas API tokens.' };
     }
 
     return { ok: false, error: errorMessage(error) };
@@ -3267,7 +3275,8 @@ export async function refreshCampLmsWeek(startDate: string, endDate: string) {
 
 export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) {
   const session = await auth();
-  if (!session?.user) {
+  const userId = getSessionUserId(session);
+  if (!userId) {
     return { ok: false, error: 'Unauthorized: Please log in' };
   }
 
@@ -3280,11 +3289,11 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
     if (!(await campLmsChecklistSchemaReady())) {
       return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 040_pa_day_camp_course_assignments.sql, 041_lms_canvas_create_user_action.sql, and 042_rename_lms_canvas_sync_state.sql before syncing Canvas' };
     }
-    if (!(await isCanvasTokenConfigured())) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas sync' };
+    if (!(await isCanvasTokenConfigured(userId))) {
+      return { ok: false, error: 'Canvas API token is not configured for your user.' };
     }
 
-    const client = createCanvasClient();
+    const client = createCanvasClient(userId);
     const rows = await fetchCampLmsSyncRows(parsed.data.startDate, parsed.data.endDate);
     let synced = 0;
     const errors: Array<{ enrolmentId: string; studentName: string; error: string }> = [];
@@ -3306,7 +3315,7 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
     return { ok: true, synced, errors };
   } catch (error) {
     if (error instanceof CanvasConfigError) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas sync' };
+      return { ok: false, error: 'Canvas API token is not configured for your user.' };
     }
     console.error('Error syncing camp LMS Canvas state:', error);
     return { ok: false, error: 'Failed to sync Canvas LMS state' };
@@ -3413,7 +3422,8 @@ export async function saveCampLmsCourseMapping(input: {
 
 export async function searchCampLmsCanvasCourses(input: { term: string }) {
   const session = await auth();
-  if (!session?.user) {
+  const userId = getSessionUserId(session);
+  if (!userId) {
     return { ok: false, error: 'Unauthorized: Please log in', courses: [] };
   }
 
@@ -3423,12 +3433,12 @@ export async function searchCampLmsCanvasCourses(input: { term: string }) {
   }
 
   try {
-    if (!(await isCanvasTokenConfigured())) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas search', courses: [] };
+    if (!(await isCanvasTokenConfigured(userId))) {
+      return { ok: false, error: 'Canvas API token is not configured for your user.', courses: [] };
     }
 
     const term = parsed.data.term;
-    const client = createCanvasClient();
+    const client = createCanvasClient(userId);
     const courses: CanvasCourse[] = await searchLocalMappedCanvasCourses(term);
 
     try {
@@ -3454,7 +3464,7 @@ export async function searchCampLmsCanvasCourses(input: { term: string }) {
     return { ok: true, courses: deduped };
   } catch (error) {
     if (error instanceof CanvasConfigError) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas search', courses: [] };
+      return { ok: false, error: 'Canvas API token is not configured for your user.', courses: [] };
     }
     console.error('Error searching Canvas courses:', error);
     return { ok: false, error: canvasErrorMessage(error), courses: [] };
@@ -3700,11 +3710,11 @@ export async function runCampLmsCanvasTestAction(input: {
     if (!(await campLmsChecklistSchemaReady())) {
       return { ok: false, error: 'Apply migrations 025_lms_camp_checklist.sql, 026_canvas_lms_workflow.sql, 027_rename_lms_status_note.sql, 030_lms_canvas_activate_course_action.sql, 032_lms_mapping_additional_courses.sql, 040_pa_day_camp_course_assignments.sql, 041_lms_canvas_create_user_action.sql, and 042_rename_lms_canvas_sync_state.sql before running Canvas actions' };
     }
-    if (!(await isCanvasTokenConfigured())) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas test actions' };
+    if (!(await isCanvasTokenConfigured(userId))) {
+      return { ok: false, error: 'Canvas API token is not configured for your user.' };
     }
 
-    const client = createCanvasClient();
+    const client = createCanvasClient(userId);
     const syncRow = await fetchSingleCampLmsSyncRow(campEnrolmentId);
     if (!syncRow) {
       return { ok: false, error: 'Camp enrolment not found' };
@@ -3969,7 +3979,7 @@ export async function runCampLmsCanvasTestAction(input: {
     return warning ? { ok: true, warning } : { ok: true };
   } catch (error) {
     if (error instanceof CanvasConfigError) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas test actions' };
+      return { ok: false, error: 'Canvas API token is not configured for your user.' };
     }
     console.error('Error running camp LMS Canvas test action:', error);
     return { ok: false, error: 'Failed to run Canvas test action' };

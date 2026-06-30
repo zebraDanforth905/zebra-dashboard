@@ -519,7 +519,7 @@ export type CampLmsDayCampCourseOption = {
 export type CampLmsChecklistData = {
   schema_ready: boolean;
   canvas_configured: boolean;
-  canvas_token_source: 'environment' | 'database' | 'none';
+  canvas_token_source: 'user_database' | 'environment' | 'legacy_database' | 'none';
   canvas_masked_token: string | null;
   canvas_token_ok: boolean;
   canvas_token_error: string | null;

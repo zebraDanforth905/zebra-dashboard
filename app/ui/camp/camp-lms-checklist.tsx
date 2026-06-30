@@ -353,10 +353,12 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
   );
   const resolveAllCount = rowsNeedingLmsAccount.length + rowsNeedingExpectedCourse.length;
   const tokenSourceLabel =
-    checklist.canvas_token_source === 'environment'
+    checklist.canvas_token_source === 'user_database'
+      ? 'your dashboard setting'
+      : checklist.canvas_token_source === 'environment'
       ? 'environment variable'
-      : checklist.canvas_token_source === 'database'
-        ? 'dashboard setting'
+      : checklist.canvas_token_source === 'legacy_database'
+        ? 'legacy shared dashboard setting'
         : 'not configured';
   const refreshChecklistView = () => {
     router.refresh();
@@ -834,7 +836,12 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
               </div>
               {checklist.canvas_token_source === 'environment' && (
                 <div className={canvasTokenLooksGood ? "mt-1 text-xs text-emerald-800" : "mt-1 text-xs text-amber-800"}>
-                  The server environment token currently takes precedence over dashboard-saved tokens. To use a dashboard-saved token, remove CANVAS_API_TOKEN from the running server environment and restart.
+                  This is falling back to the server environment token because you do not have a working dashboard-saved token yet.
+                </div>
+              )}
+              {checklist.canvas_token_source === 'legacy_database' && (
+                <div className={canvasTokenLooksGood ? "mt-1 text-xs text-emerald-800" : "mt-1 text-xs text-amber-800"}>
+                  This is falling back to the old shared dashboard token. Saving here will store a token for only your user.
                 </div>
               )}
               {showCanvasTokenPrompt && (
