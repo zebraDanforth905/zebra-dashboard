@@ -822,26 +822,35 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
             <div className="min-w-0 flex-1">
               <div className="font-medium">
                 {canvasTokenLooksGood
-                  ? 'Canvas API token is good.'
+                  ? 'Canvas API token is valid.'
                   : checklist.canvas_configured
                   ? 'Canvas API token is not working.'
                   : 'Canvas API token is not configured.'}
               </div>
-              <div className={canvasTokenLooksGood ? "mt-1 text-emerald-800" : "mt-1 text-amber-800"}>
-                Current source: {tokenSourceLabel}
-                {checklist.canvas_masked_token ? ` (${checklist.canvas_masked_token})` : ''}.
-                {canvasTokenLooksGood
-                  ? ' Canvas sync can read from the configured token.'
-                  : ' Paste a valid Canvas token here; the dashboard will test it and refresh LMS status once it works.'}
-              </div>
-              {checklist.canvas_token_source === 'environment' && (
-                <div className={canvasTokenLooksGood ? "mt-1 text-xs text-emerald-800" : "mt-1 text-xs text-amber-800"}>
-                  This is falling back to the server environment token because you do not have a working dashboard-saved token yet.
-                </div>
-              )}
-              {checklist.canvas_token_source === 'legacy_database' && (
-                <div className={canvasTokenLooksGood ? "mt-1 text-xs text-emerald-800" : "mt-1 text-xs text-amber-800"}>
-                  This is falling back to the old shared dashboard token. Saving here will store a token for only your user.
+              {canvasTokenLooksGood ? (
+                <details className="mt-1 text-emerald-800">
+                  <summary className="cursor-pointer select-none text-sm font-medium hover:text-emerald-950">
+                    Token details
+                  </summary>
+                  <div className="mt-1">
+                    Current source: {tokenSourceLabel}
+                    {checklist.canvas_masked_token ? ` (${checklist.canvas_masked_token})` : ''}. Canvas sync can read from the configured token.
+                  </div>
+                  {checklist.canvas_token_source === 'environment' && (
+                    <div className="mt-1 text-xs text-emerald-800">
+                      This is falling back to the server environment token because you do not have a working dashboard-saved token yet.
+                    </div>
+                  )}
+                  {checklist.canvas_token_source === 'legacy_database' && (
+                    <div className="mt-1 text-xs text-emerald-800">
+                      This is falling back to the old shared dashboard token. Saving here will store a token for only your user.
+                    </div>
+                  )}
+                </details>
+              ) : (
+                <div className="mt-1 text-amber-800">
+                  Current source: {tokenSourceLabel}
+                  {checklist.canvas_masked_token ? ` (${checklist.canvas_masked_token})` : ''}. Paste a valid Canvas token here; the dashboard will test it and refresh LMS status once it works.
                 </div>
               )}
               {showCanvasTokenPrompt && (
