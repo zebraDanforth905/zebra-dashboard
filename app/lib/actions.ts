@@ -2269,8 +2269,8 @@ export async function currentDateCheckRecurringInvoices() {
 // ==========================================
 
 const CreateUserSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  email: z.string().email('Invalid email address'),
+  name: z.string().trim().optional(),
+  email: z.string().trim().email('Invalid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   user_type: z.enum(['admin', 'user'], { message: 'User type must be either admin or user' }),
 });
@@ -2279,6 +2279,32 @@ const UpdatePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
   newPassword: z.string().min(6, 'New password must be at least 6 characters'),
 });
+
+const ManagedUserSchema = z.object({
+  userId: z.string().uuid('Invalid user id'),
+  name: z.string().trim().min(1, 'Name is required'),
+  email: z.string().trim().email('Invalid email address'),
+  user_type: z.enum(['admin', 'user'], { message: 'User type must be either admin or user' }),
+});
+
+const ManagedUserPasswordSchema = z.object({
+  userId: z.string().uuid('Invalid user id'),
+  newPassword: z.string().min(6, 'Password must be at least 6 characters'),
+});
+
+async function countAdminUsers() {
+  const [row] = await sql<Array<{ count: string }>>`
+    SELECT COUNT(*)::text AS count
+    FROM users
+    WHERE user_type = 'admin'
+  `;
+  return Number(row?.count ?? 0);
+}
+
+async function revalidateUserManagementPaths() {
+  revalidatePath('/dashboard/settings');
+  revalidatePath('/dashboard/staff-schedule');
+}
 
 /**
  * Get all users (admin only)
@@ -2298,7 +2324,7 @@ export async function getAllUsers() {
     }>>`
       SELECT id, name, email, user_type 
       FROM users 
-      ORDER BY name ASC
+      ORDER BY email ASC
     `;
 
     return { ok: true, users };
@@ -2308,7 +2334,7 @@ export async function getAllUsers() {
 }
 
 /**
- * Create a new user (admin only, cannot create admin users)
+ * Create a new user (admin only)
  */
 export async function createUser(formData: FormData) {
   try {
@@ -2331,16 +2357,13 @@ export async function createUser(formData: FormData) {
       };
     }
 
-    const { name, email, password, user_type } = validatedFields.data;
-
-    // Prevent creating admin users
-    if (user_type === 'admin') {
-      return { ok: false, error: 'Cannot create admin users through this interface' };
-    }
+    const { email, password, user_type } = validatedFields.data;
+    const normalizedEmail = email.toLowerCase();
+    const name = validatedFields.data.name || normalizedEmail.split('@')[0];
 
     // Check if user already exists
     const existingUser = await sql`
-      SELECT id FROM users WHERE email = ${email}
+      SELECT id FROM users WHERE LOWER(email) = ${normalizedEmail}
     `;
 
     if (existingUser.length > 0) {
@@ -2353,11 +2376,10 @@ export async function createUser(formData: FormData) {
     // Create the user
     await sql`
       INSERT INTO users (name, email, password, user_type)
-      VALUES (${name}, ${email}, ${hashedPassword}, ${user_type})
+      VALUES (${name}, ${normalizedEmail}, ${hashedPassword}, ${user_type})
     `;
 
-    revalidatePath('/dashboard/admin/users');
-    revalidatePath('/dashboard/staff-schedule');
+    await revalidateUserManagementPaths();
     return { ok: true, message: 'User created successfully' };
   } catch (e: unknown) {
     return { ok: false, error: errorMessage(e) };
@@ -2365,7 +2387,119 @@ export async function createUser(formData: FormData) {
 }
 
 /**
- * Delete a user (admin only, cannot delete admin users)
+ * Update a managed user (admin only)
+ */
+export async function updateManagedUser(formData: FormData) {
+  try {
+    const session = await auth();
+    if (getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+    const currentUserId = getSessionUserId(session);
+
+    const validatedFields = ManagedUserSchema.safeParse({
+      userId: formData.get('userId'),
+      name: formData.get('name'),
+      email: formData.get('email'),
+      user_type: formData.get('user_type'),
+    });
+
+    if (!validatedFields.success) {
+      return { ok: false, error: validatedFields.error.toString() || 'Invalid input' };
+    }
+
+    const { userId, name, user_type } = validatedFields.data;
+    const email = validatedFields.data.email.toLowerCase();
+
+    const existingUser = await sql<Array<{ id: string; user_type: string }>>`
+      SELECT id, user_type
+      FROM users
+      WHERE id = ${userId}
+      LIMIT 1
+    `;
+
+    if (existingUser.length === 0) {
+      return { ok: false, error: 'User not found' };
+    }
+
+    if (currentUserId === userId && user_type !== 'admin') {
+      return { ok: false, error: 'You cannot remove your own admin access.' };
+    }
+
+    if (existingUser[0].user_type === 'admin' && user_type !== 'admin' && await countAdminUsers() <= 1) {
+      return { ok: false, error: 'Cannot remove the last admin account.' };
+    }
+
+    const duplicateEmail = await sql<Array<{ id: string }>>`
+      SELECT id
+      FROM users
+      WHERE LOWER(email) = ${email}
+        AND id <> ${userId}
+      LIMIT 1
+    `;
+
+    if (duplicateEmail.length > 0) {
+      return { ok: false, error: 'Another user already has this email.' };
+    }
+
+    await sql`
+      UPDATE users
+      SET name = ${name},
+          email = ${email},
+          user_type = ${user_type}
+      WHERE id = ${userId}
+    `;
+
+    await revalidateUserManagementPaths();
+    return { ok: true, message: 'User updated successfully' };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
+/**
+ * Reset a managed user's password (admin only)
+ */
+export async function resetManagedUserPassword(formData: FormData) {
+  try {
+    const session = await auth();
+    if (getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const validatedFields = ManagedUserPasswordSchema.safeParse({
+      userId: formData.get('userId'),
+      newPassword: formData.get('newPassword'),
+    });
+
+    if (!validatedFields.success) {
+      return { ok: false, error: validatedFields.error.toString() || 'Invalid input' };
+    }
+
+    const { userId, newPassword } = validatedFields.data;
+    const user = await sql<Array<{ id: string }>>`
+      SELECT id FROM users WHERE id = ${userId} LIMIT 1
+    `;
+
+    if (user.length === 0) {
+      return { ok: false, error: 'User not found' };
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await sql`
+      UPDATE users
+      SET password = ${hashedPassword}
+      WHERE id = ${userId}
+    `;
+
+    return { ok: true, message: 'Password reset successfully' };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
+/**
+ * Delete a user (admin only)
  */
 export async function deleteUser(formData: FormData) {
   try {
@@ -2373,10 +2507,14 @@ export async function deleteUser(formData: FormData) {
     if (getSessionUserType(session) !== 'admin') {
       return { ok: false, error: 'Unauthorized: Admin access required' };
     }
+    const currentUserId = getSessionUserId(session);
 
     const userId = formData.get('userId') as string;
     if (!userId) {
       return { ok: false, error: 'User ID is required' };
+    }
+    if (currentUserId === userId) {
+      return { ok: false, error: 'You cannot delete your own account.' };
     }
 
     // Check if user exists and get their type
@@ -2388,9 +2526,8 @@ export async function deleteUser(formData: FormData) {
       return { ok: false, error: 'User not found' };
     }
 
-    // Prevent deleting admin users
-    if (user[0].user_type === 'admin') {
-      return { ok: false, error: 'Cannot delete admin users' };
+    if (user[0].user_type === 'admin' && await countAdminUsers() <= 1) {
+      return { ok: false, error: 'Cannot delete the last admin account.' };
     }
 
     // Delete the user
@@ -2398,8 +2535,7 @@ export async function deleteUser(formData: FormData) {
       DELETE FROM users WHERE id = ${userId}
     `;
 
-    revalidatePath('/dashboard/admin/users');
-    revalidatePath('/dashboard/staff-schedule');
+    await revalidateUserManagementPaths();
     return { ok: true, message: 'User deleted successfully' };
   } catch (e: unknown) {
     return { ok: false, error: errorMessage(e) };
