@@ -3856,9 +3856,6 @@ export async function runCampLmsCanvasTestAction(input: {
         if (!courseId || !enrollmentId) {
           throw new Error('The selected Canvas enrollment is missing its course or enrollment id in the latest sync. Sync LMS and try again.');
         }
-        if (expectedCourseIds.has(courseId)) {
-          throw new Error('Refusing to set an expected Canvas course inactive for this camper.');
-        }
 
         requestPayload.canvasCourseId = courseId;
         requestPayload.canvasEnrollmentId = enrollmentId;

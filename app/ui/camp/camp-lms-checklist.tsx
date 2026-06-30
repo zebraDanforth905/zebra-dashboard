@@ -341,8 +341,6 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
   const showCanvasTokenPrompt = checklist.schema_ready && (!checklist.canvas_configured || hasCanvasAuthError);
   const addExpectedActionFor = (row: CampLmsChecklistRow) =>
     row.suggested_actions.find((action) => action.type === 'add_expected_beginner');
-  const isExpectedEnrollment = (row: CampLmsChecklistRow, enrollment: CampLmsCanvasEnrollment) =>
-    row.expected_canvas_course_ids.includes(enrollment.course_id);
   const rowsNeedingLmsAccount = uniqueRowsBy(
     checklist.rows.filter((row) =>
       row.canvas_sync_status === 'synced'
@@ -976,7 +974,6 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
                       onRun={(enrollment) => handleCanvasEnrollmentAction(row, 'inactivate_enrollment', enrollment)}
                       expanded={Boolean(expandedEnrollments[enrollmentListKey(row, 'active')])}
                       onToggleExpanded={() => toggleEnrollmentList(row, 'active')}
-                      canRun={(enrollment) => !isExpectedEnrollment(row, enrollment)}
                     />
                   </td>
                   <td className="px-3 py-3">
