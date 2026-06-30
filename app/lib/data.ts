@@ -41,7 +41,7 @@ import {
   CampSessionWithEnrolments,
   CampPrintableStudentListOverride,
 } from './definitions';
-import { getCanvasPublicConfig } from './canvas-lms';
+import { getCanvasPublicConfig, testCanvasApiToken } from './canvas-lms';
 import { cacheTag, unstable_cache } from 'next/cache';
 
 
@@ -2906,6 +2906,9 @@ function summarizeCampLmsRows(rows: CampLmsChecklistRow[]): CampLmsChecklistSumm
 export async function fetchCampLmsChecklist(startDate: string, endDate: string): Promise<CampLmsChecklistData> {
   try {
     const canvasConfig = await getCanvasPublicConfig();
+    const canvasTokenTest = canvasConfig.configured
+      ? await testCanvasApiToken()
+      : { ok: false, error: 'Canvas API token is not configured.' };
     const [schema] = await sql<{ schema_ready: boolean }[]>`
       SELECT (
         to_regclass('public.camp_lms_course_mappings') IS NOT NULL
@@ -3010,6 +3013,8 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
         canvas_configured: canvasConfig.configured,
         canvas_token_source: canvasConfig.source,
         canvas_masked_token: canvasConfig.maskedToken,
+        canvas_token_ok: canvasTokenTest.ok,
+        canvas_token_error: canvasTokenTest.error,
         canvas_base_url: canvasConfig.baseUrl,
         canvas_last_synced_at: null,
         day_camp_course_options: [],
@@ -3132,6 +3137,8 @@ export async function fetchCampLmsChecklist(startDate: string, endDate: string):
       canvas_configured: canvasConfig.configured,
       canvas_token_source: canvasConfig.source,
       canvas_masked_token: canvasConfig.maskedToken,
+      canvas_token_ok: canvasTokenTest.ok,
+      canvas_token_error: canvasTokenTest.error,
       canvas_base_url: canvasConfig.baseUrl,
       canvas_last_synced_at: canvasLastSyncedAt,
       day_camp_course_options: dayCampCourseOptions,

@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowPathIcon,
+  CheckCircleIcon,
   ClipboardDocumentIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
@@ -109,14 +110,6 @@ function lmsSummaryCards(checklist: CampLmsChecklistData) {
 
 function syncErrorMessage(error: string) {
   return `Press "Sync LMS" to refresh this Canvas status. Last error: ${error}`;
-}
-
-function isCanvasAuthError(error: string | null | undefined) {
-  if (!error) return false;
-  const normalized = error.toLowerCase();
-  return normalized.includes('canvas api 401')
-    || normalized.includes('invalid access token')
-    || normalized.includes('unauthorized');
 }
 
 function uniqueRowsBy(
@@ -337,8 +330,8 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
   }, [checklist.rows]);
 
   const rowsWithoutCourseId = checklist.rows.filter((row) => !row.course_id).length;
-  const hasCanvasAuthError = checklist.rows.some((row) => isCanvasAuthError(row.canvas_sync_error));
-  const showCanvasTokenPrompt = checklist.schema_ready && (!checklist.canvas_configured || hasCanvasAuthError);
+  const showCanvasTokenPrompt = checklist.schema_ready && (!checklist.canvas_configured || !checklist.canvas_token_ok);
+  const canvasTokenLooksGood = checklist.schema_ready && checklist.canvas_configured && checklist.canvas_token_ok;
   const addExpectedActionFor = (row: CampLmsChecklistRow) =>
     row.suggested_actions.find((action) => action.type === 'add_expected_beginner');
   const rowsNeedingLmsAccount = uniqueRowsBy(
@@ -373,8 +366,14 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
   const handleCanvasTokenSave = async (formData: FormData) => {
     setIsSavingCanvasToken(true);
     setMessage(null);
+    console.debug('[canvas token save] submitting token save', {
+      draftLength: canvasTokenDraft.trim().length,
+      currentSource: checklist.canvas_token_source,
+      currentMaskedToken: checklist.canvas_masked_token,
+    });
 
     const result = await saveCanvasApiToken(formData);
+    console.debug('[canvas token save] result', result);
     if (!result.ok) {
       setMessage(result.error ?? 'Canvas API token save failed.');
       setIsSavingCanvasToken(false);
@@ -382,9 +381,9 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
     }
 
     setCanvasTokenDraft('');
-    setMessage('Canvas API token saved. Press "Sync LMS" to refresh Canvas status.');
+    setMessage(result.message ?? 'Canvas API token saved. Press "Sync LMS" to refresh Canvas status.');
     setIsSavingCanvasToken(false);
-    router.refresh();
+    refreshChecklistView();
   };
 
   const handleRefresh = () => {
@@ -789,47 +788,75 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
         </div>
       )}
 
-      {showCanvasTokenPrompt && (
-        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      {(showCanvasTokenPrompt || canvasTokenLooksGood) && (
+        <div className={
+          canvasTokenLooksGood
+            ? "mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
+            : "mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        }>
           <div className="flex gap-2">
-            <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-none" />
+            {canvasTokenLooksGood ? (
+              <CheckCircleIcon className="mt-0.5 h-4 w-4 flex-none" />
+            ) : (
+              <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-none" />
+            )}
             <div className="min-w-0 flex-1">
               <div className="font-medium">
-                {checklist.canvas_configured
+                {canvasTokenLooksGood
+                  ? 'Canvas API token is good.'
+                  : checklist.canvas_configured
                   ? 'Canvas API token is not working.'
                   : 'Canvas API token is not configured.'}
               </div>
-              <div className="mt-1 text-amber-800">
+              <div className={canvasTokenLooksGood ? "mt-1 text-emerald-800" : "mt-1 text-amber-800"}>
                 Current source: {tokenSourceLabel}
                 {checklist.canvas_masked_token ? ` (${checklist.canvas_masked_token})` : ''}.
-                {' '}Paste a valid Canvas token here, then press "Sync LMS".
+                {canvasTokenLooksGood
+                  ? ' Canvas sync can read from the configured token.'
+                  : ' Paste a valid Canvas token here, save it, then press "Sync LMS".'}
               </div>
               {checklist.canvas_token_source === 'environment' && (
-                <div className="mt-1 text-xs text-amber-800">
-                  The server environment token currently takes precedence over dashboard-saved tokens.
+                <div className={canvasTokenLooksGood ? "mt-1 text-xs text-emerald-800" : "mt-1 text-xs text-amber-800"}>
+                  The server environment token currently takes precedence over dashboard-saved tokens. To use a dashboard-saved token, remove CANVAS_API_TOKEN from the running server environment and restart.
                 </div>
               )}
-              <form action={handleCanvasTokenSave} className="mt-3 flex flex-wrap gap-2">
-                <input
-                  type="password"
-                  name="canvasApiToken"
-                  value={canvasTokenDraft}
-                  onChange={(event) => setCanvasTokenDraft(event.target.value)}
-                  placeholder="Paste Canvas API token"
-                  disabled={isSavingCanvasToken || isPending}
-                  autoComplete="off"
-                  className="min-w-[260px] flex-1 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-slate-100"
-                />
-                <button
-                  type="submit"
-                  name="intent"
-                  value="save"
-                  disabled={isSavingCanvasToken || isPending || canvasTokenDraft.trim().length === 0}
-                  className="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isSavingCanvasToken ? 'Saving...' : 'Save Canvas Token'}
-                </button>
-              </form>
+              {showCanvasTokenPrompt && (
+                <>
+                  {checklist.canvas_token_error && (
+                    <div className="mt-2 rounded border border-amber-200 bg-white/60 px-2 py-1 text-xs font-medium text-amber-900">
+                      Last token test: {checklist.canvas_token_error}
+                    </div>
+                  )}
+                  <ol className="mt-2 list-decimal space-y-0.5 pl-4 text-xs text-amber-800">
+                    <li>Go to LMS.</li>
+                    <li>Open Settings.</li>
+                    <li>Click + New Access Token.</li>
+                    <li>Click Create.</li>
+                    <li>Copy the long token into this dashboard field.</li>
+                  </ol>
+                  <form action={handleCanvasTokenSave} className="mt-3 flex flex-wrap gap-2">
+                    <input
+                      type="password"
+                      name="canvasApiToken"
+                      value={canvasTokenDraft}
+                      onChange={(event) => setCanvasTokenDraft(event.target.value)}
+                      placeholder="Paste Canvas API token"
+                      disabled={isSavingCanvasToken || isPending}
+                      autoComplete="off"
+                      className="min-w-[260px] flex-1 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-slate-100"
+                    />
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="save"
+                      disabled={isSavingCanvasToken || isPending || canvasTokenDraft.trim().length === 0}
+                      className="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isSavingCanvasToken ? 'Saving...' : 'Save Canvas Token'}
+                    </button>
+                  </form>
+                </>
+              )}
             </div>
           </div>
         </div>

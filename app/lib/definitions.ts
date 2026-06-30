@@ -521,6 +521,8 @@ export type CampLmsChecklistData = {
   canvas_configured: boolean;
   canvas_token_source: 'environment' | 'database' | 'none';
   canvas_masked_token: string | null;
+  canvas_token_ok: boolean;
+  canvas_token_error: string | null;
   canvas_base_url: string;
   canvas_last_synced_at: Date | null;
   day_camp_course_options: CampLmsDayCampCourseOption[];

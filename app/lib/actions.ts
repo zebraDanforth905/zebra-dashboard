@@ -20,6 +20,7 @@ import {
   clearCanvasTokenCache,
   getCanvasTokenSettings,
   saveCanvasApiTokenToDb,
+  testCanvasApiToken,
 } from './canvas-lms';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
@@ -2501,14 +2502,65 @@ export async function saveCanvasApiToken(formData: FormData) {
 
     const settings = await getCanvasTokenSettings();
     const isCleared = shouldClear || !token;
+    console.log('[canvas token save] saved token setting', {
+      cleared: isCleared,
+      effectiveSource: settings.source,
+      configured: settings.configured,
+      maskedToken: settings.maskedToken,
+    });
+
+    let tokenTest: { ok: boolean; error?: string; resultCount?: number } | null = null;
+    if (!isCleared && settings.configured) {
+      try {
+        console.log('[canvas token save] testing effective Canvas token', {
+          effectiveSource: settings.source,
+          maskedToken: settings.maskedToken,
+        });
+        const testResult = await testCanvasApiToken();
+        tokenTest = {
+          ok: testResult.ok,
+          resultCount: testResult.resultCount,
+          error: testResult.error ?? undefined,
+        };
+        if (tokenTest.ok) {
+          console.log('[canvas token save] Canvas token test passed', {
+            effectiveSource: settings.source,
+            maskedToken: settings.maskedToken,
+            resultCount: tokenTest.resultCount,
+          });
+        } else {
+          console.error('[canvas token save] Canvas token test failed', {
+            effectiveSource: settings.source,
+            maskedToken: settings.maskedToken,
+            error: tokenTest.error,
+          });
+        }
+      } catch (testError) {
+        tokenTest = { ok: false, error: errorMessage(testError) };
+        console.error('[canvas token save] Canvas token test failed', {
+          effectiveSource: settings.source,
+          maskedToken: settings.maskedToken,
+          error: tokenTest.error,
+        });
+      }
+    }
+
     return {
       ok: true,
       settings,
+      tokenTest,
       message: isCleared
         ? 'Canvas API token entry removed from dashboard settings.'
-        : 'Canvas API token saved to dashboard settings.',
+        : tokenTest?.ok
+          ? 'Canvas API token saved and tested successfully.'
+          : tokenTest
+            ? `Canvas API token saved, but the test failed: ${tokenTest.error}`
+            : 'Canvas API token saved to dashboard settings.',
     };
   } catch (error) {
+    console.error('[canvas token save] failed', {
+      error: errorMessage(error),
+    });
     const pgError = error as { code?: string } | undefined;
     if (pgError?.code === '42P01') {
       return { ok: false, error: 'Apply migration 033_create_app_settings.sql before saving the Canvas API token setting.' };

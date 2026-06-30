@@ -57,6 +57,7 @@ export class CanvasConfigError extends Error {
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 const CANVAS_TOKEN_SETTING_KEY = 'CANVAS_API_TOKEN';
 const CANVAS_TOKEN_CACHE_MS = 30_000;
+const CANVAS_TOKEN_TEST_TIMEOUT_MS = 10_000;
 
 export type CanvasTokenSource = 'environment' | 'database' | 'none';
 
@@ -477,4 +478,78 @@ export class CanvasClient {
 
 export function createCanvasClient() {
   return new CanvasClient();
+}
+
+function canvasErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function withCanvasTokenTestTimeout<T>(work: Promise<T>) {
+  return Promise.race([
+    work,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`Canvas API token test timed out after ${CANVAS_TOKEN_TEST_TIMEOUT_MS / 1000}s.`)), CANVAS_TOKEN_TEST_TIMEOUT_MS);
+    }),
+  ]);
+}
+
+export async function testCanvasApiToken() {
+  const settings = await getCanvasTokenSettings();
+  if (!settings.configured) {
+    return {
+      ok: false,
+      error: 'Canvas API token is not configured.',
+      resultCount: 0,
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CANVAS_TOKEN_TEST_TIMEOUT_MS);
+  try {
+    const token = await getCanvasToken();
+    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    const url = new URL(`/api/v1/accounts/${encodeURIComponent(accountId)}/users`, canvasBaseUrl());
+    url.searchParams.set('search_term', 'zebra');
+    url.searchParams.set('per_page', '1');
+
+    const response = await withCanvasTokenTestTimeout(fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json+canvas-string-ids',
+      },
+      cache: 'no-store',
+      signal: controller.signal,
+    }));
+    const text = await response.text();
+    let data: unknown = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { message: text.slice(0, 500) };
+      }
+    }
+
+    if (!response.ok) {
+      const message = typeof data === 'object' && data && 'message' in data
+        ? String((data as { message?: unknown }).message)
+        : text.slice(0, 500);
+      throw new Error(`Canvas API ${response.status}: ${message}`);
+    }
+
+    const resultCount = Array.isArray(data) ? data.length : 0;
+    return {
+      ok: true,
+      error: null,
+      resultCount,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: canvasErrorMessage(error),
+      resultCount: 0,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
