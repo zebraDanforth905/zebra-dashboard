@@ -6,7 +6,7 @@ import PickupTableWrapper from "@/app/ui/schedule/pickup-table-wrapper";
 import { PickupListDisplay } from "@/app/lib/definitions";
 import AddPickupButton from "@/app/ui/schedule/add-pickup-button";
 import { auth } from "@/auth";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import SessionNav from "@/app/ui/schedule/session-nav";
 import {
   dateForScheduleWeekday,
@@ -49,6 +49,9 @@ export default async function Page(props: {
       : "Frankland";
 
   const sessions = await fetchSessionsForDay(day, targetDate);
+  if (isSummer && sessions.length > 0) {
+    redirect(`/dashboard/schedule/${day}/${sessions[0].id}?weekStart=${weekStart}`);
+  }
   const pickups = isSummer ? [] : await fetchPickupsForDay(day, activeSchool, targetDate);
 
   return (
