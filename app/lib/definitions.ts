@@ -90,6 +90,7 @@ export type Payment = {
 
 export type Session = {
   id: string;
+  session_ids?: string[];
   start_time: string;
   end_time: string;
   weekday: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';

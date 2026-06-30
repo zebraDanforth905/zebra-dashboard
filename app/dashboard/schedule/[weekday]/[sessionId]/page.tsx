@@ -25,7 +25,13 @@ export default async function SessionPage(props: {
   const weekStart = ymdLocal(startOfScheduleWeek(searchParams?.weekStart));
   const targetDate = dateForScheduleWeekday(weekStart, day);
   const sessions = await fetchSessionsForDay(day, targetDate);
-  if (sessions.length > 0 && !sessions.some(session => session.id === sessionId)) {
+  const selectedSession = sessions.find((session) =>
+    session.id === sessionId || session.session_ids?.includes(sessionId)
+  );
+  if (selectedSession && selectedSession.id !== sessionId) {
+    redirect(`/dashboard/schedule/${day}/${selectedSession.id}?weekStart=${weekStart}`);
+  }
+  if (sessions.length > 0 && !selectedSession) {
     redirect(`/dashboard/schedule/${day}/${sessions[0].id}?weekStart=${weekStart}`);
   }
 
@@ -36,7 +42,7 @@ export default async function SessionPage(props: {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 text-slate-600">
-        <ScheduleTable sessionId={sessionId} date={targetDate} />
+        <ScheduleTable sessionId={selectedSession?.id ?? sessionId} date={targetDate} />
       </div>
     </div>
   );

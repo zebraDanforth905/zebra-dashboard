@@ -820,6 +820,22 @@ export async function fetchCustomerConvergePayments(customerId: string) {
 
 const Y = (d: Date) => d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
 
+type SessionSlot = {
+  weekday: Weekday;
+  start_time: string;
+  end_time: string;
+};
+
+async function fetchSessionSlot(sessionId: string): Promise<SessionSlot> {
+  const rows = await sql<SessionSlot[]>`
+    SELECT weekday, start_time, end_time
+    FROM sessions
+    WHERE id = ${sessionId}
+    LIMIT 1;
+  `;
+  if (!rows.length) throw new Error("Session not found");
+  return rows[0];
+}
 
 
 
@@ -886,17 +902,11 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
     cacheTag('schedule')
     cacheTag('studentsnotes')
     // If no date provided, compute the next occurrence of this session's weekday
+    const slot = await fetchSessionSlot(sessionId);
     let targetDate = date;
     
     if (!targetDate) {
-      const rows = await sql<{ weekday: Weekday }[]>`
-        SELECT weekday
-        FROM sessions
-        WHERE id = ${sessionId}
-        LIMIT 1;
-      `;
-      if (!rows.length) throw new Error("Session not found");
-      targetDate = nextOccurrenceOf(rows[0].weekday);
+      targetDate = nextOccurrenceOf(slot.weekday);
     }
 
     const target = Y(targetDate);
@@ -950,7 +960,9 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
         ON fi.student_id = e.student_id
        AND fi.class_day = sess.weekday
        AND LEFT(fi.class_start_time, 5) = LEFT(sess.start_time::text, 5)
-      WHERE e.session_id = ${sessionId}
+      WHERE sess.weekday = ${slot.weekday}
+        AND sess.start_time = ${slot.start_time}::time
+        AND sess.end_time = ${slot.end_time}::time
         AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
         AND (
           COALESCE(e.end_date, fi.end_date) IS NULL
@@ -972,17 +984,11 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
     
   cacheTag('schedule')
   cacheTag('studentsnotes')
+  const slot = await fetchSessionSlot(sessionId);
   let targetDate = date;
     
     if (!targetDate) {
-      const rows = await sql<{ weekday: Weekday }[]>`
-        SELECT weekday
-        FROM sessions
-        WHERE id = ${sessionId}
-        LIMIT 1;
-      `;
-      if (!rows.length) throw new Error("Session not found");
-      targetDate = nextOccurrenceOf(rows[0].weekday);
+      targetDate = nextOccurrenceOf(slot.weekday);
     }
 
   const target = Y(targetDate);
@@ -1016,10 +1022,15 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
       END AS recent_note
     FROM students s
     JOIN makeups m ON m.student_id = s.id
+    JOIN sessions sess ON sess.id = m.session_id
     JOIN courses crs ON crs.id = m.course_id
     LEFT JOIN customers c ON c.id = s.customer_id
     LEFT JOIN latest_note ln ON ln.student_id = s.id
-    WHERE m.session_id = ${sessionId} AND m.date = ${target} AND (m.cancelled = false OR m.cancelled IS NULL)
+    WHERE sess.weekday = ${slot.weekday}
+      AND sess.start_time = ${slot.start_time}::time
+      AND sess.end_time = ${slot.end_time}::time
+      AND m.date = ${target}
+      AND (m.cancelled = false OR m.cancelled IS NULL)
     ORDER BY m.date;
   `;
   return students;
@@ -1034,17 +1045,11 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
   cacheTag('schedule')
   cacheTag('studentsnotes')
 
+  const slot = await fetchSessionSlot(sessionId);
   let targetDate = date;
     
     if (!targetDate) {
-      const rows = await sql<{ weekday: Weekday }[]>`
-        SELECT weekday
-        FROM sessions
-        WHERE id = ${sessionId}
-        LIMIT 1;
-      `;
-      if (!rows.length) throw new Error("Session not found");
-      targetDate = nextOccurrenceOf(rows[0].weekday);
+      targetDate = nextOccurrenceOf(slot.weekday);
     }
 
     const target = Y(targetDate);
@@ -1064,9 +1069,13 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
     )
     SELECT t.id AS trial_id, t.name, crs.name AS course_name, t.date, ltn.recent_note
     FROM trials t
+    JOIN sessions sess ON sess.id = t.session_id
     JOIN courses crs ON crs.id = t.course_id
     LEFT JOIN latest_trial_note ltn ON ltn.trial_id = t.id
-    WHERE t.session_id = ${sessionId} AND t.date = ${target}
+    WHERE sess.weekday = ${slot.weekday}
+      AND sess.start_time = ${slot.start_time}::time
+      AND sess.end_time = ${slot.end_time}::time
+      AND t.date = ${target}
     ORDER BY t.date;
   `;
   return students;
@@ -1092,67 +1101,83 @@ export async function fetchSessionsForDay(
         // the whole week, so the count badge matches the roster shown.
         const weekStart = Y(startOfScheduleWeek(targetDate));
 
-        const sessions = await sql<Session[]>
-        `
+        const sessions = await sql<Session[]>`
+          WITH session_counts AS (
+            SELECT
+              s.id::text AS id,
+              s.weekday,
+              s.start_time,
+              s.end_time,
+              s.is_summer,
+              COALESCE(ec.student_count, 0)::int AS student_count,
+              COALESCE(mc.makeup_count, 0)::int  AS makeup_count,
+              COALESCE(tc.trial_count, 0)::int   AS trial_count,
+              COALESCE(ac.absence_count, 0)::int AS absences
+            FROM sessions s
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS student_count
+              FROM enrolments e
+              LEFT JOIN future_inactivations fi
+                ON fi.student_id = e.student_id
+               AND fi.class_day = s.weekday
+               AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
+              WHERE e.session_id = s.id
+                AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+                AND (
+                  COALESCE(e.end_date, fi.end_date) IS NULL
+                  OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
+                )
+            ) ec ON true
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS makeup_count
+              FROM makeups m
+              WHERE m.session_id = s.id
+                AND m.date = ${target}
+            ) mc ON true
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS trial_count
+              FROM trials t
+              WHERE t.session_id = s.id
+                AND t.date = ${target}
+            ) tc ON true
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS absence_count
+              FROM absences a
+              JOIN enrolments e ON e.id = a.enrolment_id
+              LEFT JOIN future_inactivations fi
+                ON fi.student_id = e.student_id
+               AND fi.class_day = s.weekday
+               AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
+              WHERE e.session_id = s.id
+                AND a.date = ${target}
+                AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+                AND (
+                  COALESCE(e.end_date, fi.end_date) IS NULL
+                  OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
+                )
+            ) ac ON true
+            WHERE s.weekday = ${day}
+          ),
+          visible_session_counts AS (
+            SELECT *
+            FROM session_counts
+            WHERE student_count > 0
+              OR makeup_count > 0
+              OR trial_count > 0
+          )
           SELECT
-            s.id,
-            s.weekday,
-            s.start_time,
-            s.end_time,
-            COALESCE(ec.student_count, 0) AS student_count,
-            COALESCE(mc.makeup_count, 0)  AS makeup_count,
-            COALESCE(tc.trial_count, 0)   AS trial_count,
-            COALESCE(ac.absence_count, 0) AS absences
-          FROM sessions s
-          LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS student_count
-            FROM enrolments e
-            LEFT JOIN future_inactivations fi
-              ON fi.student_id = e.student_id
-             AND fi.class_day = s.weekday
-             AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
-            WHERE e.session_id = s.id
-              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-              AND (
-                COALESCE(e.end_date, fi.end_date) IS NULL
-                OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
-              )
-          ) ec ON true
-          LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS makeup_count
-            FROM makeups m
-            WHERE m.session_id = s.id
-              AND m.date = ${target}
-          ) mc ON true
-          LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS trial_count
-            FROM trials t
-            WHERE t.session_id = s.id
-              AND t.date = ${target}
-          ) tc ON true
-          LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS absence_count
-            FROM absences a
-            JOIN enrolments e ON e.id = a.enrolment_id
-            LEFT JOIN future_inactivations fi
-              ON fi.student_id = e.student_id
-             AND fi.class_day = s.weekday
-             AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
-            WHERE e.session_id = s.id
-              AND a.date = ${target}
-              AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
-              AND (
-                COALESCE(e.end_date, fi.end_date) IS NULL
-                OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
-              )
-          ) ac ON true
-          WHERE s.weekday = ${day}
-            AND (
-              COALESCE(ec.student_count, 0) > 0
-              OR COALESCE(mc.makeup_count, 0) > 0
-              OR COALESCE(tc.trial_count, 0) > 0
-            )
-          ORDER BY s.start_time;
+            (ARRAY_AGG(id ORDER BY is_summer, id))[1] AS id,
+            ARRAY_AGG(id ORDER BY is_summer, id) AS session_ids,
+            weekday,
+            start_time,
+            end_time,
+            SUM(student_count)::int AS student_count,
+            SUM(makeup_count)::int AS makeup_count,
+            SUM(trial_count)::int AS trial_count,
+            SUM(absences)::int AS absences
+          FROM visible_session_counts
+          GROUP BY weekday, start_time, end_time
+          ORDER BY start_time, end_time;
         `;
         return sessions;
   } catch (error) {
