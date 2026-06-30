@@ -109,7 +109,7 @@ function lmsSummaryCards(checklist: CampLmsChecklistData) {
 }
 
 function syncErrorMessage(error: string) {
-  return `Press "Sync LMS" to refresh this Canvas status. Last error: ${error}`;
+  return `Canvas status is stale or needs attention. Last error: ${error}`;
 }
 
 function uniqueRowsBy(
@@ -381,7 +381,24 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
     }
 
     setCanvasTokenDraft('');
-    setMessage(result.message ?? 'Canvas API token saved. Press "Sync LMS" to refresh Canvas status.');
+    if (result.tokenTest?.ok) {
+      setMessage('Canvas API token saved and tested. Refreshing LMS status...');
+      const syncResult = await syncCampLmsCanvasWeek(startDate, endDate);
+      if (!syncResult.ok) {
+        setMessage(`Canvas API token saved and tested, but LMS status refresh failed: ${syncResult.error ?? 'unknown error'}`);
+        setIsSavingCanvasToken(false);
+        refreshChecklistView();
+        return;
+      }
+
+      const errorCount = syncResult.errors?.length ?? 0;
+      setMessage(errorCount > 0
+        ? `Canvas API token saved and tested. LMS status refreshed for ${syncResult.synced} row(s); ${errorCount} row(s) still need attention.`
+        : `Canvas API token saved and tested. LMS status refreshed for ${syncResult.synced} row(s).`
+      );
+    } else {
+      setMessage(result.message ?? 'Canvas API token saved and tested.');
+    }
     setIsSavingCanvasToken(false);
     refreshChecklistView();
   };
@@ -813,7 +830,7 @@ export default function CampLmsChecklist({ startDate, endDate, scopeLabel, check
                 {checklist.canvas_masked_token ? ` (${checklist.canvas_masked_token})` : ''}.
                 {canvasTokenLooksGood
                   ? ' Canvas sync can read from the configured token.'
-                  : ' Paste a valid Canvas token here, save it, then press "Sync LMS".'}
+                  : ' Paste a valid Canvas token here; the dashboard will test it and refresh LMS status once it works.'}
               </div>
               {checklist.canvas_token_source === 'environment' && (
                 <div className={canvasTokenLooksGood ? "mt-1 text-xs text-emerald-800" : "mt-1 text-xs text-amber-800"}>
