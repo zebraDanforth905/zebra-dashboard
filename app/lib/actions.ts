@@ -2655,6 +2655,8 @@ const CampLmsCanvasActionSchema = z.object({
   type: z.enum(['add_expected_beginner', 'activate_course', 'inactivate_enrollment', 'create_user']),
   canvasCourseId: optionalTrimmedString,
   canvasEnrollmentId: optionalTrimmedString,
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 const CampLmsCanvasCourseSearchSchema = z.object({
@@ -3625,6 +3627,8 @@ export async function runCampLmsCanvasTestAction(input: {
   type: CampLmsCanvasActionType;
   canvasCourseId?: string;
   canvasEnrollmentId?: string;
+  startDate?: string;
+  endDate?: string;
 }) {
   const session = await auth();
   const userId = session?.user?.id;
@@ -3638,7 +3642,7 @@ export async function runCampLmsCanvasTestAction(input: {
     return { ok: false, error: 'Invalid Canvas test action' };
   }
 
-  const { campEnrolmentId, type, canvasCourseId, canvasEnrollmentId } = parsed.data;
+  const { campEnrolmentId, type, canvasCourseId, canvasEnrollmentId, startDate, endDate } = parsed.data;
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
@@ -3908,7 +3912,7 @@ export async function runCampLmsCanvasTestAction(input: {
       );
     `;
 
-    await revalidateCampLmsPaths();
+    await revalidateCampLmsPaths(startDate, endDate);
     if (!success) {
       return { ok: false, error: apiError ?? 'Canvas test action failed' };
     }

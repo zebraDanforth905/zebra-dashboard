@@ -12,6 +12,7 @@ import CampWeekSlips from '@/app/ui/camp/camp-week-slips';
 import CampWeekTabs from '@/app/ui/camp/camp-week-tabs';
 import { connection } from 'next/server';
 import { CampEnrolmentWithStudent } from '@/app/lib/definitions';
+import { formatCampWeekLabel } from '@/app/lib/camp-week-label';
 
 type DayEnrolments = {
   date: Date;
@@ -83,12 +84,6 @@ const getWeekStart = (date: Date) => {
   return dayDate;
 };
 
-const formatDateRange = (start: Date, end: Date) => {
-  const startStr = new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const endStr = new Date(end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  return `${startStr} - ${endStr}`;
-};
-
 const formatDate = (date: Date) => {
   return new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 };
@@ -128,7 +123,7 @@ export default async function CampSessionPage({
 
   const report = {
     id: startDate,
-    label: `Week of ${formatDateRange(weekStart, weekEnd)}`,
+    label: formatCampWeekLabel(weekStart, weekEnd),
     totalEnrolments: 0,
     byType: { FD: 0, half: 0 },
     byLength: {} as Record<number, number>,
@@ -300,6 +295,7 @@ export default async function CampSessionPage({
           <CampLmsChecklist
             startDate={startDate}
             endDate={endDate}
+            scopeLabel={report.label}
             checklist={lmsChecklist}
           />
         }

@@ -28,6 +28,7 @@ import type {
 type Props = {
   startDate: string;
   endDate: string;
+  scopeLabel: string;
   checklist: CampLmsChecklistData;
 };
 
@@ -302,7 +303,7 @@ function CanvasActionButton({
   );
 }
 
-export default function CampLmsChecklist({ startDate, endDate, checklist }: Props) {
+export default function CampLmsChecklist({ startDate, endDate, scopeLabel, checklist }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
@@ -366,6 +367,10 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       : checklist.canvas_token_source === 'database'
         ? 'dashboard setting'
         : 'not configured';
+  const refreshChecklistView = () => {
+    router.refresh();
+    window.setTimeout(() => router.refresh(), 750);
+  };
 
   const handleCanvasTokenSave = async (formData: FormData) => {
     setIsSavingCanvasToken(true);
@@ -393,7 +398,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         return;
       }
       setMessage('Portal roster refreshed.');
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -410,7 +415,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         ? `Canvas sync finished for ${result.synced} row(s); ${errorCount} row(s) need attention.`
         : `Canvas sync finished for ${result.synced} row(s).`
       );
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -435,6 +440,8 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         const result = await runCampLmsCanvasTestAction({
           campEnrolmentId: row.camp_enrolment_id,
           type: 'create_user',
+          startDate,
+          endDate,
         });
         if (result.ok) {
           createdUsers += 1;
@@ -452,6 +459,8 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           type: action.type,
           canvasCourseId: action.canvas_course_id,
           canvasEnrollmentId: action.canvas_enrollment_id,
+          startDate,
+          endDate,
         });
         if (result.ok) {
           addedExpectedCourses += 1;
@@ -465,7 +474,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         ? `${summary} ${errors.length} issue(s): ${errors.slice(0, 3).join(' | ')}`
         : summary
       );
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -597,6 +606,8 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         type: action.type,
         canvasCourseId: action.canvas_course_id,
         canvasEnrollmentId: action.canvas_enrollment_id,
+        startDate,
+        endDate,
       });
       if (!result.ok) {
         setMessage(result.error ?? 'Canvas test action failed.');
@@ -607,7 +618,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           ? 'Expected LMS course added and synced.'
           : 'Canvas action completed and synced.'
       );
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -628,13 +639,15 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         type,
         canvasCourseId: enrollment.course_id,
         canvasEnrollmentId: enrollment.enrollment_id,
+        startDate,
+        endDate,
       });
       if (!result.ok) {
         setMessage(result.error ?? 'Canvas course update failed.');
         return;
       }
       setMessage(type === 'activate_course' ? 'Canvas course set active.' : 'Canvas course set inactive.');
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -677,6 +690,8 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         campEnrolmentId: row.camp_enrolment_id,
         type: 'activate_course',
         canvasCourseId,
+        startDate,
+        endDate,
       });
       if (!result.ok) {
         setMessage(result.error ?? 'Canvas course add failed.');
@@ -686,7 +701,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       setCourseSearchResults((current) => ({ ...current, [row.camp_enrolment_id]: [] }));
       setSelectedCourseIds((current) => ({ ...current, [row.camp_enrolment_id]: '' }));
       setMessage('Canvas course added as active.');
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -701,13 +716,15 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       const result = await runCampLmsCanvasTestAction({
         campEnrolmentId: row.camp_enrolment_id,
         type: 'create_user',
+        startDate,
+        endDate,
       });
       if (!result.ok) {
         setMessage(result.error ?? 'Canvas user creation failed.');
         return;
       }
       setMessage('warning' in result && result.warning ? result.warning : 'Canvas user created and synced.');
-      router.refresh();
+      refreshChecklistView();
     });
   };
 
@@ -716,6 +733,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-slate-900">LMS Checklist</h2>
+          <p className="mt-1 text-sm text-slate-600">{scopeLabel}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <span>Canvas: {checklist.canvas_base_url}</span>
             <span>|</span>
