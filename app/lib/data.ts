@@ -4,7 +4,12 @@ import postgres from 'postgres';
 import { nextOccurrenceOf } from './utils';
 import { isSummerScheduleWeek, startOfScheduleWeek } from './schedule-week';
 import { isDateInTerm } from './tdsb-calendar';
-import { fetchAttendanceReport } from './scraper_helpers';
+import {
+  ATTENDANCE_STATUS,
+  fetchBatchAttendance,
+  findEnrolmentBatchForSlot,
+  findMakeupBatchForStudent,
+} from './scraper_helpers';
 import {
   InvoiceTableData,
   CustomerTableData,
@@ -823,20 +828,73 @@ const Y = (d: Date) => d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
 
 
 
-// Real attendance status (present/absent/unmarked) for every student in a
-// session on a given date, read live from the portal attendance report. The
-// local DB only records absences, so it can't tell "present" from "unmarked" —
-// this fills that gap to seed the schedule's attendance buttons. Keyed by
-// student_id (as string). NOT cached: it's a live portal read and must reflect
-// the latest marks. Returns {} on any failure so the UI falls back to the
-// local absent flag.
+function attendanceStatusFromId(attendanceId: number): 'present' | 'absent' | 'unmarked' {
+  return attendanceId === ATTENDANCE_STATUS.Present
+    ? 'present'
+    : attendanceId === ATTENDANCE_STATUS.Unmarked
+      ? 'unmarked'
+      : 'absent';
+}
+
+// Builds a student_id -> attendance-status map for a set of students on a date by
+// reading the portal's per-batch roster GET (the SAME source the portal's
+// attendance screen uses; the date-based report is a different store that can
+// diverge). Multiple portal batches can share one day/time, so we resolve each
+// uncovered student's batch via `resolveBatchId` and fetch each distinct batch
+// once — a fetched roster covers all of its students (including makeups), so we
+// only resolve/GET once per batch, not once per student. Our DB stores no portal
+// batch id, hence the per-student resolution.
+async function buildBatchAttendanceMap(
+  studentIds: number[],
+  date: string, // YYYY-MM-DD
+  resolveBatchId: (studentId: number) => Promise<number>,
+): Promise<Record<string, 'present' | 'absent' | 'unmarked'>> {
+  const map: Record<string, 'present' | 'absent' | 'unmarked'> = {};
+  const fetchedBatches = new Set<number>();
+  const covered = new Set<number>(); // student ids already in a fetched roster
+
+  for (const studentId of studentIds) {
+    if (covered.has(studentId)) continue;
+
+    let batchId: number;
+    try {
+      batchId = await resolveBatchId(studentId);
+    } catch {
+      // No current portal enrolment / ambiguous slot — skip this student.
+      continue;
+    }
+
+    if (fetchedBatches.has(batchId)) {
+      covered.add(studentId);
+      continue;
+    }
+    fetchedBatches.add(batchId);
+
+    const roster = await fetchBatchAttendance(batchId, date);
+    for (const student of roster.students) {
+      covered.add(student.user_id);
+      // Key by the integer id. students.id is numeric in the DB and serializes
+      // as "15876.00", so the caller normalizes its lookup the same way.
+      map[String(student.user_id)] = attendanceStatusFromId(student.attendance_id);
+    }
+  }
+
+  return map;
+}
+
+// Real attendance status (present/absent/unmarked) for every enrolled student in
+// a session on a given date, read live from the portal. Seeds the schedule's
+// attendance buttons; the local DB only records absences, so it can't tell
+// "present" from "unmarked". Keyed by student_id (as string). NOT cached: it's a
+// live portal read and must reflect the latest marks. Returns {} on any failure
+// so the UI falls back to the local absent flag.
 export async function fetchSessionAttendanceMap(
   sessionId: string,
   date?: Date,
 ): Promise<Record<string, 'present' | 'absent' | 'unmarked'>> {
   try {
-    const rows = await sql<{ weekday: Weekday; start_time: string }[]>`
-      SELECT weekday, start_time
+    const rows = await sql<{ weekday: Weekday; start_time: string; end_time: string | null }[]>`
+      SELECT weekday, start_time, end_time
       FROM sessions
       WHERE id = ${sessionId}
       LIMIT 1;
@@ -847,32 +905,66 @@ export async function fetchSessionAttendanceMap(
     const targetDate = date ?? nextOccurrenceOf(slot.weekday);
     const target = Y(targetDate);
 
-    const branchId = Number(process.env.ZEBRA_BRANCH_ID ?? 20);
-    const raw = await fetchAttendanceReport({ startDate: target, endDate: target, branchId });
+    const candidates = await sql<{ student_id: string }[]>`
+      SELECT s.id AS student_id
+      FROM enrolments e
+      JOIN students s ON s.id = e.student_id
+      WHERE e.session_id = ${sessionId}
+        AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
+        AND (e.end_date IS NULL OR e.end_date >= ${target}::date);
+    `;
 
-    const wantDay = String(slot.weekday).trim().toLowerCase();
-    const wantStart = (slot.start_time ?? '').trim().slice(0, 5); // "HH:MM"
+    const startTime = String(slot.start_time ?? '').trim();
+    const endTime = slot.end_time ? String(slot.end_time).trim() : undefined;
 
-    const map: Record<string, 'present' | 'absent' | 'unmarked'> = {};
-    for (const r of raw as any[]) {
-      const sid = Number(r?.student?.user_id);
-      if (!Number.isFinite(sid)) continue;
-      if (String(r?.batch?.day ?? '').trim().toLowerCase() !== wantDay) continue;
-      if (String(r?.batch?.start_time ?? '').trim().slice(0, 5) !== wantStart) continue;
-
-      const label = String(r?.attendance_value ?? '').trim();
-      // Key by the integer id. students.id is numeric in the DB and serializes
-      // as "15876.00", so the caller normalizes its lookup the same way.
-      map[String(sid)] =
-        label === 'Present'
-          ? 'present'
-          : label === '' || label === 'Unmarked'
-            ? 'unmarked'
-            : 'absent';
-    }
-    return map;
+    return await buildBatchAttendanceMap(
+      candidates.map((c) => Number(c.student_id)),
+      target,
+      async (studentId) =>
+        (await findEnrolmentBatchForSlot(studentId, String(slot.weekday), startTime, endTime)).batchId,
+    );
   } catch (error) {
     console.error('fetchSessionAttendanceMap failed:', error);
+    return {};
+  }
+}
+
+// Same as fetchSessionAttendanceMap, but for makeup students attending this
+// session. Makeups aren't enrolled in the session, so they never appear in the
+// enrolled-student query above — and they attend a batch resolved from their own
+// course catalogue (findMakeupBatchForStudent), which can differ from the
+// enrolled students' batch when several batches share the slot. Resolve and read
+// their batch directly so their seed reflects the portal. Keyed by student_id.
+export async function fetchSessionMakeupAttendanceMap(
+  sessionId: string,
+  studentIds: number[],
+  date?: Date,
+): Promise<Record<string, 'present' | 'absent' | 'unmarked'>> {
+  try {
+    if (studentIds.length === 0) return {};
+
+    const rows = await sql<{ weekday: Weekday; start_time: string; end_time: string | null }[]>`
+      SELECT weekday, start_time, end_time
+      FROM sessions
+      WHERE id = ${sessionId}
+      LIMIT 1;
+    `;
+    const slot = rows[0];
+    if (!slot) return {};
+
+    const targetDate = date ?? nextOccurrenceOf(slot.weekday);
+    const target = Y(targetDate);
+    const startTime = String(slot.start_time ?? '').trim();
+    const endTime = slot.end_time ? String(slot.end_time).trim() : undefined;
+
+    return await buildBatchAttendanceMap(
+      studentIds,
+      target,
+      async (studentId) =>
+        (await findMakeupBatchForStudent(studentId, String(slot.weekday), startTime, endTime)).batchId,
+    );
+  } catch (error) {
+    console.error('fetchSessionMakeupAttendanceMap failed:', error);
     return {};
   }
 }

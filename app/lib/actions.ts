@@ -6,7 +6,7 @@ import { revalidatePath, revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
 import {z} from 'zod';
-import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON, fetchStudentEnrolments, setEnrolmentInactive, fetchPrograms, fetchCourseBatches, fetchCourseFees, createEnrolment, markStudentAttendance, type AttendanceStatus } from './scraper_helpers';
+import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON, fetchStudentEnrolments, setEnrolmentInactive, fetchPrograms, fetchCourseBatches, fetchCourseFees, createEnrolment, markStudentAttendance, findMakeupBatchForStudent, type AttendanceStatus } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized, upsertSummerEnrolmentWeekFromNormalized } from './insert_from_portal';
 import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampLmsCanvasCourseSearchResult, type CampPrintableStudentListField, type CampPrintLogEntry } from './definitions';
@@ -5111,6 +5111,25 @@ const PORTAL_ATTENDANCE_STATUS: Record<PortalAttendanceValue, AttendanceStatus> 
   unmarked: 'Unmarked',
 };
 
+// The portal needs first/last name in the attendance payload. markStudentAttendance
+// can resolve it from the branch's active class report, but that misses students
+// not on it (makeups, inactive enrolments), so we look the name up in our own DB
+// (students.id is the portal student id) and pass it explicitly. Returns null when
+// the student isn't found, letting the caller fall back to the portal lookup.
+async function fetchStudentNameParts(
+  studentId: number,
+): Promise<{ firstName: string; lastName: string } | null> {
+  const rows = await sql<{ name: string }[]>`
+    SELECT name FROM students WHERE id = ${studentId} LIMIT 1;
+  `;
+  const full = rows[0]?.name?.trim();
+  if (!full) return null;
+  const sp = full.indexOf(' ');
+  return sp === -1
+    ? { firstName: full, lastName: '' }
+    : { firstName: full.slice(0, sp), lastName: full.slice(sp + 1).trim() };
+}
+
 /**
  * Set a student's attendance value in the Zebra portal for a session date.
  *
@@ -5136,6 +5155,8 @@ export async function setPortalAttendance(
       return { ok: false, error: `Enrolment ${input.enrolmentId} not found.` };
     }
 
+    const name = await fetchStudentNameParts(Number(input.studentId));
+
     await markStudentAttendance({
       studentId: Number(input.studentId),
       day: session.weekday,
@@ -5144,6 +5165,8 @@ export async function setPortalAttendance(
       date: input.date,
       makeup: false,
       status: PORTAL_ATTENDANCE_STATUS[input.value],
+      firstName: name?.firstName,
+      lastName: name?.lastName,
     });
 
     revalidatePath('/dashboard/schedule');
@@ -5151,5 +5174,72 @@ export async function setPortalAttendance(
   } catch (error) {
     console.error('[setPortalAttendance] failed:', error);
     return { ok: false, error: error instanceof Error ? error.message : 'Failed to set attendance.' };
+  }
+}
+
+export type SetPortalMakeupAttendanceInput = {
+  // Identifiers from the makeup schedule row.
+  makeupId: string;
+  studentId: string;
+  // The session date this attendance applies to, as 'YYYY-MM-DD'.
+  date: string;
+  value: PortalAttendanceValue;
+};
+
+/**
+ * Set a makeup student's attendance value in the Zebra portal for a session date.
+ *
+ * A makeup student attends a batch they are not enrolled in, so the batch can't
+ * be found from their enrolment slot. We resolve it from the makeup session's
+ * day/time against the catalogue batches of the student's enrolled courses
+ * (findMakeupBatchForStudent), then write with makeup: true.
+ */
+export async function setPortalMakeupAttendance(
+  input: SetPortalMakeupAttendanceInput,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const rows = await sql<{ weekday: string; start_time: string; end_time: string | null }[]>`
+      SELECT sess.weekday, sess.start_time, sess.end_time
+      FROM makeups m
+      JOIN sessions sess ON sess.id = m.session_id
+      WHERE m.id = ${input.makeupId}
+      LIMIT 1;
+    `;
+    const session = rows[0];
+    if (!session) {
+      return { ok: false, error: `Makeup ${input.makeupId} not found.` };
+    }
+
+    const batch = await findMakeupBatchForStudent(
+      Number(input.studentId),
+      session.weekday,
+      session.start_time,
+      session.end_time ?? undefined,
+    );
+
+    const name = await fetchStudentNameParts(Number(input.studentId));
+
+    await markStudentAttendance({
+      studentId: Number(input.studentId),
+      day: session.weekday,
+      startTime: session.start_time,
+      endTime: session.end_time ?? undefined,
+      date: input.date,
+      makeup: true,
+      status: PORTAL_ATTENDANCE_STATUS[input.value],
+      batchId: batch.batchId,
+      courseName: batch.courseName,
+      firstName: name?.firstName,
+      lastName: name?.lastName,
+    });
+
+    revalidatePath('/dashboard/schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('[setPortalMakeupAttendance] failed:', error);
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to set makeup attendance.',
+    };
   }
 }

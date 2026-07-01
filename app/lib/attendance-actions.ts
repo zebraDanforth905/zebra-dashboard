@@ -2,10 +2,37 @@
 
 import { revalidatePath } from 'next/cache';
 import {
-  fetchAttendanceReport,
+  ATTENDANCE_STATUS,
+  fetchBatchAttendance,
+  findEnrolmentBatchForSlot,
   markStudentAttendance,
   type AttendanceStatus,
 } from './scraper_helpers';
+
+// attendance_id -> the portal's status label, for display (reverse of
+// ATTENDANCE_STATUS). e.g. 2662 -> "Sick Leave".
+const ATTENDANCE_LABEL_BY_ID: Record<number, AttendanceStatus> = Object.fromEntries(
+  Object.entries(ATTENDANCE_STATUS).map(([label, id]) => [id, label as AttendanceStatus]),
+) as Record<number, AttendanceStatus>;
+
+// Weekly class dates on `weekday` within [fromDate, toDate] inclusive (YYYY-MM-DD).
+function weeklyDatesInRange(weekday: string, fromDate: string, toDate: string): string[] {
+  const dow: Record<string, number> = {
+    sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+  };
+  const target = dow[weekday.trim().toLowerCase()];
+  if (target === undefined) return [];
+  const out: string[] = [];
+  const cur = new Date(`${fromDate}T00:00:00`);
+  const end = new Date(`${toDate}T00:00:00`);
+  while (cur.getDay() !== target) cur.setDate(cur.getDate() + 1);
+  while (cur <= end) {
+    const p = (n: number) => String(n).padStart(2, '0');
+    out.push(`${cur.getFullYear()}-${p(cur.getMonth() + 1)}-${p(cur.getDate())}`);
+    cur.setDate(cur.getDate() + 7);
+  }
+  return out;
+}
 
 // Per-enrolment attendance management for the students/[id]/edit page.
 //
@@ -21,11 +48,6 @@ const STATUS_BY_VALUE: Record<AttendanceValue, AttendanceStatus> = {
   absent: 'Absent',
   unmarked: 'Unmarked',
 };
-
-// "18:00:00" / " 18:00 " -> "18:00" for tolerant slot matching.
-function hhmm(t: string): string {
-  return (t ?? '').trim().slice(0, 5);
-}
 
 export type EnrolmentAttendanceRecord = {
   date: string; // YYYY-MM-DD
@@ -49,36 +71,37 @@ export async function getEnrolmentAttendance(opts: {
   | { ok: false; error: string }
 > {
   try {
-    const branchId = Number(process.env.ZEBRA_BRANCH_ID ?? 20);
-    const raw = await fetchAttendanceReport({
-      startDate: opts.fromDate,
-      endDate: opts.toDate,
-      branchId,
-    });
+    // Resolve the portal batch for this student's slot, then read each class
+    // date's roster GET — the same source the portal's attendance screen and the
+    // schedule use. The date-based report is a different store (it surfaces marks
+    // PUT never writes), so reading it here showed stale/orphaned statuses.
+    const match = await findEnrolmentBatchForSlot(opts.studentId, opts.day, opts.startTime);
+    const dates = weeklyDatesInRange(opts.day, opts.fromDate, opts.toDate);
 
-    const wantDay = opts.day.trim().toLowerCase();
-    const wantStart = hhmm(opts.startTime);
-    const byDate = new Map<string, EnrolmentAttendanceRecord>();
+    const rosters = await Promise.all(
+      dates.map((date) =>
+        fetchBatchAttendance(match.batchId, date).then(
+          (roster) => ({ date, roster }),
+          () => ({ date, roster: null }),
+        ),
+      ),
+    );
 
-    for (const r of raw as any[]) {
-      if (Number(r?.student?.user_id) !== opts.studentId) continue;
-      if (String(r?.batch?.day ?? '').trim().toLowerCase() !== wantDay) continue;
-      if (hhmm(String(r?.batch?.start_time ?? '')) !== wantStart) continue;
-
-      const date = String(r?.date ?? '').slice(0, 10);
-      if (!date) continue;
-
-      const label = String(r?.attendance_value ?? '').trim();
+    const records: EnrolmentAttendanceRecord[] = [];
+    for (const { date, roster } of rosters) {
+      if (!roster) continue;
+      const entry = roster.students.find((s) => s.user_id === opts.studentId);
+      if (!entry) continue;
       const value: AttendanceValue =
-        label === 'Present'
+        entry.attendance_id === ATTENDANCE_STATUS.Present
           ? 'present'
-          : label === '' || label === 'Unmarked'
+          : entry.attendance_id === ATTENDANCE_STATUS.Unmarked
             ? 'unmarked'
             : 'absent';
-      byDate.set(date, { date, value, label: label || 'Unmarked' });
+      records.push({ date, value, label: ATTENDANCE_LABEL_BY_ID[entry.attendance_id] ?? 'Unmarked' });
     }
 
-    return { ok: true, records: [...byDate.values()] };
+    return { ok: true, records };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

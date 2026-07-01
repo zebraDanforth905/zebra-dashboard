@@ -80,7 +80,7 @@ async function portalGet<T>(path: string): Promise<T> {
 }
 
 // Shared write helper (POST/PATCH) for the portal JSON API.
-async function portalWrite<T>(method: "POST" | "PATCH", path: string, body: unknown): Promise<T> {
+async function portalWrite<T>(method: "POST" | "PUT" | "PATCH", path: string, body: unknown): Promise<T> {
   const token = await loginGetToken();
   const res = await fetch(`${ZEBRA_API_BASE}${path}`, {
     method,
@@ -677,10 +677,57 @@ export type AttendanceStudentEntry = {
   makeup: boolean;
 };
 
+// The portal's current attendance roster for one batch on one date. Read this
+// before writing: the save replaces the whole roster and is keyed by
+// attendance_week_id, so we must echo the existing week id + everyone's current
+// marks back and only change the student we mean to.
+export type BatchAttendanceState = {
+  attendanceWeekId: number | null;
+  comment: string;
+  students: AttendanceStudentEntry[];
+};
+
+export async function fetchBatchAttendance(
+  batchId: number,
+  date: string, // "YYYY-MM-DD"
+): Promise<BatchAttendanceState> {
+  const data = await portalGet<{
+    results?: {
+      attendance_week_id?: number | null;
+      comment?: string | null;
+      student_list?: Array<Partial<AttendanceStudentEntry>>;
+    };
+  }>(`/batches/${batchId}/attendance/${date}`);
+
+  const r = data?.results;
+  // Build clean entries with exactly the fields the portal's own save sends —
+  // echoing back extra GET-only fields makes the PUT silently no-op.
+  const students: AttendanceStudentEntry[] = Array.isArray(r?.student_list)
+    ? r!.student_list!.map((s) => ({
+        user_id: Number(s.user_id),
+        role_id: Number(s.role_id ?? ATTENDANCE_STUDENT_ROLE_ID),
+        first_name: s.first_name ?? "",
+        last_name: s.last_name ?? "",
+        attendance_id: Number(s.attendance_id ?? ATTENDANCE_STATUS.Unmarked),
+        modified_on: s.modified_on ?? new Date().toISOString(),
+        makeup: Boolean(s.makeup),
+      }))
+    : [];
+
+  return {
+    attendanceWeekId: r?.attendance_week_id ?? null,
+    comment: r?.comment ?? "",
+    students,
+  };
+}
+
 // Low-level write: records the given student_list for one batch on one date.
-// Mirrors the portal's own POST exactly. The portal sends the whole roster in
-// one call; this helper accepts any subset so callers can mark one student or
-// many. Prefer markStudentAttendance for the common single-student case.
+// Mirrors the portal's own POST exactly. The portal saves the WHOLE roster in one
+// call and keys it by attendance_week_id, so callers must pass the real week id
+// (from fetchBatchAttendance) and the full roster — a partial list or a null week
+// id writes into a bucket the portal's attendance screen ignores. Prefer
+// markStudentAttendance, which does the read-modify-write for the single-student
+// case.
 export async function postBatchAttendance(opts: {
   batchId: number;
   date: string; // "YYYY-MM-DD"
@@ -697,7 +744,45 @@ export async function postBatchAttendance(opts: {
     modified_by: modifiedBy,
     student_list: opts.students,
   };
-  await portalWrite("POST", `/batches/attendance`, body);
+  // The portal saves attendance with PUT, not POST — POST returns {results:true}
+  // but is a no-op/legacy path, so the marks never reach the attendance screen.
+  // TEMP DEBUG: log the response to confirm the PUT is accepted. Remove once done.
+  const response = await portalWrite<unknown>("PUT", `/batches/attendance`, body);
+  console.log("[postBatchAttendance] PUT response=", JSON.stringify(response));
+}
+
+// Resolves the batch a makeup applies to. A makeup student attends a batch they
+// are NOT enrolled in (a different day/time instance of a course they take), so
+// findEnrolmentBatchForSlot can't find it. But the makeup is always for a course
+// the student is enrolled in, so we look up each of their courses' batches in the
+// catalogue and pick the one matching the makeup session's day/time. This needs
+// no prior attendance marks and handles slots shared by multiple courses.
+export async function findMakeupBatchForStudent(
+  studentId: number,
+  day: string,
+  startTime: string,
+  endTime?: string,
+): Promise<{ batchId: number; courseId: number; courseName: string }> {
+  const enrolments = await fetchStudentEnrolments(studentId);
+  const wantDay = day.trim().toLowerCase();
+  const wantStart = normalizeTime(startTime);
+  const wantEnd = endTime ? normalizeTime(endTime) : null;
+
+  const courseIds = [...new Set(enrolments.map((e) => e.course_id))];
+  for (const courseId of courseIds) {
+    const batches = await fetchCourseBatches(courseId);
+    const match = batches.find(
+      (b) =>
+        String(b.day).trim().toLowerCase() === wantDay &&
+        normalizeTime(b.start_time) === wantStart &&
+        (!wantEnd || !b.end_time || normalizeTime(b.end_time) === wantEnd),
+    );
+    if (match) return { batchId: match.batch_id, courseId, courseName: match.course_name };
+  }
+
+  throw new Error(
+    `No batch at ${day} ${wantStart} found among student ${studentId}'s enrolled courses (makeup).`,
+  );
 }
 
 // One-call attendance mark: given a student + the slot's day/time + the date +
@@ -717,43 +802,108 @@ export async function markStudentAttendance(opts: {
   lastName?: string;
   comment?: string;
   roleId?: number;
+  // Explicit batch to write to, skipping the enrolment slot match. Required for
+  // makeups, where the student attends a batch they are not enrolled in (so it
+  // would not appear in their enrolments). The caller resolves it, e.g. via
+  // fetchCourseBatches for the makeup's course + the session's day/time.
+  batchId?: number;
+  courseName?: string;
 }): Promise<{ batchId: number; courseName: string }> {
-  const match = await findEnrolmentBatchForSlot(
-    opts.studentId,
-    opts.day,
-    opts.startTime,
-    opts.endTime,
-  );
+  const match =
+    opts.batchId != null
+      ? { batchId: opts.batchId, courseName: opts.courseName ?? "" }
+      : await findEnrolmentBatchForSlot(
+          opts.studentId,
+          opts.day,
+          opts.startTime,
+          opts.endTime,
+        );
+
+  // Read the portal's current roster so we can echo the whole thing back with the
+  // real attendance_week_id and only change this one student. Posting a single
+  // student (or a null week id) writes into a bucket the portal's attendance
+  // screen ignores — the marks then show in our date-based report but not in the
+  // portal.
+  const current = await fetchBatchAttendance(match.batchId, opts.date);
+  const existing = current.students.find((s) => s.user_id === opts.studentId);
 
   let firstName = opts.firstName;
   let lastName = opts.lastName;
   if (firstName == null || lastName == null) {
-    const resolved = await resolveStudentName(opts.studentId);
-    if (!resolved) {
-      throw new Error(
-        `Could not resolve name for student ${opts.studentId}; pass firstName/lastName explicitly.`,
-      );
+    // Prefer the name already on the portal roster, then fall back to a lookup.
+    if (existing) {
+      firstName = firstName ?? existing.first_name;
+      lastName = lastName ?? existing.last_name;
+    } else {
+      const resolved = await resolveStudentName(opts.studentId);
+      if (!resolved) {
+        throw new Error(
+          `Could not resolve name for student ${opts.studentId}; pass firstName/lastName explicitly.`,
+        );
+      }
+      firstName = firstName ?? resolved.firstName;
+      lastName = lastName ?? resolved.lastName;
     }
-    firstName = firstName ?? resolved.firstName;
-    lastName = lastName ?? resolved.lastName;
   }
+
+  const entry: AttendanceStudentEntry = {
+    user_id: opts.studentId,
+    role_id: opts.roleId ?? ATTENDANCE_STUDENT_ROLE_ID,
+    first_name: firstName,
+    last_name: lastName,
+    attendance_id: ATTENDANCE_STATUS[opts.status],
+    modified_on: new Date().toISOString(),
+    makeup: opts.makeup,
+  };
+
+  // Replace the target student in the roster, or append them if the portal's
+  // roster doesn't list them yet (e.g. a freshly-added makeup).
+  const studentList = [...current.students];
+  const idx = studentList.findIndex((s) => s.user_id === opts.studentId);
+  if (idx >= 0) studentList[idx] = entry;
+  else studentList.push(entry);
+
+  // TEMP DEBUG: trace per-student resolution to find why specific students don't
+  // stick. Remove once diagnosed.
+  console.log(
+    "[markStudentAttendance] DEBUG before",
+    JSON.stringify({
+      studentId: opts.studentId,
+      resolvedBatchId: match.batchId,
+      date: opts.date,
+      attendanceWeekId: current.attendanceWeekId,
+      foundInRoster: idx >= 0,
+      getRoster: current.students.map((s) => ({ id: s.user_id, a: s.attendance_id })),
+      putList: studentList.map((s) => ({ id: s.user_id, a: s.attendance_id })),
+    }),
+  );
 
   await postBatchAttendance({
     batchId: match.batchId,
     date: opts.date,
-    comment: opts.comment,
-    students: [
-      {
-        user_id: opts.studentId,
-        role_id: opts.roleId ?? ATTENDANCE_STUDENT_ROLE_ID,
-        first_name: firstName,
-        last_name: lastName,
-        attendance_id: ATTENDANCE_STATUS[opts.status],
-        modified_on: new Date().toISOString(),
-        makeup: opts.makeup,
-      },
-    ],
+    students: studentList,
+    // Keep the portal's batch-level comment unless the caller sets a new one.
+    comment: opts.comment ?? current.comment,
+    attendanceWeekId: current.attendanceWeekId,
   });
+
+  // TEMP DEBUG: read back immediately to confirm the portal actually persisted
+  // what we wrote (vs returning {results:true} and dropping it).
+  try {
+    const after = await fetchBatchAttendance(match.batchId, opts.date);
+    const persisted = after.students.find((s) => s.user_id === opts.studentId);
+    console.log(
+      "[markStudentAttendance] DEBUG readback",
+      JSON.stringify({
+        studentId: opts.studentId,
+        wrote: entry.attendance_id,
+        persisted: persisted?.attendance_id ?? null,
+        matches: persisted?.attendance_id === entry.attendance_id,
+      }),
+    );
+  } catch (e) {
+    console.log("[markStudentAttendance] DEBUG readback failed", String(e));
+  }
 
   return { batchId: match.batchId, courseName: match.courseName };
 }
