@@ -7,6 +7,7 @@
     "build": "next build",
     "camp:picture-qrs": "node scripts/generate-camp-picture-qrs.mjs",
     "start": "next start",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
     "lint": "eslint"
   },
   "dependencies": {
