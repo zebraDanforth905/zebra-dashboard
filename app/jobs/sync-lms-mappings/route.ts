@@ -212,7 +212,7 @@ export async function POST() {
         ${mapping.canvas_intermediate_course_name},
         ${mapping.canvas_advanced_course_id},
         ${mapping.canvas_advanced_course_name},
-        ${JSON.stringify(mapping.canvas_additional_course_ids)}::jsonb,
+        ${sql.json(mapping.canvas_additional_course_ids)}::jsonb,
         NOW()
       )
       ON CONFLICT (course_id) DO UPDATE
