@@ -203,11 +203,10 @@ function assignedSeatForDate(row: CampPrintableScheduleRow, day: Date) {
   const datedSeat = assignments.find((assignment) => assignment.date === dateKey)?.seat;
   if (datedSeat != null) return datedSeat;
 
-  // Seat assignments are effectively one-per-enrolment (saving a seat moves the
-  // single row's date), so an exact date match only succeeds on the one day the
-  // seat was last saved. Carry the camper's most recent saved seat (then their
-  // default seat) onto every day they attend; otherwise charts for the other
-  // camp days come back empty and the day/room is dropped from the packet.
+  // Fall back to the camper's most recent saved seat (then their default
+  // seat) for days that were never explicitly assigned, so the packet
+  // doesn't drop a day/room just because auto-populate or manual placement
+  // hasn't touched it yet.
   const mostRecentSeat =
     assignments.length > 0 ? assignments[assignments.length - 1].seat : null;
   return mostRecentSeat ?? row.assigned_seat_number;

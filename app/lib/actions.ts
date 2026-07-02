@@ -2,7 +2,7 @@
  
 import { signIn } from '@/auth';
 import { AuthError } from 'next-auth';
-import { revalidatePath, revalidateTag } from 'next/cache';
+import { revalidatePath, revalidateTag, updateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
 import {z} from 'zod';
@@ -3619,20 +3619,14 @@ export async function updateCampSeatAssignment(
       if (seatNumber === null) {
         await sql`
           DELETE FROM seat_assignments
-          WHERE enrolment_id = ${enrolmentId};
+          WHERE enrolment_id = ${enrolmentId} AND date = ${dateKey}::date;
         `;
       } else {
         await sql`
-          WITH updated AS (
-            UPDATE seat_assignments
-            SET date = ${dateKey}::date,
-                seat = ${seatNumber}
-            WHERE enrolment_id = ${enrolmentId}
-            RETURNING enrolment_id
-          )
           INSERT INTO seat_assignments (enrolment_id, date, seat)
-          SELECT ${enrolmentId}, ${dateKey}::date, ${seatNumber}
-          WHERE NOT EXISTS (SELECT 1 FROM updated);
+          VALUES (${enrolmentId}, ${dateKey}::date, ${seatNumber})
+          ON CONFLICT (enrolment_id, date) DO UPDATE
+          SET seat = EXCLUDED.seat;
         `;
       }
     } else {
@@ -3643,7 +3637,9 @@ export async function updateCampSeatAssignment(
       `;
     }
 
-    revalidateTag('camps', 'max');
+    // updateTag (not revalidateTag) so the page load right after a save sees
+    // the write immediately instead of a stale cached "camps" entry.
+    updateTag('camps');
     return { ok: true };
   } catch (error) {
     console.error('Error updating seat assignment:', error);
@@ -3785,16 +3781,10 @@ export async function autoPopulateCampSeatAssignmentsForDate(date: Date | string
 
     for (const [enrolmentId, seat] of plannedAssignments.entries()) {
       await sql`
-        WITH updated AS (
-          UPDATE seat_assignments
-          SET date = ${dateKey}::date,
-              seat = ${seat}
-          WHERE enrolment_id = ${enrolmentId}::uuid
-          RETURNING enrolment_id
-        )
         INSERT INTO seat_assignments (enrolment_id, date, seat)
-        SELECT ${enrolmentId}::uuid, ${dateKey}::date, ${seat}
-        WHERE NOT EXISTS (SELECT 1 FROM updated)
+        VALUES (${enrolmentId}::uuid, ${dateKey}::date, ${seat})
+        ON CONFLICT (enrolment_id, date) DO UPDATE
+        SET seat = EXCLUDED.seat
       `;
     }
 
@@ -3805,7 +3795,7 @@ export async function autoPopulateCampSeatAssignmentsForDate(date: Date | string
         AND enrolment_id = ANY(${enrolmentIds}::uuid[])
     `;
 
-    revalidateTag('camps', 'max');
+    updateTag('camps');
     revalidatePath(`/dashboard/camp/day/${dateKey}`);
 
     return { ok: true, created: plannedAssignments.size, assignments };
