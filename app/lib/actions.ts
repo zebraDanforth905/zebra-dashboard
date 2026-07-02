@@ -6,7 +6,7 @@ import { revalidatePath, revalidateTag, updateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import postgres from 'postgres';
 import {z} from 'zod';
-import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON } from './scraper_helpers';
+import { fetchAttendanceReport, fetchCampEnrolments, fetchEnrolmentReportJSON, fetchStudentEnrolments, setEnrolmentInactive, fetchPrograms, fetchCourseBatches, fetchCourseFees, createEnrolment, markStudentAttendance, type AttendanceStatus } from './scraper_helpers';
 import { extractCustomerRows, normalizeAbsencesFromAttendance, normalizeCampEnrolments, normalizeEnrolmentRows as normalizeEnrolmentRows } from "@/app/lib/normalize";
 import { insertCampEnrolments, syncAbsencesForRange, syncCustomers, syncEmailsFromFamilyView, upsertAbsences, upsertEnrolmentFromNormalized as upsertEnrolmentFromNormalized, upsertSummerEnrolmentWeekFromNormalized } from './insert_from_portal';
 import { CampEnrolmentWithStudent, CampLmsCanvasActionType, CampLmsStatus, CampPrepResourceKind, RecurringInvoice, type CampLmsCanvasCourseSearchResult, type CampPrintableStudentListField, type CampPrintLogEntry } from './definitions';
@@ -308,6 +308,244 @@ export async function scrapeCampEnrolments(opts?: {
   revalidatePath("/camp", 'layout');
 
   return { ok: true, rows: normalized.length, customers: customerRes, ...res };
+}
+
+
+// ── Portal enrolment management (live writes) ─────────────────────────────────
+//
+// These mutate the live Zebra portal. They are deliberately manual (triggered
+// from dashboard buttons), never wired into the automated scrape. See the
+// scraper_helpers contract for endpoint details.
+
+// Loader: list a student's current (not yet ended) portal enrolments, for the
+// unenrol picker.
+export async function listStudentPortalEnrolments(studentId: number) {
+  try {
+    const enrolments = await fetchStudentEnrolments(studentId);
+    const activeEnrolments = enrolments.filter(isCurrentPortalEnrolment);
+    return { ok: true as const, enrolments: activeEnrolments };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Mark one portal enrolment inactive (read-modify-PATCH on student_batch_id).
+export async function markPortalEnrolmentInactive(opts: {
+  studentId: number;
+  studentBatchId: number;
+  completionDate?: string; // "YYYY-MM-DD"
+}) {
+  try {
+    await setEnrolmentInactive(opts);
+    revalidatePath('/dashboard', 'layout');
+    return { ok: true as const };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Loader: full add-enrolment catalogue (programs + levels) for the picker.
+export async function listPortalPrograms(branchId?: number) {
+  try {
+    const programs = await fetchPrograms(branchId);
+    return { ok: true as const, programs };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Loader: scheduled classes + fee options for a chosen course.
+export async function listPortalCourseOptions(courseId: number, branchId?: number) {
+  try {
+    const [batches, fees] = await Promise.all([
+      fetchCourseBatches(courseId, branchId),
+      fetchCourseFees(courseId, branchId),
+    ]);
+    return { ok: true as const, batches, fees };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Create a new portal enrolment.
+export async function addPortalEnrolment(opts: {
+  studentId: number;
+  courseId: number;
+  subCourseId: number;
+  batchId: number;
+  feeId: number;
+  price: number;
+  startDate: string; // "YYYY-MM-DD"
+  recurringPaymentType?: string;
+  branchId?: number;
+}) {
+  try {
+    await createEnrolment(opts);
+    revalidatePath('/dashboard', 'layout');
+    return { ok: true as const };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// A portal enrolment counts as "current" when the course is active and at least
+// one of its batches has not already ended.
+function isCurrentPortalEnrolment(enrolment: Awaited<ReturnType<typeof fetchStudentEnrolments>>[number]): boolean {
+  if (enrolment.course_active_id !== 1) return false;
+  const now = new Date();
+  return (enrolment.batches ?? []).some((batch) => {
+    if (!batch.enddate) return true;
+    const endDate = new Date(batch.enddate);
+    return Number.isFinite(endDate.getTime()) && endDate.getTime() >= now.getTime();
+  });
+}
+
+function normalizePortalTime(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.slice(0, 5) : '';
+}
+
+// Picks the student's most recently ended (past) enrolment — used to pre-fill
+// the course/level when enrolling them into a summer session.
+function mostRecentlyEndedEnrolment(
+  enrolments: Awaited<ReturnType<typeof fetchStudentEnrolments>>,
+): Awaited<ReturnType<typeof fetchStudentEnrolments>>[number] | null {
+  const endedAt = (enrolment: Awaited<ReturnType<typeof fetchStudentEnrolments>>[number]): number => {
+    const ends = (enrolment.batches ?? [])
+      .map((batch) => (batch.enddate ? new Date(batch.enddate).getTime() : NaN))
+      .filter((time) => Number.isFinite(time));
+    if (ends.length > 0) return Math.max(...ends);
+    return enrolment.enrolled_on ? new Date(enrolment.enrolled_on).getTime() : 0;
+  };
+
+  const ended = enrolments.filter((enrolment) => !isCurrentPortalEnrolment(enrolment));
+  if (ended.length === 0) return null;
+  return [...ended].sort((left, right) => endedAt(right) - endedAt(left))[0];
+}
+
+export type SummerEnrolProgramOption = {
+  course_id: number;
+  name: string;
+  course_code: string;
+  sub_courses: { sub_course_id: number; code: string; name: string }[];
+};
+
+// Loader for the summer "Enrol" control: the portal program catalogue for the
+// course/level pickers, plus a course/level suggestion pre-filled from the
+// student's most recently ended enrolment (null for brand-new students).
+export async function loadSummerEnrolOptions(studentId: number) {
+  try {
+    const [programs, enrolments] = await Promise.all([
+      fetchPrograms(),
+      fetchStudentEnrolments(studentId),
+    ]);
+
+    const programOptions: SummerEnrolProgramOption[] = programs.map((program) => ({
+      course_id: Number(program.id),
+      name: program.name,
+      course_code: program.course_code,
+      sub_courses: (program.subCourses ?? []).map((sub) => ({
+        sub_course_id: sub.sub_course_id,
+        code: sub.sub_course_code,
+        name: sub.sub_course_name,
+      })),
+    }));
+
+    let suggested: { course_id: number; sub_course_id: number | null } | null = null;
+    const reference = mostRecentlyEndedEnrolment(enrolments);
+    if (reference) {
+      const referenceCourseId = Number(reference.course_id);
+      const program = programOptions.find((option) => option.course_id === referenceCourseId);
+      if (program) {
+        const sub = program.sub_courses.find((candidate) => candidate.code === reference.sub_course_code)
+          ?? program.sub_courses[0];
+        suggested = { course_id: referenceCourseId, sub_course_id: sub?.sub_course_id ?? null };
+      }
+    }
+
+    return { ok: true as const, programs: programOptions, suggested };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Creates a brand-new portal enrolment for a student into the chosen course +
+// level, scheduled into the portal batch that matches the selected summer
+// session's day + time. Warns and creates nothing when no batch matches.
+export async function addPortalEnrolmentForSummerSession(opts: {
+  studentId: number;
+  sessionId: string;
+  startDate: string;
+  courseId: number;
+  subCourseId: number;
+}) {
+  try {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.startDate)) {
+      return { ok: false as const, error: 'Start date must be YYYY-MM-DD.' };
+    }
+    if (!Number.isFinite(opts.courseId) || !Number.isFinite(opts.subCourseId)) {
+      return { ok: false as const, error: 'Select a course and level before enrolling.' };
+    }
+
+    const sessionRows = await sql<{ weekday: string; start_time: string }[]>`
+      SELECT weekday, start_time::text
+      FROM sessions
+      WHERE id = ${opts.sessionId}::uuid
+        AND is_summer = TRUE
+      LIMIT 1
+    `;
+    if (sessionRows.length === 0) {
+      return { ok: false as const, error: 'Summer session not found.' };
+    }
+    const session = sessionRows[0];
+
+    const [batches, fees, portalEnrolments] = await Promise.all([
+      fetchCourseBatches(opts.courseId),
+      fetchCourseFees(opts.courseId),
+      fetchStudentEnrolments(opts.studentId),
+    ]);
+
+    const matchingBatch = batches.find((batch) => (
+      batch.day.trim().toLowerCase() === session.weekday.trim().toLowerCase()
+      && normalizePortalTime(batch.start_time) === normalizePortalTime(session.start_time)
+    ));
+    if (!matchingBatch) {
+      const courseLabel = batches[0]?.course_name ?? `course ${opts.courseId}`;
+      return {
+        ok: false as const,
+        error: `No portal batch matches ${session.weekday} ${normalizePortalTime(session.start_time)} for ${courseLabel}.`,
+      };
+    }
+
+    // The course's standard "Regular class" fee (fall back to the first fee).
+    const fee = fees.find((candidate) => candidate.batch_type_value === 'Regular class') ?? fees[0];
+    if (!fee) {
+      return { ok: false as const, error: 'No portal fee is configured for the selected course.' };
+    }
+
+    const alreadyEnrolled = portalEnrolments.filter(isCurrentPortalEnrolment).some((enrolment) => (
+      Number(enrolment.course_id) === opts.courseId
+      && (enrolment.batches ?? []).some((batch) => batch.batch_id === matchingBatch.batch_id)
+    ));
+    if (alreadyEnrolled) {
+      return { ok: false as const, error: 'Student is already actively enrolled in this session.' };
+    }
+
+    await createEnrolment({
+      studentId: opts.studentId,
+      courseId: opts.courseId,
+      subCourseId: opts.subCourseId,
+      batchId: matchingBatch.batch_id,
+      feeId: fee.branch_course_fee_id,
+      price: Number(fee.course_fee),
+      startDate: opts.startDate,
+    });
+
+    revalidatePath('/dashboard', 'layout');
+    revalidateTag('summer-responses', 'max');
+    return { ok: true as const };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 
@@ -5065,4 +5303,68 @@ export async function deleteMyAbsenceRequest(formData: FormData) {
   `;
   revalidatePath('/dashboard/my-schedule');
   revalidatePath('/dashboard/staff-schedule');
+}
+
+// The three attendance states the portal tracks for an enrolled student on a
+// given session date.
+export type PortalAttendanceValue = 'present' | 'absent' | 'unmarked';
+
+export type SetPortalAttendanceInput = {
+  // Identifiers from the schedule row. The portal write helper will resolve
+  // these (plus the session's batch) into the portal's attendance mutation.
+  enrolmentId: string;
+  studentId: string;
+  // The session date this attendance applies to, as 'YYYY-MM-DD'.
+  date: string;
+  value: PortalAttendanceValue;
+};
+
+// Maps the UI's attendance value to the portal's attendance status label.
+const PORTAL_ATTENDANCE_STATUS: Record<PortalAttendanceValue, AttendanceStatus> = {
+  present: 'Present',
+  absent: 'Absent',
+  unmarked: 'Unmarked',
+};
+
+/**
+ * Set a student's attendance value in the Zebra portal for a session date.
+ *
+ * Resolves the session's day/time from the enrolment (the portal helper matches
+ * that slot against the student's active portal enrolments to find the batch),
+ * then writes the attendance via markStudentAttendance. The schedule row only
+ * carries regular enrolments here, so makeup is always false.
+ * See the portal-write-api-contract memory for the auth/endpoint pattern.
+ */
+export async function setPortalAttendance(
+  input: SetPortalAttendanceInput,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const rows = await sql<{ weekday: string; start_time: string; end_time: string | null }[]>`
+      SELECT sess.weekday, sess.start_time, sess.end_time
+      FROM enrolments e
+      JOIN sessions sess ON sess.id = e.session_id
+      WHERE e.id = ${input.enrolmentId}
+      LIMIT 1;
+    `;
+    const session = rows[0];
+    if (!session) {
+      return { ok: false, error: `Enrolment ${input.enrolmentId} not found.` };
+    }
+
+    await markStudentAttendance({
+      studentId: Number(input.studentId),
+      day: session.weekday,
+      startTime: session.start_time,
+      endTime: session.end_time ?? undefined,
+      date: input.date,
+      makeup: false,
+      status: PORTAL_ATTENDANCE_STATUS[input.value],
+    });
+
+    revalidatePath('/dashboard/schedule');
+    return { ok: true };
+  } catch (error) {
+    console.error('[setPortalAttendance] failed:', error);
+    return { ok: false, error: error instanceof Error ? error.message : 'Failed to set attendance.' };
+  }
 }

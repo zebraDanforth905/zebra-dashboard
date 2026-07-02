@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { connection } from "next/server";
 import { currentDateCheckRecurringInvoices, scrapeCampEnrolments, scrapeEnrolmentNow } from "@/app/lib/actions";
+import { processDueInactivations } from "@/app/lib/inactivation-actions";
 import { revalidateTag } from "next/cache";
 
 export async function GET() {
@@ -11,12 +12,13 @@ export async function GET() {
     const result = await scrapeEnrolmentNow();
     const result2 = await currentDateCheckRecurringInvoices();
     const result3 = await scrapeCampEnrolments();
-    
-    console.log("running the endpoint: ", result, result2, result3);
+    const result4 = await processDueInactivations();
+
+    console.log("running the endpoint: ", result, result2, result3, result4);
     revalidateTag('schedule', 'max')
     revalidateTag('invoices', 'max')
 
-    return NextResponse.json({ result, result2 }, { headers: { } });
+    return NextResponse.json({ result, result2, result4 }, { headers: { } });
     
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });

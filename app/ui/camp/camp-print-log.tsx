@@ -218,7 +218,7 @@ export default function CampPrintLog({
     <div className="bg-white border border-slate-200 rounded-lg p-4">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Print Log</h2>
+          <h2 className="text-lg font-semibold text-slate-900">3D Print Log</h2>
           <p className="text-sm text-slate-600">
             {weekLabel}. Track 3D print projects for the week. Click any cell to edit; changes save automatically.
           </p>
