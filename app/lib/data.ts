@@ -3312,7 +3312,12 @@ export async function fetchCampAccountPrepChecklist(
           AND cs.start_date <= ${endDate}::date
           AND cs.end_date >= ${startDate}::date`;
 
-    const campRows = await sql<CampPrepDbRow[]>`
+    const [schema] = await sql<{ has_pa_day_assignments: boolean }[]>`
+      SELECT to_regclass('public.camp_pa_day_course_assignments') IS NOT NULL AS has_pa_day_assignments;
+    `;
+
+    const campRows = schema?.has_pa_day_assignments
+      ? await sql<CampPrepDbRow[]>`
       SELECT
         ce.id::text AS camp_enrolment_id,
         ce.student_id::text AS student_id,
@@ -3352,6 +3357,57 @@ export async function fetchCampAccountPrepChecklist(
       LEFT JOIN camp_pa_day_course_assignments pa_day ON pa_day.camp_enrolment_id = ce.id
       LEFT JOIN courses assigned_course ON assigned_course.id::text = pa_day.assigned_course_id
       LEFT JOIN camp_lms_course_mappings assigned_mapping ON assigned_mapping.course_id = pa_day.assigned_course_id
+      LEFT JOIN LATERAL (
+        SELECT username, password
+        FROM scratch_accounts
+        WHERE student_id = s.id
+        ORDER BY username
+        LIMIT 1
+      ) scr ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT username, password
+        FROM roblox_accounts
+        WHERE student_id = s.id
+        ORDER BY username
+        LIMIT 1
+      ) rob ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT laptop_number
+        FROM laptop_assignments
+        WHERE student_id = s.id
+        ORDER BY laptop_number
+        LIMIT 1
+      ) lap ON TRUE
+      WHERE ${campDateFilter}
+      ORDER BY course_name NULLS LAST, s.name ASC, cs.camp_type ASC;
+    `
+      : await sql<CampPrepDbRow[]>`
+      SELECT
+        ce.id::text AS camp_enrolment_id,
+        ce.student_id::text AS student_id,
+        s.name AS student_name,
+        ce.course_id::text AS course_id,
+        c.name AS course_name,
+        ce.course_id::text AS original_course_id,
+        c.name AS original_course_name,
+        (
+          LOWER(CONCAT_WS(' ', ce.course_id::text, c.name)) LIKE '%day camp%'
+        ) AS is_pa_day_camp,
+        NULL::text AS pa_day_assigned_course_id,
+        NULL::text AS pa_day_assigned_course_name,
+        cs.camp_type,
+        cs.extended_care,
+        cs.start_date,
+        cs.end_date,
+        scr.username AS scratch_username,
+        scr.password AS scratch_password,
+        rob.username AS roblox_username,
+        rob.password AS roblox_password,
+        lap.laptop_number
+      FROM camp_sessions cs
+      JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      JOIN students s ON s.id = ce.student_id
+      LEFT JOIN courses c ON c.id = ce.course_id
       LEFT JOIN LATERAL (
         SELECT username, password
         FROM scratch_accounts
