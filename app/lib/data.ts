@@ -2707,7 +2707,9 @@ async function fetchCampLmsDayCampCourseOptions(): Promise<CampLmsDayCampCourseO
     ORDER BY id, COALESCE(NULLIF(label, ''), id);
   `;
 
-  return rows.sort((a, b) => a.label.localeCompare(b.label));
+  return rows
+    .map((row) => ({ ...row }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 export async function fetchCampPrintableSchedule(
@@ -3418,11 +3420,11 @@ export async function fetchCampAccountPrepChecklist(
     return {
       rows,
       inventory: {
-        scratch_accounts: scratchAccounts,
-        roblox_accounts: robloxAccounts,
-        laptops,
+        scratch_accounts: scratchAccounts.map((account) => ({ ...account })),
+        roblox_accounts: robloxAccounts.map((account) => ({ ...account })),
+        laptops: laptops.map((laptop) => ({ ...laptop })),
       },
-      pa_day_course_options: paDayCourseOptions,
+      pa_day_course_options: paDayCourseOptions.map((course) => ({ ...course })),
       summary: summarizeCampPrepRows(rows),
     };
   } catch (error) {
@@ -3446,7 +3448,7 @@ export async function fetchSeatAssignments(date: Date | string) {
       WHERE date = ${dateKey}::date
     `;
 
-    return rows;
+    return rows.map((row) => ({ ...row }));
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch seat assignments.');
@@ -3470,7 +3472,7 @@ export async function fetchCampActivitySchedule(weekStart: Date | string) {
       WHERE week_start = ${weekStartKey}::date
     `;
 
-    return rows;
+    return rows.map((row) => ({ ...row }));
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch camp activity schedule.');
@@ -3493,7 +3495,7 @@ export async function fetchCampStaffSchedule(weekStart: Date | string) {
       WHERE week_start = ${weekStartKey}::date
     `;
 
-    return rows;
+    return rows.map((row) => ({ ...row }));
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch camp staff schedule.');
@@ -3519,7 +3521,7 @@ export async function fetchCampPrintLog(weekStart: Date | string) {
       ORDER BY position ASC, id ASC
     `;
 
-    return rows;
+    return rows.map((row) => ({ ...row }));
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch camp print log.');
