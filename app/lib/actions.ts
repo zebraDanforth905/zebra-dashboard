@@ -305,7 +305,8 @@ export async function scrapeCampEnrolments(opts?: {
   // refresh any pages that read from these tables
   revalidatePath("/dashboard", 'layout');
   revalidatePath("/students", 'layout');
-  revalidatePath("/camp", 'layout');
+  revalidatePath("/dashboard/camp", 'layout');
+  revalidateTag('camps', 'max');
 
   return { ok: true, rows: normalized.length, customers: customerRes, ...res };
 }
