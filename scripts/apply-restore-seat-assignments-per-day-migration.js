@@ -9,7 +9,7 @@ async function main() {
 
   const sql = postgres(url, { ssl: 'require' });
   try {
-    const ddl = fs.readFileSync('migrations/040_restore_seat_assignments_per_day.sql', 'utf8');
+    const ddl = fs.readFileSync('migrations/043_restore_seat_assignments_per_day.sql', 'utf8');
     await sql.unsafe(ddl);
 
     const constraints = await sql.unsafe(
