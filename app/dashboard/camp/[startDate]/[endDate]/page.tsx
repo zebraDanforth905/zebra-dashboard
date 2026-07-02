@@ -97,6 +97,8 @@ const countByType = (enrolments: DayEnrolments['enrolments'], type: 'FD' | 'AM' 
   return enrolments.filter(e => e.camp_type === type).length;
 };
 
+const toClientProps = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
 export default async function CampSessionPage({ 
   params 
 }: { 
@@ -229,6 +231,15 @@ export default async function CampSessionPage({
     uniqueStudentWeeks: report.uniqueStudents.size
   }];
 
+  const clientWeekReport = toClientProps(weekReport);
+  const clientSlipEnrolments = toClientProps(slipEnrolments);
+  const clientLmsChecklist = toClientProps(lmsChecklist);
+  const clientAccountPrepChecklist = toClientProps(accountPrepChecklist);
+  const clientActivityScheduleCells = toClientProps(activityScheduleCells);
+  const clientStaffScheduleCells = toClientProps(staffScheduleCells);
+  const clientPrintLogEntries = toClientProps(printLogEntries);
+  const clientEnrolledStudents = toClientProps(enrolledStudents);
+
   return (
     <div className="m-2 md:m-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -259,48 +270,48 @@ export default async function CampSessionPage({
         </Link>
       </div>
 
-      <CampMonthlyReport reports={weekReport} heading="Weekly Enrollment Summary" />
+      <CampMonthlyReport reports={clientWeekReport} heading="Weekly Enrollment Summary" />
 
       <CampWeekTabs
         slips={
           <CampWeekSlips
             weekLabel={report.label}
-            enrolments={slipEnrolments}
+            enrolments={clientSlipEnrolments}
           />
         }
         schedule={
           <CampActivitySchedule
             weekStart={startDate}
             weekLabel={report.label}
-            cells={activityScheduleCells}
+            cells={clientActivityScheduleCells}
           />
         }
         staffSchedule={
           <CampStaffSchedule
             weekStart={startDate}
             weekLabel={report.label}
-            cells={staffScheduleCells}
+            cells={clientStaffScheduleCells}
           />
         }
         printLog={
           <CampPrintLog
             weekStart={startDate}
             weekLabel={report.label}
-            entries={printLogEntries}
-            enrolledStudents={enrolledStudents}
+            entries={clientPrintLogEntries}
+            enrolledStudents={clientEnrolledStudents}
           />
         }
         accountPrep={
           <CampAccountPrepChecklist
             scopeLabel={report.label}
-            checklist={accountPrepChecklist}
+            checklist={clientAccountPrepChecklist}
           />
         }
         lms={
           <CampLmsChecklist
             startDate={startDate}
             endDate={endDate}
-            checklist={lmsChecklist}
+            checklist={clientLmsChecklist}
           />
         }
         campDays={

@@ -393,6 +393,39 @@ export class CanvasClient {
 
     return result.data;
   }
+
+  async createUser({ name, loginId, email }: { name: string; loginId: string; email: string }) {
+    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    const body = new URLSearchParams({
+      'user[name]': name,
+      'pseudonym[unique_id]': loginId,
+      'pseudonym[send_confirmation]': 'false',
+      'communication_channel[type]': 'email',
+      'communication_channel[address]': email,
+      'communication_channel[skip_confirmation]': 'true',
+    });
+
+    const result = await this.request<CanvasUser>(
+      `/api/v1/accounts/${accountId}/users`,
+      {
+        method: 'POST',
+        body,
+      }
+    );
+
+    return result.data;
+  }
+
+  async reactivateEnrollment(courseId: string, enrollmentId: string) {
+    const result = await this.request<CanvasEnrollment>(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/enrollments/${encodeURIComponent(enrollmentId)}/reactivate`,
+      {
+        method: 'PUT',
+      }
+    );
+
+    return result.data;
+  }
 }
 
 export function createCanvasClient() {

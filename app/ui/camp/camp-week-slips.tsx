@@ -32,34 +32,31 @@ export default function CampWeekSlips({
   weekLabel: string;
   enrolments: CampEnrolmentWithStudent[];
 }) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isCreatingSlips, setIsCreatingSlips] = useState(false);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
+      if (prev.includes(id)) {
+        return prev.filter((selectedId) => selectedId !== id);
       }
-      return newSet;
+      return [...prev, id];
     });
   };
 
   const selectAll = () => {
-    setSelectedIds(new Set(enrolments.map((e) => e.id)));
+    setSelectedIds(enrolments.map((e) => e.id));
   };
 
   const deselectAll = () => {
-    setSelectedIds(new Set());
+    setSelectedIds([]);
   };
 
   const handleCreateSlips = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.length === 0) return;
     setIsCreatingSlips(true);
 
-    const selected = enrolments.filter((e) => selectedIds.has(e.id));
+    const selected = enrolments.filter((e) => selectedIds.includes(e.id));
     const result = await createSlipsForCampers(selected);
 
     if (result.ok) {
@@ -95,11 +92,11 @@ export default function CampWeekSlips({
             </button>
             <button
               onClick={handleCreateSlips}
-              disabled={selectedIds.size === 0 || isCreatingSlips}
+              disabled={selectedIds.length === 0 || isCreatingSlips}
               className="inline-flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm font-medium rounded hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
               <DocumentTextIcon className="h-4 w-4" />
-              {isCreatingSlips ? 'Creating...' : `Create Slips (${selectedIds.size})`}
+              {isCreatingSlips ? 'Creating...' : `Create Slips (${selectedIds.length})`}
             </button>
           </div>
         </div>
@@ -112,7 +109,7 @@ export default function CampWeekSlips({
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {enrolments.map((enrolment) => {
-            const isSelected = selectedIds.has(enrolment.id);
+            const isSelected = selectedIds.includes(enrolment.id);
             const badge = getCampTypeBadge(enrolment.camp_type);
             const courseLabel = formatCourseLabel(enrolment);
 
