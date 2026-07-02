@@ -54,7 +54,7 @@ export default async function StaffSchedulePage(props: { searchParams?: SearchPa
     fetchStaffScheduleCourseOptions(),
     fetchStaffScheduleQualifications(),
     fetchWeeklyPickupCoverageRows(weekly.weekStart),
-    isAdmin ? getAllUsers() : Promise.resolve({ ok: true, users: [] as Array<{ id: string; name: string; email: string; user_type: string }> }),
+    isAdmin ? getAllUsers() : Promise.resolve({ ok: true, users: [] }),
     fetchFutureStaffScheduleOverview(warningMonth),
   ]);
 

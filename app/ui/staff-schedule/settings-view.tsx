@@ -19,6 +19,11 @@ type SettingsViewProps = {
     name: string;
     email: string;
     user_type: string;
+    status: string;
+    last_login_at: Date | string | null;
+    login_count: number;
+    failed_login_count: number;
+    locked_until: Date | string | null;
   }>;
   isAdmin: boolean;
 };

@@ -31,6 +31,7 @@ import { endOfScheduleWeek, isSummerScheduleWeek, startOfScheduleWeek, ymdLocal 
 import bcrypt from 'bcrypt';
 import { auth } from '@/auth';
 import { userAgent } from 'next/server';
+import { writeAdminAuditLog } from './auth-security';
  
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -2192,7 +2193,12 @@ const CreateUserSchema = z.object({
 
 const UpdatePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
-  newPassword: z.string().min(6, 'New password must be at least 6 characters'),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+
+const AdminTemporaryPasswordSchema = z.object({
+  userId: z.string().uuid('User ID is required'),
+  temporaryPassword: z.string().min(8, 'Temporary password must be at least 8 characters'),
 });
 
 /**
@@ -2210,8 +2216,22 @@ export async function getAllUsers() {
       name: string;
       email: string;
       user_type: string;
+      status: string;
+      last_login_at: Date | null;
+      login_count: number;
+      failed_login_count: number;
+      locked_until: Date | null;
     }>>`
-      SELECT id, name, email, user_type 
+      SELECT
+        id::text,
+        name,
+        email,
+        user_type,
+        COALESCE(status, 'active') AS status,
+        last_login_at,
+        COALESCE(login_count, 0)::int AS login_count,
+        COALESCE(failed_login_count, 0)::int AS failed_login_count,
+        locked_until
       FROM users 
       ORDER BY name ASC
     `;
@@ -2266,10 +2286,21 @@ export async function createUser(formData: FormData) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create the user
-    await sql`
+    const inserted = await sql<Array<{ id: string }>>`
       INSERT INTO users (name, email, password, user_type)
       VALUES (${name}, ${email}, ${hashedPassword}, ${user_type})
+      RETURNING id::text
     `;
+
+    const adminId = getSessionUserId(session);
+    if (adminId && inserted[0]?.id) {
+      await writeAdminAuditLog({
+        adminId,
+        targetUserId: inserted[0].id,
+        action: 'user.create',
+        metadata: { email, user_type },
+      });
+    }
 
     revalidatePath('/dashboard/admin/users');
     revalidatePath('/dashboard/staff-schedule');
@@ -2295,8 +2326,8 @@ export async function deleteUser(formData: FormData) {
     }
 
     // Check if user exists and get their type
-    const user = await sql<Array<{ user_type: string }>>`
-      SELECT user_type FROM users WHERE id = ${userId}
+    const user = await sql<Array<{ user_type: string; email: string }>>`
+      SELECT user_type, email FROM users WHERE id = ${userId}
     `;
 
     if (user.length === 0) {
@@ -2312,6 +2343,16 @@ export async function deleteUser(formData: FormData) {
     await sql`
       DELETE FROM users WHERE id = ${userId}
     `;
+
+    const adminId = getSessionUserId(session);
+    if (adminId) {
+      await writeAdminAuditLog({
+        adminId,
+        targetUserId: userId,
+        action: 'user.delete',
+        metadata: { email: user[0].email },
+      });
+    }
 
     revalidatePath('/dashboard/admin/users');
     revalidatePath('/dashboard/staff-schedule');
@@ -2368,11 +2409,64 @@ export async function updatePassword(formData: FormData) {
     // Update password
     await sql`
       UPDATE users 
-      SET password = ${hashedPassword}
+      SET password = ${hashedPassword},
+          session_version = COALESCE(session_version, 0) + 1
       WHERE id = ${userId}
     `;
 
     return { ok: true, message: 'Password updated successfully' };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
+export async function adminSetTemporaryPassword(formData: FormData) {
+  try {
+    const session = await auth();
+    const adminId = getSessionUserId(session);
+    if (!adminId || getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const validatedFields = AdminTemporaryPasswordSchema.safeParse({
+      userId: formData.get('userId'),
+      temporaryPassword: formData.get('temporaryPassword'),
+    });
+
+    if (!validatedFields.success) {
+      return {
+        ok: false,
+        error: validatedFields.error.issues[0]?.message ?? 'Invalid password reset input',
+      };
+    }
+
+    const { userId, temporaryPassword } = validatedFields.data;
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+    const updated = await sql<Array<{ id: string; email: string }>>`
+      UPDATE users
+      SET password = ${hashedPassword},
+          session_version = COALESCE(session_version, 0) + 1,
+          failed_login_count = 0,
+          locked_until = NULL,
+          status = CASE WHEN status = 'disabled' THEN status ELSE 'active' END
+      WHERE id = ${userId}::uuid
+      RETURNING id::text, email
+    `;
+
+    if (updated.length === 0) {
+      return { ok: false, error: 'User not found' };
+    }
+
+    await writeAdminAuditLog({
+      adminId,
+      targetUserId: userId,
+      action: 'user.password.set_temporary',
+      metadata: { email: updated[0].email },
+    });
+
+    revalidatePath('/dashboard/admin/users');
+    revalidatePath('/dashboard/staff-schedule');
+    return { ok: true, message: 'Temporary password set. Existing sessions were invalidated.' };
   } catch (e: unknown) {
     return { ok: false, error: errorMessage(e) };
   }
