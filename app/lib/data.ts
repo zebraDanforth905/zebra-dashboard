@@ -937,9 +937,17 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
           )
           ELSE NULL
         END AS recent_note
-      FROM students s
-      JOIN enrolments e ON e.student_id = s.id
-      JOIN sessions sess ON sess.id = e.session_id
+      FROM sessions selected
+      JOIN sessions sess
+        ON (
+          (${isSummer}::boolean
+            AND sess.weekday = selected.weekday
+            AND sess.start_time = selected.start_time
+            AND sess.end_time IS NOT DISTINCT FROM selected.end_time)
+          OR (NOT ${isSummer}::boolean AND sess.id = selected.id)
+        )
+      JOIN enrolments e ON e.session_id = sess.id
+      JOIN students s ON s.id = e.student_id
       JOIN courses crs ON crs.id = e.course_id
       LEFT JOIN customers c ON c.id = s.customer_id
       LEFT JOIN absences abs
@@ -953,8 +961,7 @@ export async function fetchSessionStudents(sessionId: string, date?: Date) {
         ON fi.student_id = e.student_id
        AND fi.class_day = sess.weekday
        AND LEFT(fi.class_start_time, 5) = LEFT(sess.start_time::text, 5)
-      WHERE e.session_id = ${sessionId}
-        AND sess.is_summer = ${isSummer}
+      WHERE selected.id = ${sessionId}
         AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
         AND (
           COALESCE(e.end_date, fi.end_date) IS NULL
@@ -990,6 +997,7 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
     }
 
   const target = Y(targetDate);
+  const isSummer = isDateInTerm(target, 'summer');
 
   const students = await sql<MakeupRow[]>`
     WITH latest_note AS (
@@ -1018,12 +1026,21 @@ export async function fetchUpcomingSessionMakeups(sessionId: string, date?: Date
         )
         ELSE NULL
       END AS recent_note
-    FROM students s
-    JOIN makeups m ON m.student_id = s.id
+    FROM sessions selected
+    JOIN sessions sess
+      ON (
+        (${isSummer}::boolean
+          AND sess.weekday = selected.weekday
+          AND sess.start_time = selected.start_time
+          AND sess.end_time IS NOT DISTINCT FROM selected.end_time)
+        OR (NOT ${isSummer}::boolean AND sess.id = selected.id)
+      )
+    JOIN makeups m ON m.session_id = sess.id
+    JOIN students s ON s.id = m.student_id
     JOIN courses crs ON crs.id = m.course_id
     LEFT JOIN customers c ON c.id = s.customer_id
     LEFT JOIN latest_note ln ON ln.student_id = s.id
-    WHERE m.session_id = ${sessionId} AND m.date = ${target} AND (m.cancelled = false OR m.cancelled IS NULL)
+    WHERE selected.id = ${sessionId} AND m.date = ${target} AND (m.cancelled = false OR m.cancelled IS NULL)
     ORDER BY m.date;
   `;
   return students;
@@ -1052,6 +1069,7 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
     }
 
     const target = Y(targetDate);
+    const isSummer = isDateInTerm(target, 'summer');
 
   const students = await sql<TrialRow[]>`
     WITH latest_trial_note AS (
@@ -1067,10 +1085,19 @@ export async function fetchUpcomingSessionTrials(sessionId: string, date?: Date)
       ORDER BY tn.trial_id, tn.date DESC, tn.id DESC
     )
     SELECT t.id AS trial_id, t.name, crs.name AS course_name, t.date, ltn.recent_note
-    FROM trials t
+    FROM sessions selected
+    JOIN sessions sess
+      ON (
+        (${isSummer}::boolean
+          AND sess.weekday = selected.weekday
+          AND sess.start_time = selected.start_time
+          AND sess.end_time IS NOT DISTINCT FROM selected.end_time)
+        OR (NOT ${isSummer}::boolean AND sess.id = selected.id)
+      )
+    JOIN trials t ON t.session_id = sess.id
     JOIN courses crs ON crs.id = t.course_id
     LEFT JOIN latest_trial_note ltn ON ltn.trial_id = t.id
-    WHERE t.session_id = ${sessionId} AND t.date = ${target}
+    WHERE selected.id = ${sessionId} AND t.date = ${target}
     ORDER BY t.date;
   `;
   return students;
@@ -1100,6 +1127,23 @@ export async function fetchSessionsForDay(
 
         const sessions = await sql<Session[]>
         `
+          WITH visible_sessions AS (
+            SELECT
+              s.*,
+              ROW_NUMBER() OVER (
+                PARTITION BY s.weekday, s.start_time, s.end_time
+                ORDER BY s.is_summer DESC, s.id
+              ) AS slot_rank
+            FROM sessions s
+            WHERE s.weekday = ${day}
+              AND (${isSummer}::boolean OR s.is_summer = FALSE)
+          ),
+          slots AS (
+            SELECT *
+            FROM visible_sessions
+            WHERE (${isSummer}::boolean AND slot_rank = 1)
+              OR NOT ${isSummer}::boolean
+          )
           SELECT
             s.id,
             s.weekday,
@@ -1109,15 +1153,22 @@ export async function fetchSessionsForDay(
             COALESCE(mc.makeup_count, 0)  AS makeup_count,
             COALESCE(tc.trial_count, 0)   AS trial_count,
             COALESCE(ac.absence_count, 0) AS absences
-          FROM sessions s
+          FROM slots s
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS student_count
             FROM enrolments e
+            JOIN visible_sessions scope ON scope.id = e.session_id
             LEFT JOIN future_inactivations fi
               ON fi.student_id = e.student_id
-             AND fi.class_day = s.weekday
-             AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
-            WHERE e.session_id = s.id
+             AND fi.class_day = scope.weekday
+             AND LEFT(fi.class_start_time, 5) = LEFT(scope.start_time::text, 5)
+            WHERE (
+                (${isSummer}::boolean
+                  AND scope.weekday = s.weekday
+                  AND scope.start_time = s.start_time
+                  AND scope.end_time IS NOT DISTINCT FROM s.end_time)
+                OR (NOT ${isSummer}::boolean AND scope.id = s.id)
+              )
               AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
               AND (
                 COALESCE(e.end_date, fi.end_date) IS NULL
@@ -1127,24 +1178,45 @@ export async function fetchSessionsForDay(
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS makeup_count
             FROM makeups m
-            WHERE m.session_id = s.id
+            JOIN visible_sessions scope ON scope.id = m.session_id
+            WHERE (
+                (${isSummer}::boolean
+                  AND scope.weekday = s.weekday
+                  AND scope.start_time = s.start_time
+                  AND scope.end_time IS NOT DISTINCT FROM s.end_time)
+                OR (NOT ${isSummer}::boolean AND scope.id = s.id)
+              )
               AND m.date = ${target}
           ) mc ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS trial_count
             FROM trials t
-            WHERE t.session_id = s.id
+            JOIN visible_sessions scope ON scope.id = t.session_id
+            WHERE (
+                (${isSummer}::boolean
+                  AND scope.weekday = s.weekday
+                  AND scope.start_time = s.start_time
+                  AND scope.end_time IS NOT DISTINCT FROM s.end_time)
+                OR (NOT ${isSummer}::boolean AND scope.id = s.id)
+              )
               AND t.date = ${target}
           ) tc ON true
           LEFT JOIN LATERAL (
             SELECT COUNT(*) AS absence_count
             FROM absences a
             JOIN enrolments e ON e.id = a.enrolment_id
+            JOIN visible_sessions scope ON scope.id = e.session_id
             LEFT JOIN future_inactivations fi
               ON fi.student_id = e.student_id
-             AND fi.class_day = s.weekday
-             AND LEFT(fi.class_start_time, 5) = LEFT(s.start_time::text, 5)
-            WHERE e.session_id = s.id
+             AND fi.class_day = scope.weekday
+             AND LEFT(fi.class_start_time, 5) = LEFT(scope.start_time::text, 5)
+            WHERE (
+                (${isSummer}::boolean
+                  AND scope.weekday = s.weekday
+                  AND scope.start_time = s.start_time
+                  AND scope.end_time IS NOT DISTINCT FROM s.end_time)
+                OR (NOT ${isSummer}::boolean AND scope.id = s.id)
+              )
               AND a.date = ${target}
               AND (e.start_date IS NULL OR e.start_date <= ${target}::date)
               AND (
@@ -1152,8 +1224,7 @@ export async function fetchSessionsForDay(
                 OR COALESCE(e.end_date, fi.end_date) >= ${weekStart}::date
               )
           ) ac ON true
-          WHERE s.weekday = ${day}
-            AND (
+          WHERE (
               COALESCE(ec.student_count, 0) > 0
               OR COALESCE(mc.makeup_count, 0) > 0
               OR COALESCE(tc.trial_count, 0) > 0

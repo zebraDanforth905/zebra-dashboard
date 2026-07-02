@@ -282,7 +282,10 @@ export async function upsertSummerEnrolmentWeekFromNormalized(
   };
 }
 
-export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolmentRow[]) {
+export async function upsertEnrolmentFromNormalized(
+  rows: NormalizedPortalEnrolmentRow[],
+  options?: { reconcileSummer?: boolean },
+) {
   
   if (!rows.length) return { inserted: 0, updated: 0, seen: 0 };
 
@@ -301,6 +304,8 @@ export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolm
   const seenEnroll = new Set<string>();
   const seenTrials = new Set<string>();
   const seenMakeup = new Set<string>();
+
+  const reconcileSummer = options?.reconcileSummer === true;
 
   await sql.begin(async (tx) => {
 
@@ -410,7 +415,7 @@ export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolm
                     WHERE k.student_id = e.student_id
                     AND k.session_id = e.session_id
                 )
-                AND se.is_summer = FALSE
+                AND (se.is_summer = FALSE OR ${reconcileSummer}::boolean)
             );
         `;
         
@@ -424,7 +429,7 @@ export async function upsertEnrolmentFromNormalized(rows: NormalizedPortalEnrolm
             DELETE FROM enrolments e
             USING sessions se
             WHERE se.id = e.session_id
-            AND se.is_summer = FALSE
+            AND (se.is_summer = FALSE OR ${reconcileSummer}::boolean)
             AND NOT EXISTS (
                 SELECT 1
                 FROM keep k

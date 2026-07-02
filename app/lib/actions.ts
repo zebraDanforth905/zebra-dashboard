@@ -219,7 +219,7 @@ export async function scrapeEnrolmentNow(opts?: {
   });
 
   const normalized = normalizeEnrolmentRows(raw);
-  const res = await upsertEnrolmentFromNormalized(normalized);
+  const res = await upsertEnrolmentFromNormalized(normalized, { reconcileSummer: day === "All" });
 
   const customerRows = extractCustomerRows(raw);
   const customerRes = await syncCustomers(customerRows);
@@ -910,7 +910,13 @@ export async function forceScheduleRefresh(formData: FormData){
   const weekStart = formData.get('weekStart')?.toString();
 
   if (weekStart && isSummerScheduleWeek(weekStart)) {
-    await scrapeSummerEnrolmentWeek({ weekStart });
+    try {
+      await scrapeSummerEnrolmentWeek({ weekStart });
+    } catch (error) {
+      console.warn('Summer date-range schedule refresh failed; falling back to active portal report.', error);
+      await scrapeEnrolmentNow();
+      await syncAbsencesForCurrentWeek();
+    }
   } else {
     await scrapeEnrolmentNow()
     await syncAbsencesForCurrentWeek()
