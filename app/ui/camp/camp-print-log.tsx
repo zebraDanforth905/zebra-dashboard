@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useTransition } from 'react';
-import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import {
   createCampPrintLogEntry,
   updateCampPrintLogEntry,
@@ -34,32 +34,50 @@ const STATUS_STYLE: Record<string, string> = {
   '': 'bg-slate-100 text-slate-400',
 };
 
+const mapEntryToRow = (entry: CampPrintLogEntry): Row => ({
+  id: entry.id,
+  student: entry.student ?? '',
+  print_description: entry.print_description ?? '',
+  status: entry.status ?? '',
+  notes: entry.notes ?? '',
+});
+
+const serializeRow = (row: Row) =>
+  JSON.stringify([row.student, row.print_description, row.status, row.notes]);
+
 function EditableCell({
   value,
   placeholder,
   multiline,
-  onSave,
+  onChange,
+  onCommit,
 }: {
   value: string;
   placeholder?: string;
   multiline?: boolean;
-  onSave: (next: string) => void;
+  onChange: (next: string) => void;
+  onCommit: (next: string) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  const editStartValueRef = useRef(value);
 
   const commit = () => {
+    const next = draft.trim();
     setIsEditing(false);
-    if (draft.trim() === value.trim()) return;
-    onSave(draft.trim());
+    if (next !== value) onChange(next);
+    if (next !== editStartValueRef.current) onCommit(next);
   };
 
   if (isEditing) {
     const shared = {
       autoFocus: true,
       value: draft,
-      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-        setDraft(e.target.value),
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        const next = e.target.value;
+        setDraft(next);
+        onChange(next);
+      },
       onBlur: commit,
       className:
         'w-full h-full resize-none bg-white px-2 py-1.5 text-sm text-slate-800 outline-none ring-2 ring-inset ring-sky-400',
@@ -75,7 +93,8 @@ function EditableCell({
               e.preventDefault();
               commit();
             } else if (e.key === 'Escape') {
-              setDraft(value);
+              setDraft(editStartValueRef.current);
+              onChange(editStartValueRef.current);
               setIsEditing(false);
             }
           }}
@@ -92,7 +111,8 @@ function EditableCell({
             e.preventDefault();
             commit();
           } else if (e.key === 'Escape') {
-            setDraft(value);
+            setDraft(editStartValueRef.current);
+            onChange(editStartValueRef.current);
             setIsEditing(false);
           }
         }}
@@ -104,6 +124,7 @@ function EditableCell({
     <div
       onClick={() => {
         setDraft(value);
+        editStartValueRef.current = value;
         setIsEditing(true);
       }}
       className="min-h-[36px] whitespace-pre-wrap break-words px-2 py-1.5 text-sm text-slate-800 cursor-text hover:bg-sky-50 transition-colors"
@@ -125,16 +146,64 @@ export default function CampPrintLog({
   entries: CampPrintLogEntry[];
   enrolledStudents?: string[];
 }) {
-  const [rows, setRows] = useState<Row[]>(() =>
-    entries.map((e) => ({
-      id: e.id,
-      student: e.student ?? '',
-      print_description: e.print_description ?? '',
-      status: e.status ?? '',
-      notes: e.notes ?? '',
-    }))
-  );
+  const [rows, setRows] = useState<Row[]>(() => entries.map(mapEntryToRow));
+  const rowsRef = useRef(rows);
+  const [dirtyRowIds, setDirtyRowIds] = useState<Set<number>>(() => new Set());
+  const dirtyRowIdsRef = useRef(dirtyRowIds);
+  const [saveMessage, setSaveMessage] = useState('All changes saved');
+  const [saveDetail, setSaveDetail] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+
+  const replaceRows = (next: Row[]) => {
+    rowsRef.current = next;
+    setRows(next);
+  };
+
+  const updateDirtyRowIds = (updater: (prev: Set<number>) => Set<number>) => {
+    setDirtyRowIds((prev) => {
+      const next = updater(prev);
+      dirtyRowIdsRef.current = next;
+      return next;
+    });
+  };
+
+  const markDirty = (id: number) => {
+    updateDirtyRowIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    setSaveMessage('Unsaved changes');
+    setSaveDetail(null);
+  };
+
+  const clearDirtyIfStillSaved = (row: Row, savedSnapshot: string) => {
+    updateDirtyRowIds((prev) => {
+      const current = rowsRef.current.find((candidate) => candidate.id === row.id);
+      if (current && serializeRow(current) !== savedSnapshot) return prev;
+
+      const next = new Set(prev);
+      next.delete(row.id);
+      return next;
+    });
+  };
+
+  const applyRowPatch = (id: number, patch: Partial<Row>) => {
+    let updated: Row | undefined;
+    const nextRows = rowsRef.current.map((row) => {
+      if (row.id !== id) return row;
+      updated = { ...row, ...patch };
+      return updated;
+    });
+    replaceRows(nextRows);
+    if (updated) markDirty(id);
+    return updated;
+  };
 
   // By default, seed an empty log with one row per unique enrolled student
   // (student name only, other fields blank). The server only inserts when the
@@ -152,45 +221,84 @@ export default function CampPrintLog({
         students: enrolledStudents,
       });
       if (result.ok && result.rows && result.rows.length > 0) {
-        setRows((prev) =>
-          prev.length > 0
-            ? prev
-            : result.rows!.map((e) => ({
-                id: e.id,
-                student: e.student ?? '',
-                print_description: e.print_description ?? '',
-                status: e.status ?? '',
-                notes: e.notes ?? '',
-              }))
-        );
+        if (rowsRef.current.length === 0) replaceRows(result.rows.map(mapEntryToRow));
       }
     });
   }, [entries.length, enrolledStudents, weekStart]);
 
-  const persist = (row: Row) => {
-    startTransition(async () => {
-      const result = await updateCampPrintLogEntry({
-        id: row.id,
-        student: row.student,
-        printDescription: row.print_description,
-        status: row.status,
-        notes: row.notes,
-      });
-      if (!result.ok) alert(result.error || 'Failed to save print log row');
+  const persistRow = async (
+    row: Row,
+    options: { source?: 'auto' | 'manual'; showAlert?: boolean } = {},
+  ) => {
+    const savedSnapshot = serializeRow(row);
+    const result = await updateCampPrintLogEntry({
+      id: row.id,
+      student: row.student,
+      printDescription: row.print_description,
+      status: row.status,
+      notes: row.notes,
     });
+
+    if (!result.ok) {
+      const message = result.error || 'Failed to save print log row';
+      setSaveMessage(
+        options.source === 'auto'
+          ? 'Auto-save could not reach the database. Press Save Changes to retry.'
+          : 'Save failed. Press Save Changes to retry.',
+      );
+      setSaveDetail(message);
+      if (options.showAlert !== false) alert(message);
+      return false;
+    }
+
+    clearDirtyIfStillSaved(row, savedSnapshot);
+    setSaveMessage('Saved');
+    setSaveDetail(null);
+    return true;
   };
 
-  const updateRow = (id: number, patch: Partial<Row>) => {
-    let updated: Row | undefined;
-    setRows((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        updated = { ...r, ...patch };
-        return updated;
-      })
-    );
-    if (updated) persist(updated);
+  const saveDirtyRows = async () => {
+    const dirtyRows = rowsRef.current.filter((row) => dirtyRowIdsRef.current.has(row.id));
+    if (dirtyRows.length === 0) {
+      setSaveMessage('All changes saved');
+      setSaveDetail(null);
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveMessage('Saving...');
+    setSaveDetail(null);
+    try {
+      for (const row of dirtyRows) {
+        const ok = await persistRow(row, { source: 'manual', showAlert: false });
+        if (!ok) return;
+      }
+      setSaveMessage('All changes saved');
+      setSaveDetail(null);
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const updateRow = (id: number, patch: Partial<Row>, options: { autoSave?: boolean } = {}) => {
+    const updated = applyRowPatch(id, patch);
+    if (updated && options.autoSave) {
+      setSaveMessage('Saving...');
+      setSaveDetail(null);
+      void persistRow(updated, { source: 'auto', showAlert: false });
+    }
+  };
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirtyRowIdsRef.current.size === 0) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   const addRow = () => {
     startTransition(async () => {
@@ -199,20 +307,43 @@ export default function CampPrintLog({
         alert(result.ok ? 'Failed to add print log row' : result.error);
         return;
       }
-      setRows((prev) => [
-        ...prev,
+      replaceRows([
+        ...rowsRef.current,
         { id: result.id!, student: '', print_description: '', status: '', notes: '' },
       ]);
     });
   };
 
   const removeRow = (id: number) => {
-    setRows((prev) => prev.filter((r) => r.id !== id));
+    replaceRows(rowsRef.current.filter((r) => r.id !== id));
+    updateDirtyRowIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     startTransition(async () => {
       const result = await deleteCampPrintLogEntry({ id });
       if (!result.ok) alert(result.error || 'Failed to delete print log row');
     });
   };
+
+  const hasUnsavedChanges = dirtyRowIds.size > 0;
+  const normalizedSaveMessage = saveMessage.toLowerCase();
+  const isSaveError =
+    normalizedSaveMessage.includes('failed') ||
+    normalizedSaveMessage.includes('invalid') ||
+    normalizedSaveMessage.includes('unauthorized');
+  const saveStatusClass = isSaveError
+    ? 'text-rose-700'
+    : hasUnsavedChanges
+      ? 'text-amber-700'
+      : 'text-slate-500';
+  const saveStatusText = isSaveError
+    ? saveMessage
+    : hasUnsavedChanges
+      ? 'Unsaved changes'
+      : saveMessage;
+  const saveButtonLabel = isSaving ? 'Saving...' : isSaveError ? 'Retry Save' : 'Save Changes';
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4">
@@ -220,18 +351,36 @@ export default function CampPrintLog({
         <div>
           <h2 className="text-lg font-semibold text-slate-900">3D Print Log</h2>
           <p className="text-sm text-slate-600">
-            {weekLabel}. Track 3D print projects for the week. Click any cell to edit; changes save automatically.
+            {weekLabel}. Track each student&apos;s print nickname and status for the week. Click any cell to edit, then use Save Changes to confirm.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={addRow}
-          disabled={isPending}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"
-        >
-          <PlusIcon className="h-4 w-4" />
-          Add row
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span
+            className={`text-xs font-medium ${saveStatusClass}`}
+            aria-live="polite"
+            title={saveDetail ?? undefined}
+          >
+            {saveStatusText}
+          </span>
+          <button
+            type="button"
+            onClick={saveDirtyRows}
+            disabled={isSaving || !hasUnsavedChanges}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            <CheckIcon className="h-4 w-4" />
+            {saveButtonLabel}
+          </button>
+          <button
+            type="button"
+            onClick={addRow}
+            disabled={isPending || isSaving}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"
+          >
+            <PlusIcon className="h-4 w-4" />
+            Add row
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -249,7 +398,7 @@ export default function CampPrintLog({
                 Student
               </th>
               <th className="border border-slate-300 bg-emerald-700 text-white text-sm font-semibold px-2 py-2 text-left">
-                Print
+                Print Nickname
               </th>
               <th className="border border-slate-300 bg-emerald-700 text-white text-sm font-semibold px-2 py-2 text-left">
                 Ready?
@@ -277,22 +426,26 @@ export default function CampPrintLog({
                     <EditableCell
                       value={row.student}
                       placeholder="Student name"
-                      onSave={(next) => updateRow(row.id, { student: next })}
+                      onChange={(next) => updateRow(row.id, { student: next })}
+                      onCommit={(next) => updateRow(row.id, { student: next }, { autoSave: true })}
                     />
                   </td>
                   <td className="border border-slate-300 p-0 align-top">
                     <EditableCell
                       value={row.print_description}
-                      placeholder="Description of the print project"
+                      placeholder="Project nickname"
                       multiline
-                      onSave={(next) => updateRow(row.id, { print_description: next })}
+                      onChange={(next) => updateRow(row.id, { print_description: next })}
+                      onCommit={(next) =>
+                        updateRow(row.id, { print_description: next }, { autoSave: true })
+                      }
                     />
                   </td>
                   <td className="border border-slate-300 px-2 py-1.5 align-top">
                     <div className="relative inline-block">
                       <select
                         value={row.status}
-                        onChange={(e) => updateRow(row.id, { status: e.target.value })}
+                        onChange={(e) => updateRow(row.id, { status: e.target.value }, { autoSave: true })}
                         className={`appearance-none rounded-full pl-3 pr-7 py-1 text-xs font-medium cursor-pointer outline-none ${
                           STATUS_STYLE[row.status] ?? STATUS_STYLE['']
                         }`}
@@ -322,7 +475,8 @@ export default function CampPrintLog({
                       value={row.notes}
                       placeholder="Notes"
                       multiline
-                      onSave={(next) => updateRow(row.id, { notes: next })}
+                      onChange={(next) => updateRow(row.id, { notes: next })}
+                      onCommit={(next) => updateRow(row.id, { notes: next }, { autoSave: true })}
                     />
                   </td>
                   <td className="border border-slate-300 px-1 py-1.5 align-top text-center">
