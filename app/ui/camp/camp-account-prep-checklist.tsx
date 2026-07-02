@@ -10,6 +10,7 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   createOrAssignCampPrepResource,
+  updatePaDayCampAssignment,
   unassignCampPrepResource,
 } from '@/app/lib/actions';
 import type {
@@ -63,6 +64,12 @@ function courseKey(row: CampAccountPrepRow) {
   return `${row.course_id ?? 'none'}|${courseLabel(row)}`;
 }
 
+function originalCourseLabel(row: CampAccountPrepRow) {
+  return row.original_course_name && row.original_course_name !== row.original_course_id
+    ? row.original_course_name
+    : row.original_course_id ?? 'No course';
+}
+
 function needsResource(row: CampAccountPrepRow, kind: CampPrepResourceKind) {
   if (kind === 'scratch') return row.needs_scratch;
   if (kind === 'roblox') return row.needs_roblox;
@@ -97,6 +104,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [message, setMessage] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, InlineDraft>>({});
+  const [paDayDrafts, setPaDayDrafts] = useState<Record<string, string>>({});
 
   const courseOptions = useMemo(() => {
     const courses = new Map<string, string>();
@@ -108,7 +116,8 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
 
   const filteredRows = useMemo(() => {
     return checklist.rows.filter((row) => {
-      if (unassignedOnly && row.missing_resources.length === 0) return false;
+      const needsPaDayAssignment = row.is_pa_day_camp && !row.pa_day_assigned_course_id;
+      if (unassignedOnly && row.missing_resources.length === 0 && !needsPaDayAssignment) return false;
       if (courseFilter !== 'all' && courseKey(row) !== courseFilter) return false;
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
       return true;
@@ -221,6 +230,93 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
       setMessage(`${RESOURCE_LABELS[kind]} cleared from ${row.student_name}.`);
       router.refresh();
     });
+  };
+
+  const paDayDraftFor = (row: CampAccountPrepRow) =>
+    paDayDrafts[row.camp_enrolment_id] ?? row.pa_day_assigned_course_id ?? '';
+
+  const handlePaDayCampSave = (row: CampAccountPrepRow) => {
+    const assignedCourseId = paDayDraftFor(row) || null;
+
+    setMessage(null);
+    startTransition(async () => {
+      const result = await updatePaDayCampAssignment({
+        campEnrolmentId: row.camp_enrolment_id,
+        assignedCourseId,
+      });
+
+      if (!result.ok) {
+        setMessage(result.error ?? 'Camp assignment failed.');
+        return;
+      }
+
+      setPaDayDrafts((current) => {
+        const next = { ...current };
+        delete next[row.camp_enrolment_id];
+        return next;
+      });
+      setMessage(
+        assignedCourseId
+          ? `Camp assignment saved for ${row.student_name}.`
+          : `Camp assignment cleared for ${row.student_name}.`
+      );
+      router.refresh();
+    });
+  };
+
+  const renderPaDayCampAssignment = (row: CampAccountPrepRow) => {
+    if (!row.is_pa_day_camp) {
+      return (
+        <div className="text-xs text-slate-500">
+          Portal: {originalCourseLabel(row)}
+        </div>
+      );
+    }
+
+    const draftValue = paDayDraftFor(row);
+    const currentValue = row.pa_day_assigned_course_id ?? '';
+    const canSave = draftValue !== currentValue;
+
+    return (
+      <div className="w-72 space-y-1.5">
+        <div className="text-xs text-slate-500">Portal: {originalCourseLabel(row)}</div>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+          <select
+            value={draftValue}
+            onChange={(event) =>
+              setPaDayDrafts((current) => ({
+                ...current,
+                [row.camp_enrolment_id]: event.target.value,
+              }))
+            }
+            disabled={isPending}
+            className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 disabled:bg-slate-100"
+          >
+            <option value="">Assign camp</option>
+            {checklist.pa_day_course_options.map((course) => (
+              <option key={course.id} value={course.id}>
+                {course.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => handlePaDayCampSave(row)}
+            disabled={isPending || !canSave}
+            className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+        {row.pa_day_assigned_course_name ? (
+          <div className="text-xs text-slate-600">
+            Effective: <span className="font-medium">{row.pa_day_assigned_course_name}</span>
+          </div>
+        ) : (
+          <div className="text-xs text-amber-700">Camp assignment needed</div>
+        )}
+      </div>
+    );
   };
 
   const renderResourceNeed = (row: CampAccountPrepRow, kind: CampPrepResourceKind) => {
@@ -442,11 +538,12 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-md border border-slate-200 bg-white">
-        <table className="min-w-[1200px] w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-[1320px] w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Camper</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Course</th>
+              <th className="px-3 py-2 text-left font-medium text-slate-600">Camp assignment</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Needs</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Status</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Assigned</th>
@@ -456,7 +553,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
           <tbody className="divide-y divide-slate-100">
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
                   No campers match these filters.
                 </td>
               </tr>
@@ -476,6 +573,7 @@ export default function CampAccountPrepChecklist({ checklist, scopeLabel }: Prop
                         {row.camp_type}{row.extended_care ? ' EX' : ''}
                       </div>
                     </td>
+                    <td className="px-3 py-3">{renderPaDayCampAssignment(row)}</td>
                     <td className="px-3 py-3">
                       <div className="flex max-w-52 flex-wrap gap-1.5">
                         {resourceKinds.map((kind) => renderResourceNeed(row, kind))}
