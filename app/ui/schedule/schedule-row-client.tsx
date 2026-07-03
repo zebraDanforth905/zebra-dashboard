@@ -49,7 +49,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
         {trials.map((student) => (
           <div
             key={student.trial_id + student.name}
-            className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm bg-amber-50"
+            className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 lg:gap-3 px-3 md:px-4 py-2 text-sm bg-amber-50"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
@@ -68,8 +68,8 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               </div>
             </div>
 
-            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
-              <div className="w-full md:min-w-[250px]">
+            <div className="shrink-0 flex flex-col lg:flex-row items-start lg:items-center gap-2">
+              <div className="w-full lg:min-w-[250px]">
                 <TrialNoteCell 
                   trial={student}
                   currentUserName={currentUserName} 
@@ -83,7 +83,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
         {makeups.map((student) => (
           <div
             key={student.makeup_id + student.name}
-            className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm bg-sky-50"
+            className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 lg:gap-3 px-3 md:px-4 py-2 text-sm bg-sky-50"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
@@ -107,8 +107,8 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               </div>
             </div>
 
-            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
-              <div className="w-full md:min-w-[250px]">
+            <div className="shrink-0 flex flex-col lg:flex-row items-start lg:items-center gap-2">
+              <div className="w-full lg:min-w-[250px]">
                 <StudentNoteCell 
                   student={{ 
                     id: student.student_id, 
@@ -135,7 +135,7 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
           <div
             key={student.enrolment_id}
             className={clsx(
-              "flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 px-3 md:px-4 py-2 text-sm",
+              "flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 lg:gap-3 px-3 md:px-4 py-2 text-sm",
               student.absent ? "bg-rose-50" : "bg-white"
             )}
           >
@@ -160,8 +160,8 @@ export default function ScheduleRowClient({ students, trials, makeups, currentUs
               </div>
             </div>
 
-            <div className="shrink-0 flex flex-col md:flex-row items-start md:items-center gap-2">
-              <div className="w-full md:min-w-[250px]">
+            <div className="shrink-0 flex flex-col lg:flex-row items-start lg:items-center gap-2">
+              <div className="w-full lg:min-w-[250px]">
                 <StudentNoteCell 
                   student={{ 
                     id: student.student_id, 

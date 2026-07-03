@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import {
-  isSummerScheduleWeek,
   startOfScheduleWeek,
   ymdLocal,
 } from "@/app/lib/schedule-week";
@@ -74,11 +73,6 @@ export default function WeekSelector({ weekStart }: { weekStart: string }) {
         <p className="whitespace-nowrap text-sm font-semibold text-slate-900">
           {compactWeekRange(weekStart)}
         </p>
-        {isSummerScheduleWeek(weekStart) && (
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-            Summer
-          </p>
-        )}
       </div>
       <Link
         href={buildHref(ymdLocal(next))}

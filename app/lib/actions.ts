@@ -27,7 +27,7 @@ import { formatDate } from './utils';
 import { localMidnightFromISODate } from './utils';
 
 import { ymd } from './utils';
-import { endOfScheduleWeek, isSummerScheduleWeek, startOfScheduleWeek, ymdLocal } from './schedule-week';
+import { endOfScheduleWeek, startOfScheduleWeek, ymdLocal } from './schedule-week';
 import bcrypt from 'bcrypt';
 import { auth } from '@/auth';
 import { userAgent } from 'next/server';
@@ -906,21 +906,11 @@ export async function generateInvoiceFromRecurring(formData: FormData) {
 
 
 
-export async function forceScheduleRefresh(formData: FormData){
-  const weekStart = formData.get('weekStart')?.toString();
+export async function forceScheduleRefresh(_formData: FormData){
+  void _formData;
 
-  if (weekStart && isSummerScheduleWeek(weekStart)) {
-    try {
-      await scrapeSummerEnrolmentWeek({ weekStart });
-    } catch (error) {
-      console.warn('Summer date-range schedule refresh failed; falling back to active portal report.', error);
-      await scrapeEnrolmentNow();
-      await syncAbsencesForCurrentWeek();
-    }
-  } else {
-    await scrapeEnrolmentNow()
-    await syncAbsencesForCurrentWeek()
-  }
+  await scrapeEnrolmentNow()
+  await syncAbsencesForCurrentWeek()
 
   revalidateTag('schedule', 'max')
   
