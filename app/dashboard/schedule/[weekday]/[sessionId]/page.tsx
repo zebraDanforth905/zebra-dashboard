@@ -1,9 +1,8 @@
 import ScheduleTable from "@/app/ui/schedule/schedule_row";
 import SessionNav from "@/app/ui/schedule/session-nav";
-import { fetchSessionsForDay } from "@/app/lib/data";
+import { fetchScheduleSlotRepresentativeId, fetchSessionsForDay } from "@/app/lib/data";
 import {
   dateForScheduleWeekday,
-  isSummerScheduleWeek,
   startOfScheduleWeek,
   ymdLocal,
 } from "@/app/lib/schedule-week";
@@ -25,10 +24,13 @@ export default async function SessionPage(props: {
   if (!DAYS.includes(day)) notFound();
   const weekStart = ymdLocal(startOfScheduleWeek(searchParams?.weekStart));
   const targetDate = dateForScheduleWeekday(weekStart, day);
-  const isSummer = isSummerScheduleWeek(weekStart);
-  const sessions = await fetchSessionsForDay(day, targetDate, { isSummer });
+  const sessions = await fetchSessionsForDay(day, targetDate);
   if (sessions.length > 0 && !sessions.some(session => session.id === sessionId)) {
-    redirect(`/dashboard/schedule/${day}/${sessions[0].id}?weekStart=${weekStart}`);
+    const representativeId = await fetchScheduleSlotRepresentativeId(sessionId, day);
+    const fallbackId = representativeId && sessions.some(session => session.id === representativeId)
+      ? representativeId
+      : sessions[0].id;
+    redirect(`/dashboard/schedule/${day}/${fallbackId}?weekStart=${weekStart}`);
   }
 
   return (

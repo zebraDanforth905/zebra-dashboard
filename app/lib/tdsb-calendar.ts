@@ -4,8 +4,8 @@
 // picker so families only see dates that are real class days.
 //
 // **Edit these constants when the new TDSB year is published.** Last verified
-// against the 2025-2026 TDSB calendar; 2026-2027 dates are best-effort and
-// should be confirmed before the fall send.
+// against the official 2026-2027 TDSB calendar. First student day is
+// Tuesday, September 8, 2026.
 
 export type WeekdayName =
   | 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday'
@@ -26,10 +26,20 @@ const TERMS: Record<TermKey, { start: string; end: string }> = {
   fall:   { start: '2026-09-08', end: '2026-12-18' },
 };
 
+export const SCHOOL_PICKUP_SUMMER_BREAK = {
+  start: TERMS.summer.start,
+  end: TERMS.summer.end,
+  firstSchoolDay: TERMS.fall.start,
+} as const;
+
 export function isDateInTerm(iso: string | null | undefined, term: TermKey): boolean {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
   const { start, end } = TERMS[term];
   return iso >= start && iso <= end;
+}
+
+export function isSchoolPickupSummerBreakDate(iso: string | null | undefined): boolean {
+  return isDateInTerm(iso, 'summer');
 }
 
 export function isSummerDateRange(startISO: string | null | undefined, endISO?: string | null): boolean {

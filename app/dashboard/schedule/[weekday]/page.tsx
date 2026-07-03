@@ -10,12 +10,12 @@ import { notFound } from "next/navigation";
 import SessionNav from "@/app/ui/schedule/session-nav";
 import {
   dateForScheduleWeekday,
-  isSummerScheduleWeek,
   SCHEDULE_DAYS,
   ScheduleWeekday,
   startOfScheduleWeek,
   ymdLocal,
 } from "@/app/lib/schedule-week";
+import { isSchoolPickupSummerBreakDate } from "@/app/lib/tdsb-calendar";
 
 const SCHOOLS: PickupListDisplay["school_name"][] = ["Frankland", "Jackman"];
 
@@ -38,7 +38,7 @@ export default async function Page(props: {
   if (!SCHEDULE_DAYS.includes(day)) notFound();
   const weekStart = ymdLocal(startOfScheduleWeek(searchParams?.weekStart));
   const targetDate = dateForScheduleWeekday(weekStart, day);
-  const isSummer = isSummerScheduleWeek(weekStart);
+  const showPickups = !isSchoolPickupSummerBreakDate(weekStart);
 
   const session = await auth();
   const currentUserName = session?.user?.name || 'Unknown User';
@@ -48,8 +48,10 @@ export default async function Page(props: {
       ? searchParams.school
       : "Frankland";
 
-  const sessions = await fetchSessionsForDay(day, targetDate, { isSummer });
-  const pickups = isSummer ? [] : await fetchPickupsForDay(day, activeSchool, targetDate);
+  const [sessions, pickups] = await Promise.all([
+    fetchSessionsForDay(day, targetDate),
+    showPickups ? fetchPickupsForDay(day, activeSchool, targetDate) : Promise.resolve([]),
+  ]);
 
   return (
     <div className="space-y-3 md:space-y-4">
@@ -57,7 +59,7 @@ export default async function Page(props: {
         <SessionNav day={day} sessions={sessions} />
       </div>
 
-      {!isSummer && (
+      {showPickups && (
         <>
           {/* Header with Add Pickup button */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -69,11 +71,10 @@ export default async function Page(props: {
 
           {/* School nav and stats */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-3 md:px-4 py-2 md:py-3 border-b border-slate-200 bg-slate-50 rounded-lg">
-              <div className="text-xs text-slate-500">
-                Total: <span className="font-semibold">{pickups.length}</span>
-              </div>
+            <div className="text-xs text-slate-500">
+              Total: <span className="font-semibold">{pickups.length}</span>
+            </div>
             <div className="inline-flex rounded-full bg-slate-100 p-1">
-              
               {SCHOOLS.map((s) => {
                 const schoolParams = new URLSearchParams();
                 schoolParams.set("school", s);
