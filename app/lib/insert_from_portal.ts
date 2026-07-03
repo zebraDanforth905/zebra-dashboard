@@ -3,7 +3,6 @@ import postgres from "postgres";
 import { ymd, assertAligned } from "./utils";
 import { PortalCustomerRow } from "./normalize";
 import { fetchFamilyView } from "./scraper_helpers";
-import { isSummerDateRange } from "./tdsb-calendar";
 
 // expects tables: students(student_id int PK?, first_name, last_name, lms_password?),
 // sessions(id serial/bigint, weekday text/enum, start_time time, end_time time) unique(weekday,start_time,end_time),
@@ -534,6 +533,13 @@ export async function upsertEnrolmentFromNormalized(
 
 // enrolment_resolver.ts
 type Pair = { student_id: number; session_id: string };
+type AttendancePair = {
+  student_id: number;
+  weekday: string;
+  start_time: string;
+  end_time: string | null;
+  date: string;
+};
 
 export async function resolveEnrolmentIds(
   tx: DbTx,
@@ -563,6 +569,95 @@ export async function resolveEnrolmentIds(
 
   const map = new Map<string, string>();
   for (const r of rows) map.set(`${Number(r.student_id)}|${r.session_id}`, r.id);
+  return map;
+}
+
+function attendancePairKey(p: AttendancePair): string {
+  return [
+    Number(p.student_id),
+    p.weekday,
+    p.start_time.slice(0, 5),
+    p.end_time ? p.end_time.slice(0, 5) : '',
+    ymd(p.date),
+  ].join('|');
+}
+
+async function resolveAttendanceEnrolmentIds(
+  tx: DbTx,
+  pairs: AttendancePair[]
+): Promise<Map<string, string>> {
+  if (!pairs.length) return new Map();
+
+  const uniq = Array.from(new Map(pairs.map(p => [attendancePairKey(p), p])).values());
+
+  const studentIds = uniq.map(p => Number(p.student_id));
+  const weekdays = uniq.map(p => p.weekday);
+  const startTimes = uniq.map(p => p.start_time);
+  const endTimes = uniq.map(p => p.end_time);
+  const dates = uniq.map(p => ymd(p.date));
+
+  const rows = await tx<{
+    id: string;
+    student_id: number;
+    weekday: string;
+    start_time: string;
+    end_time: string | null;
+    date: string;
+  }[]>`
+    WITH q AS (
+      SELECT *
+      FROM UNNEST(
+        ${studentIds}::numeric[],
+        ${weekdays}::text[],
+        ${startTimes}::time[],
+        ${endTimes}::time[],
+        ${dates}::date[]
+      ) AS t(student_id, weekday, start_time, end_time, date)
+    )
+    SELECT DISTINCT ON (q.student_id, q.weekday, q.start_time, q.end_time, q.date)
+      e.id,
+      e.student_id::numeric AS student_id,
+      q.weekday,
+      q.start_time::text AS start_time,
+      q.end_time::text AS end_time,
+      q.date::text AS date
+    FROM q
+    JOIN sessions sess
+      ON sess.weekday = q.weekday
+     AND sess.start_time = q.start_time
+     AND sess.end_time IS NOT DISTINCT FROM q.end_time
+    JOIN enrolments e
+      ON e.student_id = q.student_id
+     AND e.session_id = sess.id
+    LEFT JOIN future_inactivations fi
+      ON fi.student_id = e.student_id
+     AND fi.class_day = sess.weekday
+     AND LEFT(fi.class_start_time, 5) = LEFT(sess.start_time::text, 5)
+    WHERE (e.start_date IS NULL OR e.start_date <= q.date)
+      AND (
+        COALESCE(e.end_date, fi.end_date) IS NULL
+        OR COALESCE(e.end_date, fi.end_date) >= q.date
+      )
+    ORDER BY
+      q.student_id,
+      q.weekday,
+      q.start_time,
+      q.end_time,
+      q.date,
+      sess.is_summer ASC,
+      sess.id;
+  `;
+
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    map.set(attendancePairKey({
+      student_id: Number(r.student_id),
+      weekday: r.weekday,
+      start_time: r.start_time,
+      end_time: r.end_time,
+      date: r.date,
+    }), r.id);
+  }
   return map;
 }
 
@@ -665,26 +760,16 @@ export async function syncAbsencesForRange(opts: {
   if (rows.length == 0) return {inserted: 0, seen: 0};
 
   return await sql.begin(async (tx) => {
-    // 1) resolve session ids (cache by weekday|start|end)
-    const sessMap = new Map<string, string>();
-    for (const r of rows) {
-      const isSummer = isSummerDateRange(r.date, r.date);
-      const key = `${r.weekday}|${r.start_time}|${r.end_time}|${isSummer}`;
-      if (!sessMap.has(key)) {
-        const sid = await getSessionId(tx, r.weekday, r.start_time, r.end_time, isSummer);
-        sessMap.set(key, sid);
-      }
-    }
-
-    const pairs = rows.map(r => {
-      const key = `${r.weekday}|${r.start_time}|${r.end_time}|${isSummerDateRange(r.date, r.date)}`;
-      const session_id = sessMap.get(key)!;
-    
-      return { student_id: Number(r.student_id), session_id };
-    });
+    const pairs = rows.map(r => ({
+      student_id: Number(r.student_id),
+      weekday: r.weekday,
+      start_time: r.start_time,
+      end_time: r.end_time,
+      date: ymd(r.date),
+    }));
 
   
-    const enrolMap = await resolveEnrolmentIds(tx, pairs);
+    const enrolMap = await resolveAttendanceEnrolmentIds(tx, pairs);
 
     
 
@@ -696,9 +781,13 @@ export async function syncAbsencesForRange(opts: {
   
 
     for (const r of rows) {
-      const sessKey = `${r.weekday}|${r.start_time}|${r.end_time}|${isSummerDateRange(r.date, r.date)}`;
-      const session_id = sessMap.get(sessKey)!;
-      const enrolKey = `${Number(r.student_id)}|${session_id}`;
+      const enrolKey = attendancePairKey({
+        student_id: Number(r.student_id),
+        weekday: r.weekday,
+        start_time: r.start_time,
+        end_time: r.end_time,
+        date: ymd(r.date),
+      });
 
       const enrolment_id = enrolMap.get(enrolKey);
   
