@@ -25,6 +25,7 @@ type PrintableRoomConfig = {
   cols: number;
   seatOffset: number;
   visibleSeats: Set<number>;
+  displaySeatPositions?: Map<number, number>;
 };
 
 const BACK_ROOM_CONFIG: PrintableRoomConfig = {
@@ -37,13 +38,29 @@ const BACK_ROOM_CONFIG: PrintableRoomConfig = {
 
 const FRONT_ROOM_CONFIG: PrintableRoomConfig = {
   name: 'Front Room',
-  rows: 6,
+  rows: 7,
   cols: 6,
   seatOffset: 100,
   visibleSeats: new Set([3, 4, 7, 12, 13, 15, 16, 18, 19, 21, 22, 24, 25, 27, 28, 30, 33, 34]),
+  displaySeatPositions: new Map([
+    [19, 36],
+    [25, 42],
+  ]),
 };
 
 const PRINTABLE_ROOM_ORDER: PrintableRoomConfig[] = [FRONT_ROOM_CONFIG, BACK_ROOM_CONFIG];
+
+function displayRelativeSeatNumber(roomConfig: PrintableRoomConfig, relativeSeatNumber: number) {
+  return roomConfig.displaySeatPositions?.get(relativeSeatNumber) ?? relativeSeatNumber;
+}
+
+function displaySeatMap(roomConfig: PrintableRoomConfig) {
+  const seatsByDisplayCell = new Map<number, number>();
+  roomConfig.visibleSeats.forEach((relativeSeatNumber) => {
+    seatsByDisplayCell.set(displayRelativeSeatNumber(roomConfig, relativeSeatNumber), relativeSeatNumber);
+  });
+  return seatsByDisplayCell;
+}
 
 type PrintableStudent = CampPrintableStudentListRow & {
   parentName: string;
@@ -446,10 +463,11 @@ function getRoomRosterForDay(roomConfig: PrintableRoomConfig, dayRows: CampPrint
 function renderPrintRoomForDay(roomConfig: PrintableRoomConfig, dayRows: CampPrintableScheduleRow[], day: Date) {
   const printRowsWithSeats = new Set<number>();
   const printColsWithSeats = new Set<number>();
+  const seatsByDisplayCell = displaySeatMap(roomConfig);
 
-  roomConfig.visibleSeats.forEach((seatNum) => {
-    printRowsWithSeats.add(Math.floor((seatNum - 1) / roomConfig.cols));
-    printColsWithSeats.add((seatNum - 1) % roomConfig.cols);
+  seatsByDisplayCell.forEach((_seatNum, displayCell) => {
+    printRowsWithSeats.add(Math.floor((displayCell - 1) / roomConfig.cols));
+    printColsWithSeats.add((displayCell - 1) % roomConfig.cols);
   });
 
   const roomRoster = getRoomRosterForDay(roomConfig, dayRows, day);
@@ -493,12 +511,14 @@ function renderPrintRoomForDay(roomConfig: PrintableRoomConfig, dayRows: CampPri
           }}
         >
           {Array.from({ length: roomConfig.rows * roomConfig.cols }, (_, i) => {
-            const relativeSeatNumber = i + 1;
-            const absoluteSeatNumber = relativeSeatNumber + roomConfig.seatOffset;
+            const displayCellNumber = i + 1;
+            const relativeSeatNumber = seatsByDisplayCell.get(displayCellNumber);
 
-            if (!roomConfig.visibleSeats.has(relativeSeatNumber)) {
-              return <div key={`print-empty-${getDateKey(day)}-${absoluteSeatNumber}`} />;
+            if (!relativeSeatNumber) {
+              return <div key={`print-empty-${getDateKey(day)}-${roomConfig.name}-${displayCellNumber}`} />;
             }
+
+            const absoluteSeatNumber = relativeSeatNumber + roomConfig.seatOffset;
 
             const assignedRows = seatMap.get(absoluteSeatNumber) ?? [];
             const fdRow = assignedRows.find((row) => row.camp_type === 'FD') ?? null;

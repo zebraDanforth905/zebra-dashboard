@@ -6,8 +6,10 @@ import {
   ArrowPathIcon,
   ClipboardDocumentIcon,
   ExclamationTriangleIcon,
+  UserPlusIcon,
 } from '@heroicons/react/24/outline';
 import {
+  provisionCampLmsCanvasWeek,
   refreshCampLmsWeek,
   runCampLmsCanvasTestAction,
   syncCampLmsCanvasWeek,
@@ -146,8 +148,16 @@ function lmsSummaryCards(checklist: CampLmsChecklistData) {
   return cards;
 }
 
-function syncErrorMessage(error: string) {
-  return `Press "Sync LMS" to refresh this Canvas status. Last error: ${error}`;
+function SyncErrorMessage({ error }: { error: string }) {
+  return (
+    <>
+      Press "Sync LMS" to refresh this Canvas status. If this is a Canvas API error, set the token in{' '}
+      <Link href="/dashboard/settings" className="font-medium underline">
+        Settings
+      </Link>
+      . Last error: {error}
+    </>
+  );
 }
 
 function makeChecklistText(rows: CampLmsChecklistRow[]) {
@@ -356,6 +366,34 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       setMessage(errorCount > 0
         ? `Canvas sync finished for ${result.synced} row(s); ${errorCount} row(s) need attention.`
         : `Canvas sync finished for ${result.synced} row(s).`
+      );
+      router.refresh();
+    });
+  };
+
+  const handleBulkCanvasSetup = () => {
+    const confirmed = window.confirm(
+      'Create missing Canvas LMS accounts and add/reactivate every expected Canvas course for this week? This writes to Canvas for multiple campers.'
+    );
+    if (!confirmed) return;
+
+    setMessage(null);
+    startTransition(async () => {
+      const result = await provisionCampLmsCanvasWeek(startDate, endDate);
+      if (!result.ok) {
+        setMessage(result.error ?? 'Bulk Canvas LMS setup failed.');
+        return;
+      }
+
+      const errorCount = result.errors?.length ?? 0;
+      const parts = [
+        `created ${result.usersCreated} account(s)`,
+        `added ${result.coursesAdded} course(s)`,
+        `reactivated ${result.coursesReactivated} course(s)`,
+      ];
+      setMessage(errorCount > 0
+        ? `Bulk LMS setup finished: ${parts.join(', ')}; ${errorCount} row(s) need manual review.`
+        : `Bulk LMS setup finished: ${parts.join(', ')}.`
       );
       router.refresh();
     });
@@ -622,6 +660,15 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           </button>
           <button
             type="button"
+            onClick={handleBulkCanvasSetup}
+            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+            className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <UserPlusIcon className="h-4 w-4" />
+            Create/Fix LMS
+          </button>
+          <button
+            type="button"
             onClick={handleCopy}
             className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
@@ -646,7 +693,13 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
       {checklist.schema_ready && !checklist.canvas_configured && (
         <div className="mt-4 flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-none" />
-          <span><span className="font-mono">CANVAS_API_TOKEN</span> is not configured.</span>
+          <span>
+            <span className="font-mono">CANVAS_API_TOKEN</span> is not configured. Set the Canvas API token in{' '}
+            <Link href="/dashboard/settings" className="font-medium underline">
+              Settings
+            </Link>
+            .
+          </span>
         </div>
       )}
 
@@ -746,7 +799,9 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                           <div className="text-xs text-slate-500">{row.canvas_user_matches.length} candidate(s)</div>
                         )}
                         {row.canvas_sync_error && (
-                          <div className="max-w-48 text-xs text-rose-700">{syncErrorMessage(row.canvas_sync_error)}</div>
+                          <div className="max-w-48 text-xs text-rose-700">
+                            <SyncErrorMessage error={row.canvas_sync_error} />
+                          </div>
                         )}
                         <div className="font-mono text-xs text-slate-600">{row.suggested_lms_login}</div>
                         {row.canvas_user_matches.length === 0 ? (

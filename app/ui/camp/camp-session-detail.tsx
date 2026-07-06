@@ -20,7 +20,28 @@ type Seat = {
   fdEnrolmentId: string | null;
 };
 
+type RoomConfig = {
+  name: string;
+  rows: number;
+  cols: number;
+  visibleSeats: Set<number>;
+  seatOffset: number;
+  displaySeatPositions?: Map<number, number>;
+};
+
 type CampRosterEnrolment = CampSessionWithEnrolments['enrolments'][0];
+
+function displayRelativeSeatNumber(roomConfig: RoomConfig, relativeSeatNumber: number) {
+  return roomConfig.displaySeatPositions?.get(relativeSeatNumber) ?? relativeSeatNumber;
+}
+
+function displaySeatMap(roomConfig: RoomConfig) {
+  const seatsByDisplayCell = new Map<number, number>();
+  roomConfig.visibleSeats.forEach((relativeSeatNumber) => {
+    seatsByDisplayCell.set(displayRelativeSeatNumber(roomConfig, relativeSeatNumber), relativeSeatNumber);
+  });
+  return seatsByDisplayCell;
+}
 
 const cleanText = (value?: string | null) => value?.trim() || '';
 
@@ -355,6 +376,7 @@ function SeatSpot({
   return (
     <div
       ref={setDroppableRef}
+      data-seat-number={seat.number}
       className={`relative border border-dashed rounded p-1 min-h-[100px] transition-all ${
         isOver ? 'border-sky-500 bg-sky-50 scale-105' : 'border-slate-300 bg-slate-50'
       }`}
@@ -439,33 +461,38 @@ export default function CampSessionDetail({
 
   const ROOM_2_CONFIG = {
     name: 'Front Room',
-    rows: 6,
+    rows: 7,
     cols: 6,
     visibleSeats: new Set([3, 4, 7, 12, 13, 15, 16, 18, 19, 21, 22, 24, 25, 27, 28, 30, 33, 34]),
+    displaySeatPositions: new Map([
+      [19, 36],
+      [25, 42],
+    ]),
     seatOffset: 100 // Room 2 seats: 103-148
   };
 
   const [activeRoom, setActiveRoom] = useState<'room1' | 'room2'>('room1');
   const currentRoomConfig = activeRoom === 'room1' ? ROOM_1_CONFIG : ROOM_2_CONFIG;
+  const seatsByDisplayCell = displaySeatMap(currentRoomConfig);
 
   const { rows: ROWS, cols: COLS } = currentRoomConfig;
   
   // Determine which rows have at least one visible seat for current room
   const rowsWithSeats = new Set<number>();
-  currentRoomConfig.visibleSeats.forEach(seatNum => {
-    const row = Math.floor((seatNum - 1) / COLS);
+  seatsByDisplayCell.forEach((_seatNum, displayCell) => {
+    const row = Math.floor((displayCell - 1) / COLS);
     rowsWithSeats.add(row);
   });
 
   // Determine which columns have at least one visible seat for current room
   const colsWithSeats = new Set<number>();
-  currentRoomConfig.visibleSeats.forEach(seatNum => {
-    const col = ((seatNum - 1) % COLS);
+  seatsByDisplayCell.forEach((_seatNum, displayCell) => {
+    const col = ((displayCell - 1) % COLS);
     colsWithSeats.add(col);
   });
 
   const initializeSeatsForRoom = (
-    roomConfig: typeof ROOM_1_CONFIG,
+    roomConfig: RoomConfig,
     sourceSeatAssignments?: Map<number, string[]>
   ) => {
     const seats: Seat[] = [];
@@ -476,6 +503,10 @@ export default function CampSessionDetail({
         
         // Only create seats that should be visible for THIS room
         if (!roomConfig.visibleSeats.has(relativeSeatNumber)) continue;
+
+        const displaySeatNumber = displayRelativeSeatNumber(roomConfig, relativeSeatNumber);
+        const displayRow = Math.floor((displaySeatNumber - 1) / roomConfig.cols);
+        const displayCol = (displaySeatNumber - 1) % roomConfig.cols;
         
         const assignedIds = sourceSeatAssignments?.get(absoluteSeatNumber)
           ?? seatAssignments?.get(absoluteSeatNumber)
@@ -494,8 +525,8 @@ export default function CampSessionDetail({
         seats.push({
           id: `seat-${absoluteSeatNumber}`,
           number: absoluteSeatNumber,
-          row,
-          col,
+          row: displayRow,
+          col: displayCol,
           amEnrolmentId: amEnrolment?.id || null,
           pmEnrolmentId: pmEnrolment?.id || null,
           fdEnrolmentId: fdEnrolment?.id || null,
@@ -787,13 +818,14 @@ export default function CampSessionDetail({
     );
   };
 
-  const renderPrintRoom = (roomConfig: typeof ROOM_1_CONFIG, roomSeats: Seat[]) => {
+  const renderPrintRoom = (roomConfig: RoomConfig, roomSeats: Seat[]) => {
     const printRowsWithSeats = new Set<number>();
     const printColsWithSeats = new Set<number>();
+    const printSeatsByDisplayCell = displaySeatMap(roomConfig);
 
-    roomConfig.visibleSeats.forEach((seatNum) => {
-      printRowsWithSeats.add(Math.floor((seatNum - 1) / roomConfig.cols));
-      printColsWithSeats.add((seatNum - 1) % roomConfig.cols);
+    printSeatsByDisplayCell.forEach((_seatNum, displayCell) => {
+      printRowsWithSeats.add(Math.floor((displayCell - 1) / roomConfig.cols));
+      printColsWithSeats.add((displayCell - 1) % roomConfig.cols);
     });
 
     const roster = roomSeats
@@ -826,7 +858,12 @@ export default function CampSessionDetail({
             }}
           >
             {Array.from({ length: roomConfig.rows * roomConfig.cols }, (_, i) => {
-              const relativeSeatNumber = i + 1;
+              const displayCellNumber = i + 1;
+              const relativeSeatNumber = printSeatsByDisplayCell.get(displayCellNumber);
+              if (!relativeSeatNumber) {
+                return <div key={`print-empty-${roomConfig.name}-${displayCellNumber}`} />;
+              }
+
               const absoluteSeatNumber = relativeSeatNumber + roomConfig.seatOffset;
               const seat = roomSeats.find((roomSeat) => roomSeat.number === absoluteSeatNumber);
 
@@ -1041,7 +1078,12 @@ export default function CampSessionDetail({
                   }}
                 >
                   {Array.from({ length: ROWS * COLS }, (_, i) => {
-                    const relativeSeatNumber = i + 1;
+                    const displayCellNumber = i + 1;
+                    const relativeSeatNumber = seatsByDisplayCell.get(displayCellNumber);
+                    if (!relativeSeatNumber) {
+                      return <div key={`empty-${currentRoomConfig.name}-${displayCellNumber}`} />;
+                    }
+
                     const absoluteSeatNumber = relativeSeatNumber + currentRoomConfig.seatOffset;
                     const seat = seats.find(s => s.number === absoluteSeatNumber);
                     
