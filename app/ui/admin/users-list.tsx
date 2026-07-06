@@ -10,6 +10,10 @@ type User = {
   user_type: string;
 };
 
+function userTypeLabel(userType: string) {
+  return userType === 'admin' ? 'Admin' : 'Coach';
+}
+
 export default function UsersList({ users }: { users: User[] }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +86,7 @@ export default function UsersList({ users }: { users: User[] }) {
                         : 'bg-blue-100 text-blue-800'
                     }`}
                   >
-                    {user.user_type}
+                    {userTypeLabel(user.user_type)}
                   </span>
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right text-sm">
@@ -105,7 +109,7 @@ export default function UsersList({ users }: { users: User[] }) {
       </div>
 
       <div className="mt-4 text-sm text-gray-500">
-        Total users: {users.length} ({users.filter(u => u.user_type === 'admin').length} admin, {users.filter(u => u.user_type !== 'admin').length} regular)
+        Total users: {users.length} ({users.filter(u => u.user_type === 'admin').length} admin, {users.filter(u => u.user_type !== 'admin').length} coach)
       </div>
     </div>
   );

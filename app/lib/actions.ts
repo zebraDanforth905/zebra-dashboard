@@ -18,8 +18,10 @@ import {
   isCanvasTokenConfigured,
   createCanvasClient,
   clearCanvasTokenCache,
+  getCanvasDashboardTokenStatus,
   getCanvasTokenSettings,
   saveCanvasApiTokenToDb,
+  validateCanvasApiToken,
 } from './canvas-lms';
 import { Pickup } from './definitions';
 import { computeNextDate } from './utils';
@@ -2274,7 +2276,7 @@ const CreateUserSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   email: z.string().email('Invalid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  user_type: z.enum(['admin', 'user'], { message: 'User type must be either admin or user' }),
+  user_type: z.enum(['admin', 'user'], { message: 'User type must be either Admin or Coach' }),
 });
 
 const UpdatePasswordSchema = z.object({
@@ -2310,7 +2312,7 @@ export async function getAllUsers() {
 }
 
 /**
- * Create a new user (admin only, cannot create admin users)
+ * Create a new user (admin only)
  */
 export async function createUser(formData: FormData) {
   try {
@@ -2335,11 +2337,6 @@ export async function createUser(formData: FormData) {
 
     const { name, email, password, user_type } = validatedFields.data;
 
-    // Prevent creating admin users
-    if (user_type === 'admin') {
-      return { ok: false, error: 'Cannot create admin users through this interface' };
-    }
-
     // Check if user already exists
     const existingUser = await sql`
       SELECT id FROM users WHERE email = ${email}
@@ -2360,6 +2357,7 @@ export async function createUser(formData: FormData) {
 
     revalidatePath('/dashboard/admin/users');
     revalidatePath('/dashboard/staff-schedule');
+    revalidatePath('/dashboard/settings');
     return { ok: true, message: 'User created successfully' };
   } catch (e: unknown) {
     return { ok: false, error: errorMessage(e) };
@@ -2402,6 +2400,7 @@ export async function deleteUser(formData: FormData) {
 
     revalidatePath('/dashboard/admin/users');
     revalidatePath('/dashboard/staff-schedule');
+    revalidatePath('/dashboard/settings');
     return { ok: true, message: 'User deleted successfully' };
   } catch (e: unknown) {
     return { ok: false, error: errorMessage(e) };
@@ -2468,12 +2467,22 @@ export async function updatePassword(formData: FormData) {
 export async function fetchCanvasApiSettings() {
   try {
     const session = await auth();
-    if (getSessionUserType(session) !== 'admin') {
-      return { ok: false, error: 'Unauthorized: Admin access required' };
+    if (!getSessionUserId(session)) {
+      return { ok: false, error: 'Unauthorized: Login required' };
     }
 
-    const settings = await getCanvasTokenSettings();
-    return { ok: true, settings };
+    const [settings, dashboardStatus] = await Promise.all([
+      getCanvasTokenSettings(),
+      getCanvasDashboardTokenStatus(),
+    ]);
+    return {
+      ok: true,
+      settings: {
+        ...settings,
+        dashboardTokenStatus: dashboardStatus.status,
+        dashboardTokenStatusMessage: dashboardStatus.message,
+      },
+    };
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   }
@@ -2482,8 +2491,8 @@ export async function fetchCanvasApiSettings() {
 export async function saveCanvasApiToken(formData: FormData) {
   try {
     const session = await auth();
-    if (getSessionUserType(session) !== 'admin') {
-      return { ok: false, error: 'Unauthorized: Admin access required' };
+    if (!getSessionUserId(session)) {
+      return { ok: false, error: 'Unauthorized: Login required' };
     }
 
     const rawToken = formData.get('canvasApiToken');
@@ -2492,6 +2501,10 @@ export async function saveCanvasApiToken(formData: FormData) {
     const token = typeof rawToken === 'string' && !shouldClear ? rawToken.trim() : null;
 
     if (!shouldClear && token && token.length > 0) {
+      const validation = await validateCanvasApiToken(token);
+      if (!validation.ok) {
+        return { ok: false, error: validation.error };
+      }
       await saveCanvasApiTokenToDb(token);
     } else {
       await saveCanvasApiTokenToDb(null);
@@ -2504,10 +2517,14 @@ export async function saveCanvasApiToken(formData: FormData) {
     const isCleared = shouldClear || !token;
     return {
       ok: true,
-      settings,
+      settings: {
+        ...settings,
+        dashboardTokenStatus: isCleared ? null : 'valid' as const,
+        dashboardTokenStatusMessage: isCleared ? null : 'Canvas token is valid and has LMS sync access.',
+      },
       message: isCleared
         ? 'Canvas API token entry removed from dashboard settings.'
-        : 'Canvas API token saved to dashboard settings.',
+        : 'Canvas API token validated and saved to dashboard settings.',
     };
   } catch (error) {
     const pgError = error as { code?: string } | undefined;
@@ -2657,6 +2674,8 @@ const CampLmsCanvasActionSchema = z.object({
   canvasCourseId: optionalTrimmedString,
   canvasEnrollmentId: optionalTrimmedString,
 });
+
+const CampLmsBulkProvisionSchema = CampLmsDateSchema;
 
 const CampLmsCanvasCourseSearchSchema = z.object({
   term: z.string().trim().min(2).max(120),
@@ -3047,6 +3066,18 @@ async function fetchCampLmsCanvasActionRow(campEnrolmentId: string) {
   return row ?? null;
 }
 
+function expectedCanvasCourseIdsForActionRow(row: CampLmsCanvasActionRow) {
+  return Array.from(new Set([
+    row.canvas_beginner_course_id,
+    row.canvas_intermediate_course_id,
+    row.canvas_advanced_course_id,
+    ...parseCanvasCourseIdList(Array.isArray(row.canvas_additional_course_ids)
+      ? row.canvas_additional_course_ids.join(',')
+      : ''
+    ),
+  ].filter((courseId): courseId is string => Boolean(courseId))));
+}
+
 function splitMappingLine(line: string) {
   if (line.includes('\t')) return line.split('\t').map((cell) => cell.trim());
   if (line.includes('|')) return line.split('|').map((cell) => cell.trim()).filter(Boolean);
@@ -3165,6 +3196,165 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
     }
     console.error('Error syncing camp LMS Canvas state:', error);
     return { ok: false, error: 'Failed to sync Canvas LMS state' };
+  }
+}
+
+export async function provisionCampLmsCanvasWeek(startDate: string, endDate: string) {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: 'Unauthorized: Please log in' };
+  }
+
+  const parsed = CampLmsBulkProvisionSchema.safeParse({ startDate, endDate });
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid camp week dates' };
+  }
+
+  try {
+    if (!(await campLmsChecklistSchemaReady())) {
+      return { ok: false, error: 'Apply LMS checklist migrations before running bulk Canvas setup.' };
+    }
+    if (!(await isCanvasTokenConfigured())) {
+      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas writes' };
+    }
+
+    const client = createCanvasClient();
+    const rows = await fetchCampLmsSyncRows(parsed.data.startDate, parsed.data.endDate);
+    let synced = 0;
+    let usersCreated = 0;
+    let coursesAdded = 0;
+    let coursesReactivated = 0;
+    let skipped = 0;
+    const errors: Array<{ enrolmentId: string; studentName: string; error: string }> = [];
+
+    for (const syncRow of rows) {
+      const syncResult = await syncCampLmsCanvasState(syncRow, client);
+      if (syncResult.ok) {
+        synced += 1;
+      } else {
+        errors.push({
+          enrolmentId: syncRow.camp_enrolment_id,
+          studentName: syncRow.student_name,
+          error: `Sync LMS failed before setup: ${syncResult.error ?? 'unknown error'}`,
+        });
+        continue;
+      }
+
+      let row = await fetchCampLmsCanvasActionRow(syncRow.camp_enrolment_id);
+      if (!row) {
+        errors.push({
+          enrolmentId: syncRow.camp_enrolment_id,
+          studentName: syncRow.student_name,
+          error: 'Camp enrolment not found',
+        });
+        continue;
+      }
+
+      if (!row.canvas_user_id) {
+        const candidateCount = Array.isArray(row.canvas_user_matches) ? row.canvas_user_matches.length : 0;
+        if (candidateCount > 0) {
+          skipped += 1;
+          errors.push({
+            enrolmentId: syncRow.camp_enrolment_id,
+            studentName: syncRow.student_name,
+            error: 'Canvas returned possible matching users. Review candidate matches before creating a new user.',
+          });
+          continue;
+        }
+
+        const createResult = await runCampLmsCanvasTestAction({
+          campEnrolmentId: syncRow.camp_enrolment_id,
+          type: 'create_user',
+        });
+        if (!createResult.ok) {
+          errors.push({
+            enrolmentId: syncRow.camp_enrolment_id,
+            studentName: syncRow.student_name,
+            error: createResult.error ?? 'Canvas user creation failed',
+          });
+          continue;
+        }
+        usersCreated += 1;
+
+        const resyncResult = await syncCampLmsCanvasState(syncRow, client);
+        if (!resyncResult.ok) {
+          errors.push({
+            enrolmentId: syncRow.camp_enrolment_id,
+            studentName: syncRow.student_name,
+            error: `Canvas user was created, but Sync LMS failed before course setup: ${resyncResult.error ?? 'unknown error'}`,
+          });
+          continue;
+        }
+        row = await fetchCampLmsCanvasActionRow(syncRow.camp_enrolment_id);
+        if (!row?.canvas_user_id) {
+          errors.push({
+            enrolmentId: syncRow.camp_enrolment_id,
+            studentName: syncRow.student_name,
+            error: 'Canvas user was created, but Sync LMS did not find it yet. Sync LMS and run bulk setup again.',
+          });
+          continue;
+        }
+      }
+
+      const expectedCourseIds = expectedCanvasCourseIdsForActionRow(row);
+      if (expectedCourseIds.length === 0) {
+        skipped += 1;
+        continue;
+      }
+
+      const activeEnrollments = Array.isArray(row.active_enrollments)
+        ? row.active_enrollments as Array<Record<string, unknown>>
+        : [];
+      const inactiveEnrollments = Array.isArray(row.inactive_enrollments)
+        ? row.inactive_enrollments as Array<Record<string, unknown>>
+        : [];
+
+      for (const courseId of expectedCourseIds) {
+        const alreadyActive = activeEnrollments.some((candidate) => String(candidate.course_id) === courseId);
+        if (alreadyActive) continue;
+
+        const inactiveEnrollment = inactiveEnrollments.find((candidate) => String(candidate.course_id) === courseId);
+        const enrollmentId = inactiveEnrollment?.enrollment_id == null ? undefined : String(inactiveEnrollment.enrollment_id);
+        const courseResult = await runCampLmsCanvasTestAction({
+          campEnrolmentId: syncRow.camp_enrolment_id,
+          type: 'activate_course',
+          canvasCourseId: courseId,
+          canvasEnrollmentId: enrollmentId,
+        });
+
+        if (!courseResult.ok) {
+          errors.push({
+            enrolmentId: syncRow.camp_enrolment_id,
+            studentName: syncRow.student_name,
+            error: courseResult.error ?? `Failed to add Canvas course ${courseId}`,
+          });
+          continue;
+        }
+
+        if (enrollmentId) {
+          coursesReactivated += 1;
+        } else {
+          coursesAdded += 1;
+        }
+      }
+    }
+
+    await revalidateCampLmsPaths(parsed.data.startDate, parsed.data.endDate);
+    return {
+      ok: true,
+      synced,
+      usersCreated,
+      coursesAdded,
+      coursesReactivated,
+      skipped,
+      errors,
+    };
+  } catch (error) {
+    if (error instanceof CanvasConfigError) {
+      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas writes' };
+    }
+    console.error('Error running bulk camp LMS Canvas setup:', error);
+    return { ok: false, error: 'Failed to run bulk Canvas LMS setup' };
   }
 }
 
@@ -3592,17 +3782,7 @@ export async function runCampLmsCanvasTestAction(input: {
     const activeEnrollments = Array.isArray(row.active_enrollments)
       ? row.active_enrollments as Array<Record<string, unknown>>
       : [];
-    const expectedCourseIds = new Set(
-      [
-        row.canvas_beginner_course_id,
-        row.canvas_intermediate_course_id,
-        row.canvas_advanced_course_id,
-        ...parseCanvasCourseIdList(Array.isArray(row.canvas_additional_course_ids)
-          ? row.canvas_additional_course_ids.join(',')
-          : ''
-        ),
-      ].filter((courseId): courseId is string => Boolean(courseId))
-    );
+    const expectedCourseIds = new Set(expectedCanvasCourseIdsForActionRow(row));
     let responsePayload: unknown = null;
     let afterState: CampLmsCanvasSyncState | null = null;
     let success = false;

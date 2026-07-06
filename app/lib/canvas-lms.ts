@@ -51,11 +51,15 @@ const CANVAS_TOKEN_SETTING_KEY = 'CANVAS_API_TOKEN';
 const CANVAS_TOKEN_CACHE_MS = 30_000;
 
 export type CanvasTokenSource = 'environment' | 'database' | 'none';
+export type CanvasDashboardTokenStatus = 'valid' | 'invalid' | 'unchecked' | null;
 
 export type CanvasTokenSettings = {
   configured: boolean;
   source: CanvasTokenSource;
   maskedToken: string | null;
+  dashboardMaskedToken: string | null;
+  dashboardTokenStatus: CanvasDashboardTokenStatus;
+  dashboardTokenStatusMessage: string | null;
 };
 
 type CachedCanvasToken = {
@@ -118,20 +122,27 @@ async function getCanvasTokenFromDb() {
 
 export async function getCanvasTokenSettings(): Promise<CanvasTokenSettings> {
   const envToken = normalizeToken(process.env.CANVAS_API_TOKEN);
-  if (envToken) {
-    return {
-      configured: true,
-      source: 'environment',
-      maskedToken: maskToken(envToken),
-    };
-  }
-
   const dbToken = await getCanvasTokenFromDb();
+
   if (dbToken) {
     return {
       configured: true,
       source: 'database',
       maskedToken: maskToken(dbToken),
+      dashboardMaskedToken: maskToken(dbToken),
+      dashboardTokenStatus: 'unchecked',
+      dashboardTokenStatusMessage: null,
+    };
+  }
+
+  if (envToken) {
+    return {
+      configured: true,
+      source: 'environment',
+      maskedToken: maskToken(envToken),
+      dashboardMaskedToken: null,
+      dashboardTokenStatus: null,
+      dashboardTokenStatusMessage: null,
     };
   }
 
@@ -139,6 +150,9 @@ export async function getCanvasTokenSettings(): Promise<CanvasTokenSettings> {
     configured: false,
     source: 'none',
     maskedToken: null,
+    dashboardMaskedToken: null,
+    dashboardTokenStatus: null,
+    dashboardTokenStatusMessage: null,
   };
 }
 
@@ -175,15 +189,102 @@ export async function saveCanvasApiTokenToDb(rawToken: string | null | undefined
   canvasTokenCache = null;
 }
 
+export async function validateCanvasApiToken(rawToken: string | null | undefined) {
+  const token = normalizeToken(rawToken);
+  if (!token) {
+    return { ok: false as const, error: 'Paste a Canvas API token before saving.' };
+  }
+
+  const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+  const checks = [
+    {
+      label: 'Canvas profile',
+      url: new URL('/api/v1/users/self/profile', canvasBaseUrl()),
+    },
+    {
+      label: 'Canvas account users',
+      url: new URL(`/api/v1/accounts/${accountId}/users`, canvasBaseUrl()),
+    },
+    {
+      label: 'Canvas account courses',
+      url: new URL(`/api/v1/accounts/${accountId}/courses`, canvasBaseUrl()),
+    },
+  ];
+
+  checks[1].url.searchParams.set('search_term', 'test');
+  checks[1].url.searchParams.set('per_page', '1');
+  checks[2].url.searchParams.set('per_page', '1');
+
+  for (const check of checks) {
+    const response = await fetch(check.url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json+canvas-string-ids',
+      },
+      cache: 'no-store',
+    });
+
+    if (response.ok) continue;
+
+    let message = '';
+    try {
+      const data = await response.clone().json();
+      message = typeof data === 'object' && data && 'message' in data
+        ? String((data as { message?: unknown }).message)
+        : '';
+    } catch {
+      message = (await response.text()).slice(0, 160);
+    }
+
+    const reason = message ? ` ${message}` : '';
+    return {
+      ok: false as const,
+      error: `${check.label} check failed (${response.status}).${reason} Confirm the token was copied fully and has access to the Canvas account used for LMS sync.`,
+    };
+  }
+
+  return { ok: true as const };
+}
+
+export async function getCanvasDashboardTokenStatus() {
+  const token = await getCanvasTokenFromDb();
+  if (!token) {
+    return {
+      status: null as CanvasDashboardTokenStatus,
+      message: null,
+    };
+  }
+
+  try {
+    const validation = await validateCanvasApiToken(token);
+    if (validation.ok) {
+      return {
+        status: 'valid' as CanvasDashboardTokenStatus,
+        message: 'Canvas token is valid and has LMS sync access.',
+      };
+    }
+
+    return {
+      status: 'invalid' as CanvasDashboardTokenStatus,
+      message: validation.error,
+    };
+  } catch (error) {
+    return {
+      status: 'invalid' as CanvasDashboardTokenStatus,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export function clearCanvasTokenCache() {
   canvasTokenCache = null;
 }
 
 async function getCanvasTokenFromEnvOrDb() {
-  const envToken = normalizeToken(process.env.CANVAS_API_TOKEN);
-  if (envToken) return envToken;
+  const dbToken = await getCanvasTokenFromDb();
+  if (dbToken) return dbToken;
 
-  return getCanvasTokenFromDb();
+  return normalizeToken(process.env.CANVAS_API_TOKEN);
 }
 
 export async function isCanvasTokenConfigured() {

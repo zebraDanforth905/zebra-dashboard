@@ -4,11 +4,15 @@ import { useState } from 'react';
 import { saveCanvasApiToken } from '@/app/lib/actions';
 
 type CanvasTokenSource = 'environment' | 'database' | 'none';
+type CanvasDashboardTokenStatus = 'valid' | 'invalid' | 'unchecked' | null;
 
 type Props = {
   configured: boolean;
   source: CanvasTokenSource;
   maskedToken: string | null;
+  dashboardMaskedToken: string | null;
+  dashboardTokenStatus: CanvasDashboardTokenStatus;
+  dashboardTokenStatusMessage: string | null;
   settingsError: string | null;
 };
 
@@ -16,16 +20,25 @@ export default function CanvasApiTokenForm({
   configured,
   source,
   maskedToken,
+  dashboardMaskedToken,
+  dashboardTokenStatus,
+  dashboardTokenStatusMessage,
   settingsError,
 }: Props) {
+  const [currentConfigured, setCurrentConfigured] = useState(configured);
+  const [currentSource, setCurrentSource] = useState(source);
+  const [currentMaskedToken, setCurrentMaskedToken] = useState(maskedToken);
+  const [currentDashboardMaskedToken, setCurrentDashboardMaskedToken] = useState(dashboardMaskedToken);
+  const [currentDashboardTokenStatus, setCurrentDashboardTokenStatus] = useState(dashboardTokenStatus);
+  const [currentDashboardTokenStatusMessage, setCurrentDashboardTokenStatusMessage] = useState(dashboardTokenStatusMessage);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const sourceLabel =
-    source === 'environment'
+    currentSource === 'environment'
       ? 'Environment variable'
-      : source === 'database'
+      : currentSource === 'database'
         ? 'Database setting (via dashboard)'
         : 'Not configured';
 
@@ -36,6 +49,14 @@ export default function CanvasApiTokenForm({
 
     const result = await saveCanvasApiToken(formData);
     if (result.ok) {
+      if (result.settings) {
+        setCurrentConfigured(result.settings.configured);
+        setCurrentSource(result.settings.source);
+        setCurrentMaskedToken(result.settings.maskedToken);
+        setCurrentDashboardMaskedToken(result.settings.dashboardMaskedToken);
+        setCurrentDashboardTokenStatus(result.settings.dashboardTokenStatus);
+        setCurrentDashboardTokenStatusMessage(result.settings.dashboardTokenStatusMessage);
+      }
       setSuccess(result.message || 'Canvas API token updated');
     } else {
       setError(result.error || 'Failed to update Canvas API token');
@@ -58,17 +79,47 @@ export default function CanvasApiTokenForm({
             Canvas token source: <strong>{sourceLabel}</strong>
           </p>
 
-          {configured && maskedToken && source === 'database' && (
+          {currentDashboardMaskedToken && (
+            <div className="mb-4 text-sm text-gray-600">
+              <p className="flex flex-wrap items-center gap-2">
+                <span>
+                  Stored dashboard token{currentSource === 'database' ? ' (active)' : ''}:{' '}
+                  <span className="font-mono">{currentDashboardMaskedToken}</span>
+                </span>
+                {currentDashboardTokenStatus && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      currentDashboardTokenStatus === 'valid'
+                        ? 'bg-green-100 text-green-800'
+                        : currentDashboardTokenStatus === 'invalid'
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    Status: {currentDashboardTokenStatus}
+                  </span>
+                )}
+              </p>
+              {currentDashboardTokenStatus === 'invalid' && currentDashboardTokenStatusMessage && (
+                <p className="mt-1 text-xs text-red-700">{currentDashboardTokenStatusMessage}</p>
+              )}
+            </div>
+          )}
+
+          {currentConfigured && currentMaskedToken && currentSource === 'environment' && (
             <p className="text-sm text-gray-600 mb-4">
-              Stored token: <span className="font-mono">{maskedToken}</span>
+              Stored environment token (active): <span className="font-mono">{currentMaskedToken}</span>
             </p>
           )}
 
-          {configured && source === 'environment' && (
-            <p className="text-sm text-gray-600 mb-4">
-              Stored environment token: <span className="font-mono">{maskedToken}</span>
-            </p>
-          )}
+          <div className="mb-4 rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
+            <p className="font-medium">Canvas (LMS) API token setup</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li>Open Canvas LMS.</li>
+              <li>Go to Account &gt; Settings &gt; New Access Token.</li>
+              <li>Create the token, copy it, and paste that token here.</li>
+            </ol>
+          </div>
         </>
       )}
 
@@ -93,7 +144,7 @@ export default function CanvasApiTokenForm({
             type="password"
             id="canvasApiToken"
             name="canvasApiToken"
-            placeholder="Paste a token to store in app settings"
+            placeholder="Paste the Canvas access token here"
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isSubmitting}
             autoComplete="off"
@@ -101,9 +152,9 @@ export default function CanvasApiTokenForm({
           <p className="mt-1 text-xs text-gray-500">
             Leave blank and save to clear the dashboard-stored token.
           </p>
-          {source === 'environment' && (
+          {currentSource === 'environment' && (
             <p className="mt-1 text-xs text-amber-700">
-              Environment token is active and will override the dashboard setting.
+              Environment token is active because no dashboard token is saved.
             </p>
           )}
         </div>
