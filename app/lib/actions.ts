@@ -2284,6 +2284,11 @@ const UpdatePasswordSchema = z.object({
   newPassword: z.string().min(6, 'New password must be at least 6 characters'),
 });
 
+const AdminUpdateUserPasswordSchema = z.object({
+  userId: z.string().uuid('User ID is required'),
+  newPassword: z.string().min(6, 'New password must be at least 6 characters'),
+});
+
 /**
  * Get all users (admin only)
  */
@@ -2402,6 +2407,51 @@ export async function deleteUser(formData: FormData) {
     revalidatePath('/dashboard/staff-schedule');
     revalidatePath('/dashboard/settings');
     return { ok: true, message: 'User deleted successfully' };
+  } catch (e: unknown) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
+/**
+ * Update another user's password (admin only)
+ */
+export async function adminUpdateUserPassword(formData: FormData) {
+  try {
+    const session = await auth();
+    if (getSessionUserType(session) !== 'admin') {
+      return { ok: false, error: 'Unauthorized: Admin access required' };
+    }
+
+    const validatedFields = AdminUpdateUserPasswordSchema.safeParse({
+      userId: formData.get('userId'),
+      newPassword: formData.get('newPassword'),
+    });
+
+    if (!validatedFields.success) {
+      return {
+        ok: false,
+        error: validatedFields.error.issues[0]?.message ?? 'Invalid password update',
+      };
+    }
+
+    const { userId, newPassword } = validatedFields.data;
+
+    const user = await sql<Array<{ id: string }>>`
+      SELECT id FROM users WHERE id = ${userId}
+    `;
+    if (user.length === 0) {
+      return { ok: false, error: 'User not found' };
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await sql`
+      UPDATE users
+      SET password = ${hashedPassword}
+      WHERE id = ${userId}
+    `;
+
+    revalidatePath('/dashboard/settings');
+    return { ok: true, message: 'Password updated successfully' };
   } catch (e: unknown) {
     return { ok: false, error: errorMessage(e) };
   }
@@ -2783,6 +2833,18 @@ function canvasUserSummary(user: CanvasUser) {
   };
 }
 
+function normalizeStoredCanvasPassword(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'none') return null;
+  return trimmed;
+}
+
+function defaultCanvasStudentPassword() {
+  return process.env.CANVAS_DEFAULT_STUDENT_PASSWORD?.trim()
+    || process.env.CAMP_ACCOUNT_DEFAULT_PASSWORD?.trim()
+    || 'zebra123';
+}
+
 function canvasCourseSummary(course: CanvasCourse): CampLmsCanvasCourseSearchResult {
   return {
     id: String(course.id),
@@ -2804,6 +2866,38 @@ function dedupeCanvasUsers(users: CanvasUser[]) {
   });
 
   return deduped;
+}
+
+async function canvasPasswordForStudent(row: { student_id: string; student_name: string }) {
+  const login = `${row.student_id}@zebrarobotics.com`;
+  const [storedPassword] = await sql<{ lms_password: string | null }[]>`
+    SELECT lms_password
+    FROM slip_info
+    WHERE lms_username = ${login}
+      OR student_name = ${row.student_name}
+    ORDER BY id DESC
+    LIMIT 1
+  `;
+
+  return normalizeStoredCanvasPassword(storedPassword?.lms_password)
+    ?? defaultCanvasStudentPassword();
+}
+
+async function updateCanvasLoginPassword(
+  client: ReturnType<typeof createCanvasClient>,
+  userId: string,
+  loginId: string,
+  password: string
+) {
+  const logins = await client.getUserLogins(userId);
+  const login = logins.find((candidate) => normalizeCanvasLookupValue(candidate.unique_id) === normalizeCanvasLookupValue(loginId))
+    ?? logins[0];
+  const canvasLoginId = login?.id == null ? null : String(login.id);
+  if (!canvasLoginId) {
+    throw new Error(`Canvas user ${userId} does not have a login that can be updated.`);
+  }
+
+  await client.updateLoginPassword(canvasLoginId, password);
 }
 
 function findBestCanvasUser(users: CanvasUser[], row: CampLmsSyncRow) {
@@ -2838,6 +2932,10 @@ function splitCanvasEnrollments(enrollments: NormalizedCanvasEnrollment[]) {
 
 function canvasErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function appendCanvasWarning(current: string | null, next: string) {
+  return current ? `${current} ${next}` : next;
 }
 
 async function fetchCampLmsSyncRows(startDate: string, endDate: string) {
@@ -2897,7 +2995,14 @@ async function syncCampLmsCanvasState(row: CampLmsSyncRow, client = createCanvas
   try {
     const loginMatches = await client.searchUsers(row.suggested_lms_login);
     const nameMatches = await client.searchUsers(row.student_name);
-    const users = dedupeCanvasUsers([...loginMatches, ...nameMatches]);
+    const rootLoginMatches = await client.searchRootUsers(row.suggested_lms_login);
+    const rootStudentMatches = await client.searchRootUsers(row.student_id);
+    const users = dedupeCanvasUsers([
+      ...loginMatches,
+      ...nameMatches,
+      ...rootLoginMatches,
+      ...rootStudentMatches,
+    ]);
     const selectedUser = findBestCanvasUser(users, row);
     const matches = users.slice(0, 8).map(canvasUserSummary);
 
@@ -3760,17 +3865,12 @@ export async function runCampLmsCanvasTestAction(input: {
     if (type !== 'create_user' && !row.canvas_user_id) {
       return { ok: false, error: 'Canvas did not find a user for this camper. Create or resolve the Canvas user before changing courses.' };
     }
-    if (type === 'create_user' && row.canvas_user_id) {
-      return { ok: false, error: 'A Canvas user already exists for this camper.' };
-    }
     if (type === 'create_user' && row.canvas_sync_status !== 'synced') {
       return { ok: false, error: 'Canvas user lookup did not finish cleanly. Try again after Sync LMS succeeds.' };
     }
-    if (type === 'create_user' && row.canvas_user_found) {
-      return { ok: false, error: 'A Canvas user is already matched for this camper.' };
-    }
     if (
       type === 'create_user'
+      && !row.canvas_user_id
       && Array.isArray(row.canvas_user_matches)
       && row.canvas_user_matches.length > 0
     ) {
@@ -3782,6 +3882,9 @@ export async function runCampLmsCanvasTestAction(input: {
     const activeEnrollments = Array.isArray(row.active_enrollments)
       ? row.active_enrollments as Array<Record<string, unknown>>
       : [];
+    const inactiveEnrollments = Array.isArray(row.inactive_enrollments)
+      ? row.inactive_enrollments as Array<Record<string, unknown>>
+      : [];
     const expectedCourseIds = new Set(expectedCanvasCourseIdsForActionRow(row));
     let responsePayload: unknown = null;
     let afterState: CampLmsCanvasSyncState | null = null;
@@ -3791,68 +3894,142 @@ export async function runCampLmsCanvasTestAction(input: {
     let courseId: string | null = null;
     let enrollmentId: string | null = null;
     let auditCanvasUserId: string | null = row.canvas_user_id;
-    // Every action except create_user is gated by the canvas_user_id guard above.
-    const enrollUserId = row.canvas_user_id as string;
+    let enrollUserId = row.canvas_user_id;
 
     try {
       if (type === 'create_user') {
         const login = `${row.student_id}@zebrarobotics.com`;
+        const password = await canvasPasswordForStudent(row);
+        const setupResults: Record<string, unknown> = {
+          reusedExistingUser: Boolean(row.canvas_user_id),
+          expectedCourses: [],
+        };
         requestPayload.name = row.student_name;
         requestPayload.loginId = login;
         requestPayload.email = login;
-        const created = await client.createUser({
-          name: row.student_name,
-          loginId: login,
-          email: login,
-        });
-        responsePayload = created;
-        const newId = (created as { id?: unknown })?.id;
-        if (newId != null) {
-          auditCanvasUserId = String(newId);
+        requestPayload.passwordSource = password === defaultCanvasStudentPassword() ? 'default' : 'slip_info';
+
+        if (!enrollUserId) {
+          const created = await client.createUser({
+            name: row.student_name,
+            loginId: login,
+            email: login,
+            password,
+          });
+          setupResults.createdUser = created;
+          const newId = (created as { id?: unknown })?.id;
+          if (newId != null) {
+            auditCanvasUserId = String(newId);
+            enrollUserId = String(newId);
+          }
         }
+
+        if (!enrollUserId) {
+          throw new Error('Canvas user setup did not return a user id.');
+        }
+
+        requestPayload.canvasUserId = enrollUserId;
+        try {
+          await updateCanvasLoginPassword(client, enrollUserId, login, password);
+          setupResults.passwordUpdated = true;
+        } catch (error) {
+          setupResults.passwordUpdated = false;
+          warning = `Canvas user setup continued, but password update failed: ${canvasErrorMessage(error)}`;
+        }
+
+        for (const expectedCourseId of expectedCourseIds) {
+          const alreadyActive = activeEnrollments.some((candidate) => String(candidate.course_id) === expectedCourseId);
+          if (alreadyActive) continue;
+
+          const inactiveEnrollment = inactiveEnrollments.find((candidate) => String(candidate.course_id) === expectedCourseId);
+          const expectedEnrollmentId = inactiveEnrollment?.enrollment_id == null
+            ? null
+            : String(inactiveEnrollment.enrollment_id);
+          courseId = expectedCourseId;
+          enrollmentId = expectedEnrollmentId;
+
+          const courseResult = expectedEnrollmentId
+            ? await client.reactivateEnrollment(expectedCourseId, expectedEnrollmentId)
+            : await client.enrollStudent(expectedCourseId, enrollUserId);
+          (setupResults.expectedCourses as Array<Record<string, unknown>>).push({
+            courseId: expectedCourseId,
+            action: expectedEnrollmentId ? 'reactivated' : 'enrolled',
+            response: courseResult,
+          });
+        }
+
+        responsePayload = setupResults;
       } else if (type === 'add_expected_beginner') {
+        enrollUserId = row.canvas_user_id as string;
         courseId = canvasCourseId || row.canvas_beginner_course_id;
         if (!courseId || courseId !== row.canvas_beginner_course_id) {
           throw new Error('Expected Canvas course is not mapped for this camper.');
         }
-        const alreadyActive = activeEnrollments.some((candidate) => expectedCourseIds.has(String(candidate.course_id)));
-        if (alreadyActive) {
-          throw new Error('An expected Canvas course is already active in the latest Canvas sync. Sync LMS before trying again.');
-        }
         requestPayload.canvasCourseId = courseId;
         requestPayload.canvasUserId = enrollUserId;
-        responsePayload = await client.enrollStudent(courseId, enrollUserId);
+        const password = await canvasPasswordForStudent(row);
+        const alreadyActive = activeEnrollments.some((candidate) => String(candidate.course_id) === courseId);
+        const inactiveEnrollment = inactiveEnrollments.find((candidate) => String(candidate.course_id) === courseId);
+        const expectedEnrollmentId = inactiveEnrollment?.enrollment_id == null
+          ? null
+          : String(inactiveEnrollment.enrollment_id);
+        let courseResult: unknown = null;
+        if (alreadyActive) {
+          courseResult = { skipped: true, reason: 'Expected Canvas course is already active.' };
+        } else if (expectedEnrollmentId) {
+          enrollmentId = expectedEnrollmentId;
+          courseResult = await client.reactivateEnrollment(courseId, expectedEnrollmentId);
+        } else {
+          courseResult = await client.enrollStudent(courseId, enrollUserId);
+        }
+        try {
+          await updateCanvasLoginPassword(client, enrollUserId, `${row.student_id}@zebrarobotics.com`, password);
+        } catch (error) {
+          warning = appendCanvasWarning(
+            warning,
+            `Canvas course was added, but password update failed: ${canvasErrorMessage(error)}`
+          );
+        }
+        responsePayload = {
+          course: courseResult,
+          passwordUpdateAttempted: true,
+        };
       } else if (type === 'activate_course') {
+        enrollUserId = row.canvas_user_id as string;
         courseId = canvasCourseId ?? null;
         enrollmentId = canvasEnrollmentId ?? null;
         if (!courseId) {
           throw new Error('Choose a Canvas course to set active.');
         }
 
-        const inactiveEnrollments = Array.isArray(row.inactive_enrollments)
-          ? row.inactive_enrollments as Array<Record<string, unknown>>
-          : [];
         if (enrollmentId) {
           const enrollment = inactiveEnrollments.find((candidate) =>
             String(candidate.enrollment_id) === enrollmentId && String(candidate.course_id) === courseId
           );
-          if (!enrollment) {
+          const alreadyActive = activeEnrollments.some((candidate) =>
+            String(candidate.enrollment_id) === enrollmentId || String(candidate.course_id) === courseId
+          );
+          if (!enrollment && !alreadyActive) {
             throw new Error('The selected enrollment is not in the latest inactive Canvas sync. Sync LMS before trying again.');
           }
         } else {
           const alreadyActive = activeEnrollments.some((candidate) => String(candidate.course_id) === courseId);
-          if (alreadyActive) {
-            throw new Error('This Canvas course is already active for this camper. Sync LMS if the checklist looks stale.');
-          }
           const inactiveEnrollment = inactiveEnrollments.find((candidate) => String(candidate.course_id) === courseId);
-          if (inactiveEnrollment) {
-            throw new Error('This Canvas course is already inactive for this camper. Use Make active on the inactive enrollment instead.');
+          if (!alreadyActive && inactiveEnrollment?.enrollment_id != null) {
+            enrollmentId = String(inactiveEnrollment.enrollment_id);
           }
         }
 
         requestPayload.canvasCourseId = courseId;
         requestPayload.canvasUserId = enrollUserId;
-        if (enrollmentId) {
+        const activeEnrollment = activeEnrollments.find((candidate) => String(candidate.course_id) === courseId);
+        if (activeEnrollment) {
+          responsePayload = {
+            skipped: true,
+            reason: 'Canvas course is already active.',
+            enrollment: activeEnrollment,
+          };
+        } else if (enrollmentId) {
           // Reactivate the existing inactive enrollment rather than POSTing a new
           // one, which would leave a duplicate if the original sat in a non-default section.
           requestPayload.canvasEnrollmentId = enrollmentId;
@@ -3860,7 +4037,17 @@ export async function runCampLmsCanvasTestAction(input: {
         } else {
           responsePayload = await client.enrollStudent(courseId, enrollUserId);
         }
+        const password = await canvasPasswordForStudent(row);
+        try {
+          await updateCanvasLoginPassword(client, enrollUserId, `${row.student_id}@zebrarobotics.com`, password);
+        } catch (error) {
+          warning = appendCanvasWarning(
+            warning,
+            `Canvas course was updated, but password update failed: ${canvasErrorMessage(error)}`
+          );
+        }
       } else {
+        enrollUserId = row.canvas_user_id as string;
         const requestedCourseId = canvasCourseId ?? null;
         const requestedEnrollmentId = canvasEnrollmentId ?? null;
 
@@ -3876,52 +4063,66 @@ export async function runCampLmsCanvasTestAction(input: {
         });
 
         if (!enrollment) {
-          console.error('[lms inactivate] no matching active enrollment', {
-            campEnrolmentId,
-            receivedCourseId: requestedCourseId,
-            receivedEnrollmentId: requestedEnrollmentId,
-            activeEnrollmentCount: activeEnrollments.length,
-            activeEnrollmentSample: activeEnrollments.slice(0, 5).map((candidate) => ({
-              enrollment_id: candidate.enrollment_id ?? null,
-              course_id: candidate.course_id ?? null,
-              state: candidate.state ?? null,
-            })),
+          const inactiveEnrollment = inactiveEnrollments.find((candidate) => {
+            const candidateEnrollmentId = candidate.enrollment_id == null ? null : String(candidate.enrollment_id);
+            const candidateCourseId = candidate.course_id == null ? null : String(candidate.course_id);
+            if (requestedEnrollmentId && candidateEnrollmentId !== requestedEnrollmentId) return false;
+            if (requestedCourseId && candidateCourseId !== requestedCourseId) return false;
+            return Boolean(requestedEnrollmentId) || Boolean(requestedCourseId);
           });
-          throw new Error(
-            requestedCourseId || requestedEnrollmentId
-              ? 'The selected enrollment is not in the latest active Canvas sync. Sync LMS before trying again.'
-              : 'Choose an active Canvas enrollment to set inactive.'
-          );
+          if (inactiveEnrollment || requestedCourseId || requestedEnrollmentId) {
+            courseId = inactiveEnrollment?.course_id == null
+              ? requestedCourseId
+              : String(inactiveEnrollment.course_id);
+            enrollmentId = inactiveEnrollment?.enrollment_id == null
+              ? requestedEnrollmentId
+              : String(inactiveEnrollment.enrollment_id);
+            responsePayload = {
+              skipped: true,
+              reason: inactiveEnrollment
+                ? 'Canvas enrollment is already inactive.'
+                : 'Canvas enrollment is already not active.',
+            };
+          }
+
+          if (!responsePayload) {
+            throw new Error('Choose an active Canvas enrollment to set inactive.');
+          }
         }
 
-        courseId = enrollment.course_id == null ? null : String(enrollment.course_id);
-        enrollmentId = enrollment.enrollment_id == null ? null : String(enrollment.enrollment_id);
-        if (!courseId || !enrollmentId) {
-          throw new Error('The selected Canvas enrollment is missing its course or enrollment id in the latest sync. Sync LMS and try again.');
-        }
-        if (expectedCourseIds.has(courseId)) {
-          throw new Error('Refusing to set an expected Canvas course inactive for this camper.');
-        }
+        if (!responsePayload) {
+          if (!enrollment) {
+            throw new Error('Choose an active Canvas enrollment to set inactive.');
+          }
+          courseId = enrollment.course_id == null ? null : String(enrollment.course_id);
+          enrollmentId = enrollment.enrollment_id == null ? null : String(enrollment.enrollment_id);
+          if (!courseId || !enrollmentId) {
+            throw new Error('The selected Canvas enrollment is missing its course or enrollment id in the latest sync. Sync LMS and try again.');
+          }
+          if (expectedCourseIds.has(courseId)) {
+            throw new Error('Refusing to set an expected Canvas course inactive for this camper.');
+          }
 
-        const [mappedCourse] = await sql<{ exists: boolean }[]>`
-          SELECT EXISTS (
-            SELECT 1
-            FROM camp_lms_course_mappings
-            WHERE ${courseId} IN (
-              canvas_beginner_course_id,
-              canvas_intermediate_course_id,
-              canvas_advanced_course_id
-            )
-            OR canvas_additional_course_ids ? ${courseId}
-          ) AS exists;
-        `;
-        if (!mappedCourse?.exists) {
-          throw new Error('The selected enrollment is not one of the mapped Canvas camp courses.');
-        }
+          const [mappedCourse] = await sql<{ exists: boolean }[]>`
+            SELECT EXISTS (
+              SELECT 1
+              FROM camp_lms_course_mappings
+              WHERE ${courseId} IN (
+                canvas_beginner_course_id,
+                canvas_intermediate_course_id,
+                canvas_advanced_course_id
+              )
+              OR canvas_additional_course_ids ? ${courseId}
+            ) AS exists;
+          `;
+          if (!mappedCourse?.exists) {
+            throw new Error('The selected enrollment is not one of the mapped Canvas camp courses.');
+          }
 
-        requestPayload.canvasCourseId = courseId;
-        requestPayload.canvasEnrollmentId = enrollmentId;
-        responsePayload = await client.inactivateEnrollment(courseId, enrollmentId);
+          requestPayload.canvasCourseId = courseId;
+          requestPayload.canvasEnrollmentId = enrollmentId;
+          responsePayload = await client.inactivateEnrollment(courseId, enrollmentId);
+        }
       }
 
       const syncResult = await syncCampLmsCanvasState(syncRow, client);
