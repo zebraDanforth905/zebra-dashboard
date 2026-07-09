@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ParentLinkRow } from '@/app/lib/definitions';
+import { ParentLinkRow, UntokenizedFamilyRow } from '@/app/lib/definitions';
 import CopyLinkButton from './copy-link-button';
 import GenerateTokensButton from './generate-tokens-button';
 import ExportCsvButton from './export-csv-button';
@@ -25,6 +25,7 @@ function formatDate(d: Date | null): string {
 
 type FilterValue =
   | 'all'
+  | 'needs_token'
   | 'not_responded'
   | 'not_exported'
   | 'exported'
@@ -34,6 +35,7 @@ type FilterValue =
 
 const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'all',           label: 'All families' },
+  { value: 'needs_token',   label: 'Needs token' },
   { value: 'not_responded', label: 'Needs email (not responded)' },
   { value: 'not_exported',  label: 'Not exported' },
   { value: 'exported',      label: 'Exported' },
@@ -70,6 +72,20 @@ function matchesSearch(row: ParentLinkRow, search: string): boolean {
   return searchableText.includes(search);
 }
 
+function matchesUntokenizedSearch(row: UntokenizedFamilyRow, search: string): boolean {
+  if (!search) return true;
+  const searchableText = [
+    row.customer_name,
+    row.alternate_name,
+    ...row.student_names,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return searchableText.includes(search);
+}
+
 function tokenAlertText(count: number): string {
   if (count === 1) return '1 family needs token';
   return `${count} families need tokens`;
@@ -77,33 +93,44 @@ function tokenAlertText(count: number): string {
 
 export default function LinkManagement({
   rows,
-  untokenizedActiveFamilyCount = 0,
+  untokenizedRows = [],
 }: {
   rows: ParentLinkRow[];
-  untokenizedActiveFamilyCount?: number;
+  untokenizedRows?: UntokenizedFamilyRow[];
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterValue>(DEFAULT_FILTER);
   const [search, setSearch] = useState('');
   const normalizedSearch = search.trim().toLowerCase();
+  const showingUntokenized = filter === 'needs_token';
   const filtered = useMemo(
-    () => applyFilter(rows, filter).filter(row => matchesSearch(row, normalizedSearch)),
-    [filter, normalizedSearch, rows],
+    () => (showingUntokenized ? [] : applyFilter(rows, filter).filter(row => matchesSearch(row, normalizedSearch))),
+    [filter, normalizedSearch, rows, showingUntokenized],
   );
-  const exportRows = filter === 'august_fall_confirmation'
+  const filteredUntokenized = useMemo(
+    () => untokenizedRows.filter(row => matchesUntokenizedSearch(row, normalizedSearch)),
+    [normalizedSearch, untokenizedRows],
+  );
+  const exportRows = !showingUntokenized && filter === 'august_fall_confirmation'
     ? filtered.map(row => ({ ...row, student_names: row.snapshot_student_names }))
-    : filtered;
+    : showingUntokenized
+      ? []
+      : filtered;
   const exportLabel =
     filter === 'not_responded' ? 'Export email CSV'
     : filter === 'august_fall_confirmation' ? 'Export August Email CSV'
     : 'Export CSV';
+  const shownCount = showingUntokenized ? filteredUntokenized.length : filtered.length;
+  const shownTotal = showingUntokenized ? untokenizedRows.length : rows.length;
 
   const total = rows.length;
+  const untokenizedCount = untokenizedRows.length;
+  const untokenizedSummerOnly = untokenizedRows.filter(row => row.summer_enrolment_count > 0 && row.non_summer_enrolment_count === 0).length;
   const responded = rows.filter(r => r.has_responded).length;
   const internalResponded = rows.filter(r => r.has_internal_response).length;
   const needsEmail = rows.filter(r => !r.has_responded && !r.has_internal_response).length;
   const augustEligible = rows.filter(r => r.fall_confirmation_eligible).length;
-  const missingEmail = rows.filter(r => !r.email).length;
+  const missingEmail = rows.filter(r => !r.email).length + untokenizedRows.filter(r => !r.email).length;
 
   const [isRefreshing, startRefresh] = useTransition();
   const [refreshResult, setRefreshResult] = useState<string | null>(null);
@@ -126,9 +153,14 @@ export default function LinkManagement({
 
   return (
     <div className="space-y-4">
-      {untokenizedActiveFamilyCount > 0 && (
+      {untokenizedCount > 0 && (
         <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">
-          {tokenAlertText(untokenizedActiveFamilyCount)}. Generate All Tokens before exporting emails.
+          {tokenAlertText(untokenizedCount)}. Use the Needs token filter to review them before generating.
+          {untokenizedSummerOnly > 0 && (
+            <span className="ml-1 font-medium">
+              {untokenizedSummerOnly} {untokenizedSummerOnly === 1 ? 'family is' : 'families are'} summer-only.
+            </span>
+          )}
         </div>
       )}
 
@@ -158,8 +190,12 @@ export default function LinkManagement({
             Clear
           </button>
         )}
-        <ExportCsvButton rows={exportRows} label={exportLabel} />
-        <ClearExportButton rows={filtered} />
+        {!showingUntokenized && (
+          <>
+            <ExportCsvButton rows={exportRows} label={exportLabel} />
+            <ClearExportButton rows={filtered} />
+          </>
+        )}
         <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
         <div className="flex min-w-[11rem] shrink-0 flex-col items-start gap-1">
           {refreshResult && (
@@ -179,6 +215,9 @@ export default function LinkManagement({
       {/* Stats */}
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{total}</span> families</span>
+        {untokenizedCount > 0 && (
+          <span><span className="font-semibold text-red-700">{untokenizedCount}</span> need token</span>
+        )}
         <span><span className="font-semibold text-sky-700">{needsEmail}</span> need email</span>
         <span><span className="font-semibold text-emerald-700">{augustEligible}</span> August email</span>
         <span><span className="font-semibold text-emerald-700">{responded}</span> responded</span>
@@ -187,12 +226,12 @@ export default function LinkManagement({
           <span className="text-amber-700 font-medium">⚠ {missingEmail} missing email</span>
         )}
         <span className="ml-auto text-xs text-slate-500">
-          {filtered.length} of {total} shown
+          {shownCount} of {shownTotal} shown
         </span>
       </div>
 
       {/* Table */}
-      {rows.length === 0 ? (
+      {rows.length === 0 && untokenizedRows.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 text-sm">
           No family links found. Use Generate All Tokens to create links for families with active students.
         </div>
@@ -211,7 +250,47 @@ export default function LinkManagement({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.length === 0 ? (
+              {showingUntokenized ? (
+                filteredUntokenized.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">
+                      No families match this filter.
+                    </td>
+                  </tr>
+                ) : filteredUntokenized.map(row => (
+                  <tr key={row.customer_id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 space-y-0.5">
+                      <p className="font-medium text-slate-800">{row.customer_name}</p>
+                      {row.alternate_name && (
+                        <p className="text-xs text-slate-500">&amp; {row.alternate_name}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {row.email || <span className="text-amber-600 font-medium">Missing</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {row.alternate_email || '—'}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {row.student_names.length > 0 ? row.student_names.join(', ') : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                        Needs token
+                      </span>
+                      {row.summer_enrolment_count > 0 && row.non_summer_enrolment_count === 0 && (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                          Summer-only
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">—</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      Generate All Tokens to create link
+                    </td>
+                  </tr>
+                ))
+              ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">
                     No families match this filter.

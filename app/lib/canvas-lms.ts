@@ -29,6 +29,14 @@ export type CanvasEnrollment = {
   updated_at?: string | null;
 };
 
+export type CanvasLogin = {
+  id: string | number;
+  user_id?: string | number;
+  account_id?: string | number;
+  unique_id?: string | null;
+  workflow_state?: string | null;
+};
+
 export type NormalizedCanvasEnrollment = {
   enrollment_id: string;
   course_id: string;
@@ -49,6 +57,9 @@ export class CanvasConfigError extends Error {
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 const CANVAS_TOKEN_SETTING_KEY = 'CANVAS_API_TOKEN';
 const CANVAS_TOKEN_CACHE_MS = 30_000;
+const CANVAS_TOKEN_VALIDATION_CACHE_MS = 5 * 60_000;
+const DEFAULT_CANVAS_ACCOUNT_ID = '18';
+const DEFAULT_CANVAS_ROOT_ACCOUNT_ID = '1';
 
 export type CanvasTokenSource = 'environment' | 'database' | 'none';
 export type CanvasDashboardTokenStatus = 'valid' | 'invalid' | 'unchecked' | null;
@@ -67,7 +78,14 @@ type CachedCanvasToken = {
   loadedAt: number;
 };
 
+type CachedCanvasTokenValidation = {
+  token: string;
+  result: Awaited<ReturnType<typeof validateCanvasApiToken>>;
+  loadedAt: number;
+};
+
 let canvasTokenCache: CachedCanvasToken | null = null;
+let canvasTokenValidationCache: CachedCanvasTokenValidation | null = null;
 let missingAppSettingsWarningShown = false;
 
 function normalizeToken(value: string | null | undefined) {
@@ -82,6 +100,14 @@ function maskToken(value: string | null | undefined) {
 
 function canvasBaseUrl() {
   return (process.env.CANVAS_BASE_URL?.trim() || 'https://lms.zebrarobotics.com').replace(/\/+$/, '');
+}
+
+function canvasAccountId() {
+  return process.env.CANVAS_ACCOUNT_ID?.trim() || DEFAULT_CANVAS_ACCOUNT_ID;
+}
+
+function canvasRootAccountId() {
+  return process.env.CANVAS_ROOT_ACCOUNT_ID?.trim() || DEFAULT_CANVAS_ROOT_ACCOUNT_ID;
 }
 
 async function getCanvasTokenFromDb() {
@@ -125,13 +151,27 @@ export async function getCanvasTokenSettings(): Promise<CanvasTokenSettings> {
   const dbToken = await getCanvasTokenFromDb();
 
   if (dbToken) {
+    const dashboardValidation = await validateCanvasApiTokenCached(dbToken);
+    if (!dashboardValidation.ok && envToken) {
+      return {
+        configured: true,
+        source: 'environment',
+        maskedToken: maskToken(envToken),
+        dashboardMaskedToken: maskToken(dbToken),
+        dashboardTokenStatus: 'invalid',
+        dashboardTokenStatusMessage: dashboardValidation.error,
+      };
+    }
+
     return {
       configured: true,
       source: 'database',
       maskedToken: maskToken(dbToken),
       dashboardMaskedToken: maskToken(dbToken),
-      dashboardTokenStatus: 'unchecked',
-      dashboardTokenStatusMessage: null,
+      dashboardTokenStatus: dashboardValidation.ok ? 'valid' : 'invalid',
+      dashboardTokenStatusMessage: dashboardValidation.ok
+        ? 'Canvas token is valid and has LMS sync access.'
+        : dashboardValidation.error,
     };
   }
 
@@ -187,6 +227,7 @@ export async function saveCanvasApiTokenToDb(rawToken: string | null | undefined
         updated_at = NOW()
   `;
   canvasTokenCache = null;
+  canvasTokenValidationCache = null;
 }
 
 export async function validateCanvasApiToken(rawToken: string | null | undefined) {
@@ -195,7 +236,7 @@ export async function validateCanvasApiToken(rawToken: string | null | undefined
     return { ok: false as const, error: 'Paste a Canvas API token before saving.' };
   }
 
-  const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+  const accountId = canvasAccountId();
   const checks = [
     {
       label: 'Canvas profile',
@@ -246,6 +287,30 @@ export async function validateCanvasApiToken(rawToken: string | null | undefined
   return { ok: true as const };
 }
 
+async function validateCanvasApiTokenCached(rawToken: string | null | undefined) {
+  const token = normalizeToken(rawToken);
+  if (!token) {
+    return { ok: false as const, error: 'Paste a Canvas API token before saving.' };
+  }
+
+  const now = Date.now();
+  if (
+    canvasTokenValidationCache
+    && canvasTokenValidationCache.token === token
+    && (now - canvasTokenValidationCache.loadedAt) < CANVAS_TOKEN_VALIDATION_CACHE_MS
+  ) {
+    return canvasTokenValidationCache.result;
+  }
+
+  const result = await validateCanvasApiToken(token);
+  canvasTokenValidationCache = {
+    token,
+    result,
+    loadedAt: now,
+  };
+  return result;
+}
+
 export async function getCanvasDashboardTokenStatus() {
   const token = await getCanvasTokenFromDb();
   if (!token) {
@@ -256,7 +321,7 @@ export async function getCanvasDashboardTokenStatus() {
   }
 
   try {
-    const validation = await validateCanvasApiToken(token);
+    const validation = await validateCanvasApiTokenCached(token);
     if (validation.ok) {
       return {
         status: 'valid' as CanvasDashboardTokenStatus,
@@ -282,7 +347,13 @@ export function clearCanvasTokenCache() {
 
 async function getCanvasTokenFromEnvOrDb() {
   const dbToken = await getCanvasTokenFromDb();
-  if (dbToken) return dbToken;
+  if (dbToken) {
+    const dashboardValidation = await validateCanvasApiTokenCached(dbToken);
+    if (dashboardValidation.ok) {
+      return dbToken;
+    }
+    console.warn('Dashboard Canvas token is invalid; falling back to CANVAS_API_TOKEN environment token when available.');
+  }
 
   return normalizeToken(process.env.CANVAS_API_TOKEN);
 }
@@ -403,7 +474,15 @@ export class CanvasClient {
   }
 
   async searchUsers(term: string) {
-    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    const accountId = canvasAccountId();
+    return this.requestAll<CanvasUser>(`/api/v1/accounts/${accountId}/users`, {
+      search_term: term,
+      per_page: 50,
+    });
+  }
+
+  async searchRootUsers(term: string) {
+    const accountId = canvasRootAccountId();
     return this.requestAll<CanvasUser>(`/api/v1/accounts/${accountId}/users`, {
       search_term: term,
       per_page: 50,
@@ -411,7 +490,7 @@ export class CanvasClient {
   }
 
   async searchCourses(term: string) {
-    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    const accountId = canvasAccountId();
     return this.requestAll<CanvasCourse>(`/api/v1/accounts/${accountId}/courses`, {
       search_term: term,
       per_page: 50,
@@ -495,21 +574,58 @@ export class CanvasClient {
     return result.data;
   }
 
-  async createUser({ name, loginId, email }: { name: string; loginId: string; email: string }) {
-    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+  async createUser({
+    name,
+    loginId,
+    email,
+    password,
+  }: {
+    name: string;
+    loginId: string;
+    email: string;
+    password?: string | null;
+  }) {
+    const accountId = canvasAccountId();
     const body = new URLSearchParams({
       'user[name]': name,
+      'user[skip_registration]': 'true',
       'pseudonym[unique_id]': loginId,
       'pseudonym[send_confirmation]': 'false',
       'communication_channel[type]': 'email',
       'communication_channel[address]': email,
       'communication_channel[skip_confirmation]': 'true',
     });
+    if (password) {
+      body.set('pseudonym[password]', password);
+    }
 
     const result = await this.request<CanvasUser>(
       `/api/v1/accounts/${accountId}/users`,
       {
         method: 'POST',
+        body,
+      }
+    );
+
+    return result.data;
+  }
+
+  async getUserLogins(userId: string) {
+    return this.requestAll<CanvasLogin>(`/api/v1/users/${encodeURIComponent(userId)}/logins`, {
+      per_page: 100,
+    });
+  }
+
+  async updateLoginPassword(loginId: string, password: string) {
+    const accountId = canvasRootAccountId();
+    const body = new URLSearchParams({
+      'login[password]': password,
+    });
+
+    const result = await this.request<CanvasLogin>(
+      `/api/v1/accounts/${accountId}/logins/${encodeURIComponent(loginId)}`,
+      {
+        method: 'PUT',
         body,
       }
     );

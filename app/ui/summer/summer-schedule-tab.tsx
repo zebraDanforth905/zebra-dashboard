@@ -16,6 +16,7 @@ export default function SummerScheduleTab({
   term?: 'summer' | 'fall';
 }) {
   const termLabel = term === 'fall' ? 'fall' : 'summer';
+  const totalLabel = term === 'fall' ? 'draft snapshot students' : 'total enrolments';
 
   if (rows.length === 0) {
     return (
@@ -37,11 +38,23 @@ export default function SummerScheduleTab({
       {/* Summary */}
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{totalSessions}</span> {termLabel} sessions</span>
-        <span><span className="font-semibold text-emerald-700">{totalStudents}</span> total enrolments</span>
+        <span><span className="font-semibold text-emerald-700">{totalStudents}</span> {totalLabel}</span>
       </div>
 
+      {term === 'fall' && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          This Fall Schedule is a Summer Registration draft based on the pre-summer snapshot. It does not change the main schedule.
+        </div>
+      )}
+
+      {term === 'summer' && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span className="line-through decoration-amber-700">Summer Schedule</span> is not accurate for fall planning. Use Fall Schedule for the pre-summer snapshot draft.
+        </div>
+      )}
+
       {/* Session cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 ${term === 'summer' ? 'opacity-70' : ''}`}>
         {rows.map(session => (
           <div
             key={session.session_id}

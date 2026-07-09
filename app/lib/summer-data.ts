@@ -17,6 +17,7 @@ import {
   SummerSnapshotFamilyRow,
   SummerSnapshotStudentRow,
   SummerStats,
+  UntokenizedFamilyRow,
 } from './definitions';
 import { normalizeSessionSelection } from './session-selection';
 import {
@@ -831,6 +832,40 @@ export async function fetchUntokenizedActiveFamilyCount(): Promise<number> {
   }
 }
 
+export async function fetchUntokenizedFamilyRows(): Promise<UntokenizedFamilyRow[]> {
+  'use cache';
+  cacheTag('summer-tokens');
+  try {
+    const rows = await sql<UntokenizedFamilyRow[]>`
+      SELECT
+        c.id::text AS customer_id,
+        c.name AS customer_name,
+        c.alternate_name,
+        c.email,
+        c.alternate_email,
+        ARRAY_AGG(DISTINCT s.name ORDER BY s.name) AS student_names,
+        COUNT(DISTINCT s.id)::int AS student_count,
+        COUNT(e.id) FILTER (WHERE se.is_summer = TRUE)::int AS summer_enrolment_count,
+        COUNT(e.id) FILTER (WHERE se.is_summer = FALSE)::int AS non_summer_enrolment_count
+      FROM customers c
+      JOIN students s ON s.customer_id = c.id
+      JOIN enrolments e ON e.student_id = s.id
+      JOIN sessions se ON se.id = e.session_id
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM parent_tokens pt
+        WHERE pt.customer_id = c.id
+      )
+      GROUP BY c.id, c.name, c.alternate_name, c.email, c.alternate_email
+      ORDER BY c.name
+    `;
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch untokenized family rows.');
+  }
+}
+
 export async function fetchSummerStats(): Promise<SummerStats> {
   'use cache';
   cacheTag('summer-responses');
@@ -1481,32 +1516,62 @@ export async function fetchFallSchedule(): Promise<SummerScheduleRow[]> {
       student_count: number;
       students: SummerScheduleRow['students'];
     }[]>`
+      WITH fall_slots AS (
+        SELECT
+          MIN(s.id::text) AS session_id,
+          s.weekday,
+          s.start_time,
+          MIN(s.end_time) AS end_time,
+          BOOL_OR(s.is_full) AS is_full
+        FROM sessions s
+        WHERE s.is_summer = FALSE
+        GROUP BY s.weekday, s.start_time
+      ),
+      snapshot_students AS (
+        SELECT DISTINCT
+          NULLIF(snapshot.student_id, '') AS student_id,
+          COALESCE(NULLIF(snapshot.student_name, ''), st.name, 'Unknown student') AS student_name,
+          NULLIF(snapshot.course_name, '') AS course_name,
+          NULLIF(snapshot.weekday, '') AS weekday,
+          NULLIF(snapshot.start_time, '') AS start_time
+        FROM parent_tokens pt
+        CROSS JOIN LATERAL jsonb_to_recordset(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb)) AS snapshot(
+          student_id TEXT,
+          student_name TEXT,
+          course_name TEXT,
+          weekday TEXT,
+          start_time TEXT
+        )
+        LEFT JOIN students st ON st.id::text = snapshot.student_id
+        WHERE NULLIF(snapshot.student_id, '') IS NOT NULL
+          AND NULLIF(snapshot.weekday, '') IS NOT NULL
+          AND NULLIF(snapshot.start_time, '') IS NOT NULL
+      )
       SELECT
-        s.id::text AS session_id,
-        s.weekday,
-        s.start_time,
-        s.end_time,
-        s.is_full,
-        COUNT(e.id)::int AS student_count,
+        fs.session_id,
+        fs.weekday,
+        fs.start_time,
+        fs.end_time,
+        fs.is_full,
+        COUNT(DISTINCT ss.student_id)::int AS student_count,
         COALESCE(
           json_agg(
-            json_build_object('name', st.name, 'course', c.name)
-            ORDER BY st.name
-          ) FILTER (WHERE st.id IS NOT NULL),
+            json_build_object('name', ss.student_name, 'course', ss.course_name)
+            ORDER BY ss.student_name
+          ) FILTER (WHERE ss.student_id IS NOT NULL),
           '[]'::json
         ) AS students
-      FROM sessions s
-      LEFT JOIN enrolments e ON e.session_id = s.id
-      LEFT JOIN students st ON st.id = e.student_id
-      LEFT JOIN courses c ON c.id = e.course_id
-      WHERE s.is_summer = FALSE
-      GROUP BY s.id, s.weekday, s.start_time, s.end_time, s.is_full
+      FROM fall_slots fs
+      LEFT JOIN snapshot_students ss
+        ON ss.weekday = fs.weekday
+        AND ss.start_time = fs.start_time::text
+      GROUP BY fs.session_id, fs.weekday, fs.start_time, fs.end_time, fs.is_full
       ORDER BY
         ARRAY_POSITION(
           ARRAY['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],
-          s.weekday
+          fs.weekday
         ),
-        s.start_time
+        fs.start_time
     `;
     return rows;
   } catch (error) {
