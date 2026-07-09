@@ -1069,6 +1069,18 @@ export type ParentLinkRow = {
   has_internal_response: boolean;
 };
 
+export type UntokenizedFamilyRow = {
+  customer_id: string;
+  customer_name: string;
+  alternate_name: string | null;
+  email: string;
+  alternate_email: string | null;
+  student_names: string[];
+  student_count: number;
+  summer_enrolment_count: number;
+  non_summer_enrolment_count: number;
+};
+
 export type SummerSnapshotStudentRow = {
   student_id: string;
   student_name: string;
