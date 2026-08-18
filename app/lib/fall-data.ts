@@ -16,6 +16,7 @@ import {
   assumedEndTime,
   FALL_CATALOGUE_SLOTS,
   FALL_TERM_START_DATE,
+  firstClassDateFor,
   slotKey,
   weekdayIndex,
 } from './fall-policy';
@@ -85,7 +86,7 @@ function toSlots(
     course_name?: string | null;
     change_course?: boolean;
   }[],
-  defaultStartDate: string,
+  defaultStartDate: string | null,
 ): FallSlotChoice[] {
   const seen = new Set<string>();
   const slots: FallSlotChoice[] = [];
@@ -97,7 +98,10 @@ function toSlots(
     slots.push({
       weekday: session.weekday,
       start_time: session.start_time,
-      start_date: asIsoDate(session.start_date) ?? defaultStartDate,
+      // Their own choice wins; otherwise the first instance of THIS slot's weekday
+      // on or after the term start.
+      start_date:
+        asIsoDate(session.start_date) ?? defaultStartDate ?? firstClassDateFor(session.weekday),
       course_name: session.course_name?.trim() || null,
       change_course: session.change_course === true,
     });
@@ -126,7 +130,7 @@ function resolvePrefill(
   if (fallPayload) {
     const slots = fallPayload.slots ?? [];
     return {
-      prefill_slots: toSlots(slots, asIsoDate(slots[0]?.start_date) ?? FALL_TERM_START_DATE),
+      prefill_slots: toSlots(slots, null),
       prefill_start_date: asIsoDate(slots[0]?.start_date) ?? FALL_TERM_START_DATE,
       prefill_pickup_requested: fallPayload.pickup_requested ?? false,
       prefill_pickup_school: asPickupSchool(fallPayload.pickup_school),
@@ -140,13 +144,14 @@ function resolvePrefill(
     const slots = summerFallSlots.length > 0 ? summerFallSlots : currentSessions;
     // fall_start_date is the single date from 'same'; per-session dates ride on each
     // summer slot already, so this only fills gaps.
+    // null falls through to firstClassDateFor per slot weekday inside toSlots.
     const startDate =
       asIsoDate(summerPayload.fall_start_date) ??
       asIsoDate(Object.values(summerPayload.fall_session_start_dates ?? {})[0]) ??
-      FALL_TERM_START_DATE;
+      null;
     return {
       prefill_slots: toSlots(slots, startDate),
-      prefill_start_date: startDate,
+      prefill_start_date: startDate ?? FALL_TERM_START_DATE,
       prefill_pickup_requested: summerPayload.pickup_requested === true,
       prefill_pickup_school: asPickupSchool(summerPayload.pickup_school),
       prefill_source: 'summer_form',
@@ -154,7 +159,7 @@ function resolvePrefill(
   }
 
   return {
-    prefill_slots: toSlots(currentSessions, FALL_TERM_START_DATE),
+    prefill_slots: toSlots(currentSessions, null),
     prefill_start_date: FALL_TERM_START_DATE,
     prefill_pickup_requested: Boolean(currentSessions[0]?.pickup_school),
     prefill_pickup_school: asPickupSchool(currentSessions[0]?.pickup_school),

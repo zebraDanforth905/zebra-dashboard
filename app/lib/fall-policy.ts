@@ -3,6 +3,27 @@
 // parent-chosen start date, so a stale value is correctable per family on the form.
 export const FALL_TERM_START_DATE = '2026-09-08';
 
+/**
+ * First date on or after FALL_TERM_START_DATE that falls on the slot's weekday.
+ *
+ * A blanket term-start default put a Saturday class's first day on a Tuesday. Parents
+ * would either not notice — leaving staff to enrol from a date with no class — or have
+ * to correct every row by hand.
+ */
+export function firstClassDateFor(weekday: string, termStart = FALL_TERM_START_DATE): string {
+  const target = weekdayIndex(weekday);
+  if (target >= WEEKDAY_ORDER.length) return termStart;
+
+  const date = new Date(`${termStart}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return termStart;
+
+  // JS getUTCDay(): 0 = Sunday. WEEKDAY_ORDER is Monday-first.
+  const currentIndex = (date.getUTCDay() + 6) % 7;
+  const delta = (target - currentIndex + 7) % 7;
+  date.setUTCDate(date.getUTCDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
 export const FALL_PICKUP_SCHOOLS = ['Jackman', 'Frankland'] as const;
 
 export type FallCatalogueSlot = {
@@ -43,6 +64,7 @@ export const FALL_CATALOGUE_SLOTS: FallCatalogueSlot[] = [
   { weekday: 'Saturday', start_time: '09:00:00', end_time: '10:00:00' },
   { weekday: 'Saturday', start_time: '10:00:00', end_time: '11:00:00' },
   { weekday: 'Saturday', start_time: '11:00:00', end_time: '12:00:00' },
+  { weekday: 'Saturday', start_time: '12:00:00', end_time: '13:00:00' },
   { weekday: 'Saturday', start_time: '13:00:00', end_time: '14:00:00' },
   // Sunday
   { weekday: 'Sunday', start_time: '10:00:00', end_time: '11:00:00' },

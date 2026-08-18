@@ -61,22 +61,32 @@ export default async function FallSubmittedPage({
                   <p className="font-medium text-slate-800">{student.student_name}</p>
                   <p className="text-sm text-slate-600 mt-0.5">
                     {STATUS_LABEL[student.latest_status ?? ''] ?? student.latest_status}
-                    {student.latest_status === 'confirmed' && student.prefill_slots.length > 0 && (
-                      <>
-                        {' · '}
-                        {student.prefill_slots
-                          .map(slot => `${slot.weekday} at ${formatTime(slot.start_time)}`)
-                          .join(', ')}
-                        {student.prefill_pickup_school
-                          ? ` · Pickup from ${student.prefill_pickup_school}`
-                          : ' · No pickup'}
-                      </>
-                    )}
+                    {student.latest_status === 'confirmed' &&
+                      (student.prefill_pickup_school
+                        ? ` · Pickup from ${student.prefill_pickup_school}`
+                        : ' · No pickup')}
                   </p>
-                  {student.latest_status === 'confirmed' && student.prefill_start_date && (
-                    <p className="text-sm text-slate-500 mt-0.5">
-                      Starting {formatDate(student.prefill_start_date)}
-                    </p>
+                  {student.latest_status === 'confirmed' && student.prefill_slots.length > 0 && (
+                    <ul className="mt-1 space-y-1">
+                      {student.prefill_slots.map(slot => (
+                        <li key={`${slot.weekday}|${slot.start_time}`} className="text-sm text-slate-600">
+                          <span className="text-slate-700">
+                            {slot.weekday} at {formatTime(slot.start_time)}
+                          </span>
+                          <span className="block text-slate-500">
+                            Course:{' '}
+                            {slot.change_course
+                              ? 'Change requested — we’ll be in touch'
+                              : slot.course_name ?? 'To be assigned'}
+                          </span>
+                          {slot.start_date && (
+                            <span className="block text-slate-500">
+                              Starting {formatDate(slot.start_date)}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   )}
                   {student.latest_notes && (
                     <p className="text-sm text-slate-500 mt-1 italic">“{student.latest_notes}”</p>

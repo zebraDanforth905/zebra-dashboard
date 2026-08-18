@@ -83,7 +83,12 @@ export default function FallConfirmForm({
     setStudents(prev => ({ ...prev, [studentId]: { ...prev[studentId], ...patch } }));
   }
 
-  function toggleSlot(studentId: string, weekday: string, startTime: string) {
+  function toggleSlot(
+    studentId: string,
+    weekday: string,
+    startTime: string,
+    knownCourse: string | null,
+  ) {
     setStudents(prev => {
       const entry = prev[studentId];
       const key = slotKey(weekday, startTime);
@@ -100,7 +105,10 @@ export default function FallConfirmForm({
                   weekday,
                   start_time: startTime,
                   start_date: entry.default_start_date,
-                  course_name: null,
+                  // Carry the student's existing course over: moving to a different time
+                  // is not the same as needing a new course, and blanking it made the row
+                  // read "To be assigned" while the header still showed their course.
+                  course_name: knownCourse,
                   change_course: false,
                 },
               ],
@@ -185,6 +193,10 @@ export default function FallConfirmForm({
         const entry = students[student.student_id];
         const selectedKeys = new Set(entry.slots.map(s => slotKey(s.weekday, s.start_time)));
         const hasSession = entry.slots.length > 0;
+        const knownCourse =
+          student.prefill_slots.find(slot => slot.course_name)?.course_name ??
+          student.current_sessions.find(session => session.course_name)?.course_name ??
+          null;
 
         return (
           <section
@@ -234,9 +246,7 @@ export default function FallConfirmForm({
               <div>
                 <label className="block text-sm font-medium text-slate-700">Class times</label>
                 <p className="text-xs text-slate-500 mb-2">
-                  Tap to select. Choose more than one if {student.student_name} attends multiple
-                  classes a week.
-                </p>
+                  Select a different class time if needed (can select more than one session per week)</p>
                 <div className="space-y-2">
                   {[...slotsByWeekday.entries()].map(([weekday, slots]) => (
                     <div key={weekday} className="flex flex-wrap items-center gap-2">
@@ -250,7 +260,9 @@ export default function FallConfirmForm({
                             key={slot.start_time}
                             type="button"
                             aria-pressed={selected}
-                            onClick={() => toggleSlot(student.student_id, weekday, slot.start_time)}
+                            onClick={() =>
+                              toggleSlot(student.student_id, weekday, slot.start_time, knownCourse)
+                            }
                             className={`rounded-lg border px-3 py-2 text-sm transition ${
                               selected
                                 ? 'border-sky-500 bg-sky-50 font-medium text-sky-800'
@@ -315,8 +327,8 @@ export default function FallConfirmForm({
                     First class date
                   </label>
                   <p className="text-xs text-slate-500 mb-2">
-                    Set separately per class, in case they don&apos;t all start the same week.
-                    Tuition is charged on the first of the month for any month with classes.
+                    Confirm first day of class. Tuition is charged on the first of the month for any
+                    month with classes.
                   </p>
                   <div className="space-y-3">
                     {entry.slots.map(slot => {
@@ -487,10 +499,10 @@ export default function FallConfirmForm({
       )}
 
       {!canSubmit && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm font-medium text-rose-600">
           {unanswered.length > 0
             ? `Choose an option for ${unanswered.map(s => s.student_name).join(', ')}.`
-            : `Complete the day, time, pickup, and start date for ${incomplete
+            : `Complete the class time, pickup, and first class date for ${incomplete
                 .map(s => s.student_name)
                 .join(', ')}.`}
         </p>
@@ -501,7 +513,7 @@ export default function FallConfirmForm({
         disabled={!canSubmit || isPending}
         className="w-full rounded-xl bg-sky-600 px-4 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-sky-500 disabled:opacity-40"
       >
-        {isPending ? 'Submitting…' : 'Submit fall plans'}
+        {isPending ? 'Submitting…' : 'Submit'}
       </button>
     </form>
   );
