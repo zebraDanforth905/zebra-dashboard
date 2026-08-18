@@ -30,7 +30,9 @@ type FilterValue =
   | 'exported'
   | 'responded'
   | 'internal_responded'
-  | 'august_fall_confirmation';
+  | 'august_fall_confirmation'
+  | 'fall_not_responded'
+  | 'fall_responded';
 
 const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'all',           label: 'All families' },
@@ -40,6 +42,8 @@ const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'responded',     label: 'Responded' },
   { value: 'internal_responded', label: 'Internal response' },
   { value: 'august_fall_confirmation', label: 'August email' },
+  { value: 'fall_not_responded', label: 'Fall confirm — not responded' },
+  { value: 'fall_responded', label: 'Fall confirm — responded' },
 ];
 const DEFAULT_FILTER: FilterValue = 'not_responded';
 
@@ -51,6 +55,8 @@ function applyFilter(rows: ParentLinkRow[], filter: FilterValue): ParentLinkRow[
     case 'exported':      return rows.filter(r => r.export_count > 0);
     case 'internal_responded': return rows.filter(r => r.has_internal_response);
     case 'august_fall_confirmation': return rows.filter(r => r.fall_confirmation_eligible);
+    case 'fall_not_responded': return rows.filter(r => r.fall_responded_count === 0);
+    case 'fall_responded':     return rows.filter(r => r.fall_responded_count > 0);
     default:              return rows;
   }
 }
@@ -93,9 +99,11 @@ export default function LinkManagement({
   const exportRows = filter === 'august_fall_confirmation'
     ? filtered.map(row => ({ ...row, student_names: row.snapshot_student_names }))
     : filtered;
+  const isFallExport = filter === 'fall_not_responded' || filter === 'fall_responded';
   const exportLabel =
     filter === 'not_responded' ? 'Export email CSV'
     : filter === 'august_fall_confirmation' ? 'Export August Email CSV'
+    : isFallExport ? 'Export Fall Confirm CSV'
     : 'Export CSV';
 
   const total = rows.length;
@@ -158,7 +166,11 @@ export default function LinkManagement({
             Clear
           </button>
         )}
-        <ExportCsvButton rows={exportRows} label={exportLabel} />
+        <ExportCsvButton
+          rows={exportRows}
+          label={exportLabel}
+          exportKind={isFallExport ? 'fall' : 'summer'}
+        />
         <ClearExportButton rows={filtered} />
         <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
         <div className="flex min-w-[11rem] shrink-0 flex-col items-start gap-1">
@@ -206,6 +218,7 @@ export default function LinkManagement({
                 <th className="px-4 py-3">Alternate Email</th>
                 <th className="px-4 py-3">Students</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Fall</th>
                 <th className="px-4 py-3">Last Exported</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
@@ -213,7 +226,7 @@ export default function LinkManagement({
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400 text-sm">
                     No families match this filter.
                   </td>
                 </tr>
@@ -297,6 +310,49 @@ export default function LinkManagement({
                       </span>
                     )}
                   </td>
+                  <td className="px-4 py-3">
+                    {row.fall_responded_count > 0 ? (
+                      // Amber when every response came from staff, matching how the summer
+                      // "Internal response" badge reads.
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          row.fall_staff_responded_count === row.fall_responded_count
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-emerald-100 text-emerald-700'
+                        }`}
+                      >
+                        {row.fall_staff_responded_count === row.fall_responded_count
+                          ? 'Staff entry'
+                          : 'Responded'}{' '}
+                        ×{row.fall_responded_count}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                        No response
+                      </span>
+                    )}
+                    {row.fall_staff_responded_count > 0 &&
+                      row.fall_staff_responded_count < row.fall_responded_count && (
+                        <div className="text-xs text-amber-700">
+                          {row.fall_staff_responded_count} staff-entered
+                        </div>
+                      )}
+                    <div className="mt-1 text-xs text-slate-500">
+                      {row.fall_exported_at ? (
+                        <>
+                          Exported {formatDate(row.fall_exported_at)}
+                          {row.fall_export_count > 0 && (
+                            <span className="ml-1 text-slate-400">×{row.fall_export_count}</span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-slate-400">Not exported</span>
+                      )}
+                    </div>
+                    {row.fall_pending_count > 0 && (
+                      <div className="text-xs text-amber-700">{row.fall_pending_count} needs action</div>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-500 text-xs">
                     {formatDate(row.last_exported_at)}
                     {row.export_count > 0 && (
@@ -307,18 +363,26 @@ export default function LinkManagement({
                     <div className="flex items-center gap-2">
                       <CopyLinkButton token={row.token} />
                       <Link
-                        href={`/summer-reg?token=${row.token}&staff=1`}
+                        href={`/fall-confirm?token=${row.token}&staff=1`}
                         target="_blank"
                         className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded border border-slate-200 bg-white px-3 text-xs leading-none text-slate-600 transition hover:bg-slate-50"
                       >
                         Staff Entry
                       </Link>
                       <Link
-                        href={`/summer-reg?token=${row.token}`}
+                        href={`/fall-confirm?token=${row.token}`}
                         target="_blank"
                         className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded border border-slate-200 bg-white px-3 text-xs leading-none text-slate-600 transition hover:bg-slate-50"
                       >
                         Preview
+                      </Link>
+                      {/* Summer form kept reachable — staff still occasionally back-fill it. */}
+                      <Link
+                        href={`/summer-reg?token=${row.token}&staff=1`}
+                        target="_blank"
+                        className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded border border-slate-200 bg-white px-3 text-xs leading-none text-slate-500 transition hover:bg-slate-50"
+                      >
+                        Summer Form
                       </Link>
                     </div>
                   </td>

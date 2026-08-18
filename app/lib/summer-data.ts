@@ -18,6 +18,7 @@ import {
   SummerSnapshotStudentRow,
   SummerStats,
 } from './definitions';
+import { isVisibleFallSession } from './fall-policy';
 import { normalizeSessionSelection } from './session-selection';
 import {
   LAST_TWO_SCHOOL_YEARS_END,
@@ -315,9 +316,7 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
         c.name
     `;
 
-    const WEEKDAY_HOURS = new Set([16, 17, 18]); // 4, 5, 6 PM
     const SUMMER_SATURDAY_HOURS = new Set([9, 10, 11, 12]); // Summer: 9 AM through 12 PM
-    const FALL_SATURDAY_HOURS = new Set([9, 10, 11, 13]); // Fall: 9, 10, 11 AM, 1 PM
 
     const filteredSummerSessions = summerSessions.filter(s => {
       const [h, m] = s.start_time.split(':').map(Number);
@@ -326,21 +325,8 @@ export async function fetchParentFormData(token: string, includeInactiveStudents
       return SUMMER_SATURDAY_HOURS.has(h);
     });
 
-    const filteredFallSessions = fallSessions.filter(s => {
-      const [h, m] = s.start_time.split(':').map(Number);
-      if (s.weekday === 'Saturday') {
-        if (m !== 0) return false;
-        return FALL_SATURDAY_HOURS.has(h);
-      }
-      if (s.weekday === 'Sunday') {
-        if (h === 10 && m === 30) return false;
-        if (s.student_count > 0) return true;
-        if (m !== 0) return false;
-        return h !== 12;
-      }
-      if (m !== 0) return false;
-      return WEEKDAY_HOURS.has(h);
-    });
+    // Shared with the fall confirmation form — see isVisibleFallSession.
+    const filteredFallSessions = fallSessions.filter(isVisibleFallSession);
     const visibleFallSessionIds = new Set(filteredFallSessions.map(session => session.id));
 
     const latestFallSessionIds = studentRows.flatMap(r => {
@@ -423,6 +409,11 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
       fall_confirmation_eligible: boolean;
       has_responded: boolean;
       has_internal_response: boolean;
+      fall_responded_count: number;
+      fall_pending_count: number;
+      fall_staff_responded_count: number;
+      fall_exported_at: Date | null;
+      fall_export_count: number;
     }[]>`
       WITH token_base AS (
         SELECT
@@ -441,9 +432,26 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           pt.last_exported_at,
           (to_jsonb(pt)->>'last_seen_active_at')::timestamptz AS last_seen_active_at,
           COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb) AS last_active_snapshot,
-          pt.export_count
+          pt.export_count,
+          -- to_jsonb keeps this readable before migration 044 is applied
+          (to_jsonb(pt)->>'fall_exported_at')::timestamptz AS fall_exported_at,
+          COALESCE((to_jsonb(pt)->>'fall_export_count')::int, 0) AS fall_export_count
         FROM parent_tokens pt
         JOIN customers c ON c.id = pt.customer_id
+      ),
+      fall_response_summary AS (
+        SELECT
+          tb.token_id,
+          COUNT(pr.id)::int AS fall_responded_count,
+          COUNT(pr.id) FILTER (WHERE pr.status = 'pending')::int AS fall_pending_count,
+          COUNT(pr.id) FILTER (WHERE pr.submitted_by = 'staff')::int AS fall_staff_responded_count
+        FROM token_base tb
+        LEFT JOIN parent_requests pr
+          ON pr.token_id = tb.token_id::uuid
+          AND pr.request_type = 'fall_confirmation'
+          AND pr.is_latest = TRUE
+          AND pr.removed_at IS NULL
+        GROUP BY tb.token_id
       ),
       active_slots AS (
         SELECT DISTINCT
@@ -504,11 +512,38 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
         FROM snapshot_slots
         GROUP BY token_id, customer_uuid, student_id
       ),
+      currently_enrolled_students AS (
+        SELECT DISTINCT
+          tb.token_id,
+          tb.customer_uuid,
+          s.id::text AS student_id,
+          s.name AS student_name
+        FROM token_base tb
+        JOIN students s ON s.customer_id = tb.customer_uuid
+        JOIN enrolments e ON e.student_id = s.id
+        WHERE COALESCE(e.start_date, DATE '1900-01-01') <= CURRENT_DATE
+          AND COALESCE(e.end_date, DATE '9999-12-31') >= CURRENT_DATE
+      ),
+      -- Students the fall confirmation email should ask about: the frozen last-school-year
+      -- roster plus anyone with a currently active enrolment, deduped by student.
+      fall_candidate_students AS (
+        SELECT
+          token_id,
+          customer_uuid,
+          student_id,
+          MAX(student_name) AS student_name
+        FROM (
+          SELECT token_id, customer_uuid, student_id, student_name FROM snapshot_students
+          UNION ALL
+          SELECT token_id, customer_uuid, student_id, student_name FROM currently_enrolled_students
+        ) merged
+        GROUP BY token_id, customer_uuid, student_id
+      ),
       snapshot_student_summary AS (
         SELECT
           token_id,
           ARRAY_AGG(student_name ORDER BY student_name) AS snapshot_student_names
-        FROM snapshot_students
+        FROM fall_candidate_students
         GROUP BY token_id
       ),
       expected_students AS (
@@ -565,7 +600,7 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           ss.token_id,
           COUNT(*)::int AS snapshot_student_count,
           COUNT(pr.id) FILTER (WHERE pr.payload->>'fall_status' = 'not_returning')::int AS fall_not_returning_count
-        FROM snapshot_students ss
+        FROM fall_candidate_students ss
         LEFT JOIN parent_requests pr
           ON pr.student_id::text = ss.student_id
           AND pr.token_id = ss.token_id::uuid
@@ -599,8 +634,14 @@ export async function fetchParentLinkRows(): Promise<ParentLinkRow[]> {
           AND COALESCE(ars.fall_not_returning_count, 0) < COALESCE(ars.snapshot_student_count, 0)
         ) AS fall_confirmation_eligible,
         COALESCE(rs.latest_response_count, 0) > 0 AS has_responded,
-        COALESCE(rs.latest_staff_response_count, 0) > 0 AS has_internal_response
+        COALESCE(rs.latest_staff_response_count, 0) > 0 AS has_internal_response,
+        COALESCE(frs.fall_responded_count, 0)::int AS fall_responded_count,
+        COALESCE(frs.fall_pending_count, 0)::int AS fall_pending_count,
+        COALESCE(frs.fall_staff_responded_count, 0)::int AS fall_staff_responded_count,
+        tb.fall_exported_at,
+        tb.fall_export_count
       FROM token_base tb
+      LEFT JOIN fall_response_summary frs ON frs.token_id = tb.token_id
       LEFT JOIN student_summary ss ON ss.token_id = tb.token_id
       LEFT JOIN snapshot_student_summary sns ON sns.token_id = tb.token_id
       LEFT JOIN student_course_summary scs ON scs.token_id = tb.token_id
@@ -813,6 +854,10 @@ export async function fetchUntokenizedActiveFamilyCount(): Promise<number> {
   'use cache';
   cacheTag('summer-tokens');
   try {
+    // Eligibility must stay in lockstep with generateAllParentTokens() in summer-actions.ts,
+    // otherwise the alert counts families the generator will never create tokens for.
+    // Deliberately unfiltered by school year: every family with an enrolment gets a token,
+    // and churned families are filtered out downstream instead.
     const rows = await sql<{ count: number }[]>`
       SELECT COUNT(DISTINCT c.id)::int AS count
       FROM customers c

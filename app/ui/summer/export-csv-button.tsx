@@ -4,6 +4,7 @@ import { useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ParentLinkRow } from '@/app/lib/definitions';
 import { markTokensExported } from '@/app/lib/summer-actions';
+import { markFallTokensExported } from '@/app/lib/fall-actions';
 
 function csv(val: string): string {
   const s = val ?? '';
@@ -31,10 +32,14 @@ export default function ExportCsvButton({
   rows,
   label = 'Export CSV',
   disabled = false,
+  // 'fall' tracks export state in the separate fall_exported_at columns and links
+  // parents to the fall confirmation form instead of the summer form.
+  exportKind = 'summer',
 }: {
   rows: ParentLinkRow[];
   label?: string;
   disabled?: boolean;
+  exportKind?: 'summer' | 'fall';
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -74,14 +79,19 @@ export default function ExportCsvButton({
     const blob = new Blob([[header, ...body].join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `summer-reg-links-${new Date().toISOString().slice(0, 10)}.csv`;
+    const prefix = exportKind === 'fall' ? 'fall-confirm-links' : 'summer-reg-links';
+    a.download = `${prefix}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
 
     const tokenIds = rows.filter(r => recipientCountForRow(r) > 0).map(r => r.token_id);
     if (tokenIds.length > 0) {
       startTransition(async () => {
-        await markTokensExported(tokenIds);
+        if (exportKind === 'fall') {
+          await markFallTokensExported(tokenIds);
+        } else {
+          await markTokensExported(tokenIds);
+        }
         router.refresh();
       });
     }

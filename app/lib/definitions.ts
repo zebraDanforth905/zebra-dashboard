@@ -1067,6 +1067,13 @@ export type ParentLinkRow = {
   fall_confirmation_eligible: boolean;
   has_responded: boolean;
   has_internal_response: boolean;
+  // Fall confirmation flow, tracked separately from the summer response/export state.
+  fall_responded_count: number;
+  fall_pending_count: number;
+  // How many of those responses were entered by staff rather than the parent.
+  fall_staff_responded_count: number;
+  fall_exported_at: Date | null;
+  fall_export_count: number;
 };
 
 export type SummerSnapshotStudentRow = {
@@ -1086,4 +1093,117 @@ export type SummerSnapshotFamilyRow = {
   token: string;
   last_seen_active_at: Date | null;
   students: SummerSnapshotStudentRow[];
+};
+
+// ---------------------------------------------------------------------------
+// Fall confirmation flow (/fall-confirm)
+// ---------------------------------------------------------------------------
+
+export type FallPickupSchool = 'Jackman' | 'Frankland';
+
+export type FallConfirmationStatus = 'confirmed' | 'not_returning' | 'paused';
+
+export type FallSlotChoice = {
+  weekday: string;
+  start_time: string;
+  // ISO 'YYYY-MM-DD'. Per slot, so a student can start one class in September and
+  // another later. Drives that enrolment's start_date on approval.
+  start_date: string | null;
+};
+
+export type FallConfirmationPayload = {
+  fall_confirmation_status: FallConfirmationStatus;
+  // One entry per class the student is enrolling in; empty for unenroll/pause.
+  // Students attending more than once a week have several.
+  slots: FallSlotChoice[];
+  pickup_requested: boolean;
+  pickup_school: FallPickupSchool | null;
+  notes?: string;
+  // What we prefilled from, for audit when a parent just hits CONFIRM.
+  prefill_source: 'summer_form' | 'current_enrolment' | 'none';
+};
+
+// Read-only echo of what the family chose for fall on the summer registration form.
+export type FallSummerPlan = {
+  fall_status: string | null;
+  sessions: { weekday: string; start_time: string; end_time: string | null }[];
+  start_date: string | null;
+  pickup_requested: boolean;
+  pickup_school: FallPickupSchool | null;
+  notes: string | null;
+  submitted_at: Date | null;
+};
+
+export type FallFormStudentData = {
+  student_id: string;
+  student_name: string;
+  is_active: boolean;
+  current_sessions: CurrentSessionSummary[];
+  // What they told us on the summer form; null when they never responded.
+  summer_plan: FallSummerPlan | null;
+  // Prefill values, resolved from the latest fall confirmation, then the summer
+  // form response, then the student's current enrolments (all of them, so a student
+  // attending twice a week starts with both slots selected).
+  prefill_slots: FallSlotChoice[];
+  // Default applied to newly selected slots; not itself submitted.
+  prefill_start_date: string | null;
+  prefill_pickup_requested: boolean;
+  prefill_pickup_school: FallPickupSchool | null;
+  prefill_source: FallConfirmationPayload['prefill_source'];
+  latest_status: FallConfirmationStatus | null;
+  latest_notes: string | null;
+  latest_submitted_at: Date | null;
+};
+
+export type FallFormData = {
+  token_id: string;
+  customer_id: string;
+  customer_name: string;
+  customer_alternate_name: string | null;
+  students: FallFormStudentData[];
+  // Distinct weekday/time slots offered for fall, deduped by weekday+start_time.
+  fall_slots: { weekday: string; start_time: string; end_time: string; is_full: boolean }[];
+  default_start_date: string;
+};
+
+export type FallResponseRow = {
+  request_id: string;
+  token_id: string;
+  token: string;
+  customer_id: string;
+  customer_name: string;
+  alternate_name: string | null;
+  email: string | null;
+  alternate_email: string | null;
+  student_id: string;
+  student_name: string;
+  status: ParentRequestStatus;
+  fall_confirmation_status: FallConfirmationStatus;
+  // Every requested class, each resolved against the fall session table.
+  slots: {
+    weekday: string;
+    start_time: string;
+    start_date: string | null;
+    matched_session_id: string | null;
+    is_full: boolean;
+  }[];
+  unmatched_slot_count: number;
+  pickup_requested: boolean;
+  pickup_school: string | null;
+  notes: string | null;
+  submitted_by: ParentRequestSubmittedBy;
+  submitted_by_name: string | null;
+  submitted_at: Date;
+  enrolment_ids: string[];
+  // Each live non-summer enrolment, carrying its own id so staff can end one course
+  // without touching the student's others.
+  current_enrolments: {
+    enrolment_id: string;
+    weekday: string;
+    start_time: string;
+    course_name: string | null;
+    end_date: string | null;
+  }[];
+  active_enrolment_count: number;
+  recurring_invoices: SummerRecurringInvoiceSummary[];
 };

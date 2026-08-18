@@ -120,45 +120,68 @@ export async function generateParentToken(customerId: string): Promise<string> {
 }
 
 // Bulk-generates tokens for every customer with at least one enrolment. Skips existing tokens.
+// Eligibility is deliberately NOT limited to the last school year — every family gets a token and
+// shows up in link management; churned families are filtered out downstream instead. The snapshot
+// still only covers last-school-year non-summer enrolments, so families outside that window get a
+// token with an empty snapshot and a NULL last_seen_active_at.
+// Keep this predicate in lockstep with fetchUntokenizedActiveFamilyCount() in summer-data.ts.
 export async function generateAllParentTokens(): Promise<{ created: number }> {
   await requireAdmin();
   const canTrackLastSeenActive = await parentTokenActiveSnapshotColumnsExist();
-  const eligible = await sql<{ customer_id: string; last_active_snapshot: PostgresJsonValue }[]>`
+  const eligible = await sql<{
+    customer_id: string;
+    active_count: number;
+    last_active_snapshot: PostgresJsonValue;
+  }[]>`
     SELECT
       c.id::text AS customer_id,
-      JSONB_AGG(
-        DISTINCT JSONB_BUILD_OBJECT(
-          'student_id', s.id::text,
-          'student_name', s.name,
-          'course_name', co.name,
-          'weekday', se.weekday,
-          'start_time', se.start_time,
-          'pickup_school', NULL
-        )
+      COUNT(e.id) FILTER (
+        WHERE se.is_summer = FALSE
+          AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+          AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
+      )::int AS active_count,
+      COALESCE(
+        JSONB_AGG(
+          DISTINCT JSONB_BUILD_OBJECT(
+            'student_id', s.id::text,
+            'student_name', s.name,
+            'course_name', co.name,
+            'weekday', se.weekday,
+            'start_time', se.start_time,
+            'pickup_school', NULL
+          )
+        ) FILTER (
+          WHERE se.is_summer = FALSE
+            AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
+            AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
+        ),
+        '[]'::jsonb
       ) AS last_active_snapshot
     FROM customers c
     JOIN students s ON s.customer_id = c.id
     JOIN enrolments e ON e.student_id = s.id
-    JOIN sessions se ON se.id = e.session_id
+    LEFT JOIN sessions se ON se.id = e.session_id
     LEFT JOIN courses co ON co.id = e.course_id
     WHERE NOT EXISTS (
       SELECT 1 FROM parent_tokens pt WHERE pt.customer_id = c.id
     )
-      AND se.is_summer = FALSE
-      AND COALESCE(e.start_date, DATE '1900-01-01') <= ${LAST_SCHOOL_YEAR_END}::date
-      AND COALESCE(e.end_date, DATE '9999-12-31') >= ${LAST_SCHOOL_YEAR_START}::date
     GROUP BY c.id
   `;
   if (eligible.length === 0) {
     revalidateTag('summer-tokens', 'max');
     return { created: 0 };
   }
-  for (const { customer_id, last_active_snapshot } of eligible) {
+  for (const { customer_id, active_count, last_active_snapshot } of eligible) {
     const token = randomBytes(24).toString('hex');
     if (canTrackLastSeenActive) {
       await sql`
         INSERT INTO parent_tokens (customer_id, token, last_seen_active_at, last_active_snapshot)
-        VALUES (${customer_id}::uuid, ${token}, NOW(), ${sql.json(last_active_snapshot)}::jsonb)
+        VALUES (
+          ${customer_id}::uuid,
+          ${token},
+          CASE WHEN ${active_count}::int > 0 THEN NOW() ELSE NULL END,
+          ${sql.json(last_active_snapshot)}::jsonb
+        )
         ON CONFLICT (customer_id) DO NOTHING
       `;
     } else {

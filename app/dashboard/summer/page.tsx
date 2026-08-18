@@ -8,7 +8,9 @@ import {
   fetchSummerStats,
   fetchUntokenizedActiveFamilyCount,
 } from '@/app/lib/summer-data';
+import { fetchFallResponseRows } from '@/app/lib/fall-data';
 import { fetchLatestSummerResponseNotes } from '@/app/lib/data';
+import FallResponsesTab from '@/app/ui/summer/fall-responses-tab';
 import LinkManagement from '@/app/ui/summer/link-management';
 import ResponsesTab from '@/app/ui/summer/responses-tab';
 import SnapshotManagement from '@/app/ui/summer/snapshot-management';
@@ -38,11 +40,12 @@ export default async function SummerPage({
 
   const { tab = 'links' } = await searchParams;
 
-  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, scheduleRows, fallScheduleRows, snapshotRows, snapshotCourseOptions] = await Promise.all([
+  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, fallResponseRows, scheduleRows, fallScheduleRows, snapshotRows, snapshotCourseOptions] = await Promise.all([
     tab === 'links' ? fetchParentLinkRows() : null,
     tab === 'links' ? fetchUntokenizedActiveFamilyCount() : null,
     tab === 'responses' ? fetchSummerStats() : null,
     tab === 'responses' ? fetchSummerResponseRows() : null,
+    tab === 'fall-responses' ? fetchFallResponseRows() : null,
     tab === 'schedule' ? fetchSummerSchedule() : null,
     tab === 'fall-schedule' ? fetchFallSchedule() : null,
     tab === 'snapshot' ? fetchSummerSnapshotRows() : null,
@@ -80,6 +83,9 @@ export default async function SummerPage({
         <TabLink href="/dashboard/summer?tab=responses" active={tab === 'responses'}>
           Responses
         </TabLink>
+        <TabLink href="/dashboard/summer?tab=fall-responses" active={tab === 'fall-responses'}>
+          Fall Responses
+        </TabLink>
         <TabLink href="/dashboard/summer?tab=schedule" active={tab === 'schedule'}>
           Summer Schedule
         </TabLink>
@@ -100,6 +106,10 @@ export default async function SummerPage({
 
       {tab === 'responses' && stats && enrichedResponseRows && (
         <ResponsesTab rows={enrichedResponseRows} stats={stats} currentUserName={currentUserName} />
+      )}
+
+      {tab === 'fall-responses' && fallResponseRows && (
+        <FallResponsesTab rows={fallResponseRows} />
       )}
 
       {tab === 'schedule' && scheduleRows && (
