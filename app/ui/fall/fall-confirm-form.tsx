@@ -461,7 +461,9 @@ export default function FallConfirmForm({
                           </div>
                           {slot.change_course && (
                             <p className="mt-1 text-xs text-amber-700">
-                              We&apos;ll reach out, or discuss a new course at the first class.
+                              Let us know the course you&apos;d like in the &ldquo;Anything else we
+                              should know?&rdquo; box below — or leave it blank and we&apos;ll reach
+                              out before the first class to discuss options.
                             </p>
                           )}
                         </div>
