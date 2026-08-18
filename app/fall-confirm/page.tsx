@@ -45,8 +45,9 @@ export default async function FallConfirmPage({
         <h1 className="text-2xl font-semibold text-slate-800">Confirm Your Fall Plans</h1>
         <div className="rounded-xl bg-sky-50 ring-1 ring-sky-100 px-4 py-3 text-sm text-sky-800 space-y-1">
           <p>
-            We&apos;ve prefilled each child&apos;s fall class from what you told us earlier. Please review, adjust
-            anything that&apos;s changed, and choose an option for every child.
+            We&apos;ve prefilled your child(ren)&apos;s fall classes based on the information you
+            shared earlier, or based on their previous schedule if we didn&apos;t receive a response
+            in May. Please view/confirm the details below and let us know if anything has changed.
           </p>
         </div>
         {isStaffEntry && (

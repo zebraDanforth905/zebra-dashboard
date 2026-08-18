@@ -401,9 +401,7 @@ export default function FallConfirmForm({
                   </label>
                   <p className="text-xs text-slate-500 mb-2">
                     Set separately per class, in case they don&apos;t all start the same week.
-                    Tuition is charged on the first of the month for any month with classes. If a
-                    class starts partway through a month, that month is discounted — four classes
-                    is a full month.
+                    Tuition is charged on the first of the month for any month with classes.
                   </p>
                   <div className="space-y-3">
                     {entry.slots.map(slot => {
