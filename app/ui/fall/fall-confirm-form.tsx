@@ -8,6 +8,7 @@ import {
   FallPickupSchool,
   FallSlotChoice,
 } from '@/app/lib/definitions';
+import { weekdayIndex } from '@/app/lib/fall-policy';
 
 type StudentState = {
   status: FallConfirmationStatus | null;
@@ -31,28 +32,6 @@ function formatTime(t: string | null): string {
 
 function formatRange(startTime: string, endTime: string | null): string {
   return endTime ? `${formatTime(startTime)} – ${formatTime(endTime)}` : formatTime(startTime);
-}
-
-function formatSlot(weekday: string | null, startTime: string | null, endTime: string | null): string {
-  if (!weekday || !startTime) return 'Not set';
-  return `${weekday} at ${formatRange(startTime, endTime)}`;
-}
-
-const SUMMER_FALL_STATUS_LABEL: Record<string, string> = {
-  same: 'Keeping the same class in September',
-  change: 'Requesting a different class time in September',
-  pause: 'Not holding a September spot',
-  unsure: 'Returning in September, day not decided',
-  not_returning: 'Not returning in September',
-};
-
-function formatLongDate(date: string | null): string | null {
-  if (!date) return null;
-  return new Intl.DateTimeFormat('en-CA', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(new Date(`${date}T00:00:00`));
 }
 
 function initialState(student: FallFormData['students'][number]): StudentState {
@@ -206,13 +185,6 @@ export default function FallConfirmForm({
         const entry = students[student.student_id];
         const selectedKeys = new Set(entry.slots.map(s => slotKey(s.weekday, s.start_time)));
         const hasSession = entry.slots.length > 0;
-        const selectedLabel = hasSession
-          ? entry.slots
-              .map(s =>
-                formatSlot(s.weekday, s.start_time, endTimeBySlot.get(slotKey(s.weekday, s.start_time)) ?? null),
-              )
-              .join(' · ')
-          : 'Not set';
 
         return (
           <section
@@ -222,17 +194,29 @@ export default function FallConfirmForm({
             <header className="border-b border-slate-100 bg-slate-50 px-5 py-4">
               <h2 className="text-lg font-semibold text-slate-800">{student.student_name}</h2>
               {student.current_sessions.length > 0 ? (
-                <p className="text-sm text-slate-500 mt-0.5">
-                  Currently enrolled:{' '}
-                  {student.current_sessions
-                    .map(s =>
-                      `${s.weekday} ${formatRange(
-                        s.start_time,
-                        endTimeBySlot.get(`${s.weekday}|${s.start_time}`) ?? null,
-                      )}`,
-                    )
-                    .join(', ')}
-                </p>
+                <div className="mt-0.5 text-sm text-slate-500">
+                  <p>Currently enrolled:</p>
+                  <ul className="mt-0.5 space-y-0.5">
+                    {[...student.current_sessions]
+                      // Snapshot fallbacks arrive unsorted, so order Monday–Sunday here
+                      // rather than trusting the source.
+                      .sort(
+                        (a, b) =>
+                          weekdayIndex(a.weekday) - weekdayIndex(b.weekday) ||
+                          a.start_time.localeCompare(b.start_time),
+                      )
+                      .map(s => (
+                        <li key={`${s.weekday}|${s.start_time}`}>
+                          {s.weekday}{' '}
+                          {formatRange(
+                            s.start_time,
+                            endTimeBySlot.get(`${s.weekday}|${s.start_time}`) ?? null,
+                          )}
+                          {s.course_name ? ` · ${s.course_name}` : ''}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
               ) : (
                 <p className="text-sm text-slate-500 mt-0.5">No current class on file.</p>
               )}
@@ -244,75 +228,6 @@ export default function FallConfirmForm({
             </header>
 
             <div className="p-5 space-y-5">
-              {/* Static summary of what they submitted on the summer form */}
-              {student.summer_plan && (
-                <div className="rounded-xl bg-slate-50 ring-1 ring-slate-200 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    What you told us on the summer form
-                  </p>
-                  <p className="text-sm font-medium text-slate-800 mt-1">
-                    {SUMMER_FALL_STATUS_LABEL[student.summer_plan.fall_status ?? ''] ??
-                      'No September preference recorded'}
-                  </p>
-                  {student.summer_plan.sessions.length > 0 && (
-                    <p className="text-sm text-slate-600 mt-0.5">
-                      {student.summer_plan.sessions
-                        .map(s => `${s.weekday} ${formatRange(s.start_time, s.end_time)}`)
-                        .join(', ')}
-                    </p>
-                  )}
-                  {student.summer_plan.start_date && (
-                    <p className="text-sm text-slate-600 mt-0.5">
-                      Starting {formatLongDate(student.summer_plan.start_date)}
-                    </p>
-                  )}
-                  <p className="text-sm text-slate-600 mt-0.5">
-                    {student.summer_plan.pickup_requested && student.summer_plan.pickup_school
-                      ? `Pickup from ${student.summer_plan.pickup_school}`
-                      : 'No pickup'}
-                  </p>
-                  {student.summer_plan.notes && (
-                    <div className="mt-2 border-t border-slate-200 pt-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Your notes
-                      </p>
-                      <p className="text-sm italic text-slate-600 mt-0.5">
-                        “{student.summer_plan.notes}”
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Current selection */}
-              <div className="rounded-xl bg-sky-50 ring-1 ring-sky-100 px-4 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
-                  Your fall plan
-                </p>
-                <p className="text-sm text-sky-900 mt-1">
-                  {selectedLabel}
-                  {entry.pickup_requested && entry.pickup_school
-                    ? ` · Pickup from ${entry.pickup_school}`
-                    : ' · No pickup'}
-                </p>
-                {entry.slots.map(slot => (
-                  <p key={slotKey(slot.weekday, slot.start_time)} className="text-sm text-sky-900">
-                    {slot.weekday} starting{' '}
-                    {slot.start_date ? formatLongDate(slot.start_date) : '(choose a date)'}
-                  </p>
-                ))}
-                {student.prefill_source === 'summer_form' && (
-                  <p className="text-xs text-sky-700 mt-1">
-                    Carried over from your summer form. Change anything below if it&apos;s out of date.
-                  </p>
-                )}
-                {student.prefill_source === 'current_enrolment' && (
-                  <p className="text-xs text-sky-700 mt-1">
-                    Based on {student.student_name}&apos;s current class. Change it below if needed.
-                  </p>
-                )}
-              </div>
-
               <div className="space-y-5 rounded-xl border border-slate-200 p-4">
 
               {/* Class times — multi-select */}
@@ -518,9 +433,9 @@ export default function FallConfirmForm({
                       : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
                   }`}
                 >
-                  PAUSE FOR NOW
+                  STILL DECIDING
                   <span className="block text-[11px] font-normal opacity-90 mt-0.5">
-                    (you can reach out later or go through our website to re-enroll)
+                    Update us any time &mdash; we&rsquo;ll keep in touch
                   </span>
                 </button>
                 <button
@@ -528,19 +443,21 @@ export default function FallConfirmForm({
                   onClick={() => update(student.student_id, { status: 'not_returning' })}
                   className={`rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition ${
                     entry.status === 'not_returning'
-                      ? 'bg-rose-600 text-white ring-2 ring-rose-300'
-                      : 'bg-rose-50 text-rose-800 hover:bg-rose-100'
+                      ? 'bg-slate-600 text-white ring-2 ring-slate-300'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
                 >
-                  UNENROLL
-                  <span className="block text-[11px] font-normal opacity-90 mt-0.5">Not returning</span>
+                  PAUSE
+                  <span className="block text-[11px] font-normal opacity-90 mt-0.5">
+                    You are always welcome back!
+                  </span>
                 </button>
               </div>
 
               {!hasSession && (
                 <p className="text-xs text-slate-500">
-                  Choose a class time above before confirming. You can still choose Pause or
-                  Unenroll.
+                  Choose a class time above before confirming. You can still choose Still
+                  deciding or Pause.
                 </p>
               )}
 

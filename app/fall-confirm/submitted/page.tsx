@@ -9,8 +9,8 @@ export const metadata: Metadata = {
 
 const STATUS_LABEL: Record<string, string> = {
   confirmed: 'Confirmed',
-  not_returning: 'Not returning',
-  paused: 'Paused — we\'ll reach out',
+  not_returning: "Paused",
+  paused: "Still deciding — we'll keep in touch",
 };
 
 function formatTime(t: string | null): string {

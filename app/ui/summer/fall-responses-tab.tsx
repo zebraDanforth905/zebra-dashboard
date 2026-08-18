@@ -20,8 +20,8 @@ type FilterValue = 'all' | 'confirmed' | 'not_returning' | 'paused' | 'enrolled'
 const FILTER_OPTIONS: { value: FilterValue; label: string }[] = [
   { value: 'all', label: 'All responses' },
   { value: 'confirmed', label: 'Confirmed' },
-  { value: 'not_returning', label: 'Unenrolling' },
-  { value: 'paused', label: 'Paused' },
+  { value: 'not_returning', label: 'Pausing (unenrol)' },
+  { value: 'paused', label: 'Still deciding' },
   { value: 'enrolled', label: 'Already enrolled' },
 ];
 
@@ -31,10 +31,13 @@ const STATUS_STYLE: Record<string, string> = {
   paused: 'bg-amber-100 text-amber-800',
 };
 
+// Parents see "Pause" for not_returning and "Still deciding" for paused; staff labels
+// keep the parent wording but name the action, since not_returning is the one that ends
+// an enrolment.
 const STATUS_LABEL: Record<string, string> = {
   confirmed: 'Confirmed',
-  not_returning: 'Unenroll',
-  paused: 'Paused',
+  not_returning: 'Pausing (unenrol)',
+  paused: 'Still deciding',
 };
 
 // parent_requests.status, which tracks what staff did with the response — distinct from
@@ -213,8 +216,8 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
         <span><span className="font-semibold text-slate-800">{counts.total}</span> responses</span>
         <span><span className="font-semibold text-emerald-700">{counts.confirmed}</span> confirmed</span>
-        <span><span className="font-semibold text-rose-700">{counts.notReturning}</span> unenrolling</span>
-        <span><span className="font-semibold text-amber-700">{counts.paused}</span> paused</span>
+        <span><span className="font-semibold text-rose-700">{counts.notReturning}</span> pausing</span>
+        <span><span className="font-semibold text-amber-700">{counts.paused}</span> still deciding</span>
         <span><span className="font-semibold text-sky-700">{counts.enrolled}</span> enrolled</span>
         {counts.multiClass > 0 && (
           <span><span className="font-semibold text-slate-800">{counts.multiClass}</span> multi-class</span>
