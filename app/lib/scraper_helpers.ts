@@ -1,8 +1,10 @@
 // app/lib/zebra.ts
-const ZEBRA_API_BASE = process.env.ZEBRA_API_BASE!;
-const EMAIL = process.env.ZEBRA_EMAIL!;
-const PASSWORD = process.env.ZEBRA_PASSWORD!;
-const DEFAULT_BRANCH_ID = Number(process.env.ZEBRA_BRANCH_ID ?? 20);
+import { env } from '@/app/lib/env';
+
+const ZEBRA_API_BASE = env.ZEBRA_API_BASE;
+const EMAIL = env.ZEBRA_EMAIL;
+const PASSWORD = env.ZEBRA_PASSWORD;
+const DEFAULT_BRANCH_ID = env.ZEBRA_BRANCH_ID;
 
 type ReportEndpoint = "class" | "class-makeup";
 

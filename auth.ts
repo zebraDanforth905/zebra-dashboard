@@ -5,21 +5,16 @@ import { z } from 'zod';
 import type { User } from '@/app/lib/definitions';
 import bcrypt from 'bcrypt';
 import postgres from 'postgres';
+import { env } from '@/app/lib/env';
 
 
 export const runtime = 'nodejs';
 
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+const sql = postgres(env.POSTGRES_URL, { ssl: 'require' });
  
 async function getUser(email: string): Promise<User | undefined> {
   try {
     const user = await sql<User[]>`SELECT * FROM users WHERE email=${email}`;
-    console.log('getUser result:', {
-      email,
-      found: !!user[0],
-      userType: user[0]?.user_type,
-      userId: user[0]?.id,
-    });
     return user[0];
   } catch (error) {
     console.error('Failed to fetch user:', error);
@@ -37,12 +32,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.id = user.id;
         token.name = (user as any).name;
         token.user_type = (user as any).user_type;
-        console.log('JWT callback - setting token:', {
-          id: token.id,
-          name: token.name,
-          user_type: token.user_type,
-          userObject: user,
-        });
       }
       return token;
     },
@@ -66,27 +55,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (parsedCredentials.success) {
           const { email, password } = parsedCredentials.data;
           const user = await getUser(email);
-          console.log('Authorize - user lookup:', {
-            email,
-            userFound: !!user,
-            userType: user?.user_type,
-          });
           if (!user) return null;
           const passwordsMatch = await bcrypt.compare(password, user.password);
- 
+
           if (passwordsMatch) {
-            console.log('Authorize - password match, returning user:', {
-              id: user.id,
-              email: user.email,
-              name: user.name,
-              user_type: user.user_type,
-              fullUser: user,
-            });
             return user;
           }
         }
- 
-        console.log('Invalid credentials (auth.ts)');
+
         return null;
       },
     }),
