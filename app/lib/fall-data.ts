@@ -87,6 +87,9 @@ function toSlots(
     change_course?: boolean;
   }[],
   defaultStartDate: string | null,
+  // Course to assume when the slot itself has none — e.g. a change request, where the
+  // student is not yet enrolled in the session they asked for.
+  fallbackCourse: string | null = null,
 ): FallSlotChoice[] {
   const seen = new Set<string>();
   const slots: FallSlotChoice[] = [];
@@ -102,7 +105,7 @@ function toSlots(
       // on or after the term start.
       start_date:
         asIsoDate(session.start_date) ?? defaultStartDate ?? firstClassDateFor(session.weekday),
-      course_name: session.course_name?.trim() || null,
+      course_name: session.course_name?.trim() || fallbackCourse,
       change_course: session.change_course === true,
     });
   }
@@ -127,10 +130,12 @@ function resolvePrefill(
   | 'prefill_pickup_school'
   | 'prefill_source'
 > {
+  const knownCourse = currentSessions.find(session => session.course_name)?.course_name ?? null;
+
   if (fallPayload) {
     const slots = fallPayload.slots ?? [];
     return {
-      prefill_slots: toSlots(slots, null),
+      prefill_slots: toSlots(slots, null, knownCourse),
       prefill_start_date: asIsoDate(slots[0]?.start_date) ?? FALL_TERM_START_DATE,
       prefill_pickup_requested: fallPayload.pickup_requested ?? false,
       prefill_pickup_school: asPickupSchool(fallPayload.pickup_school),
@@ -150,7 +155,7 @@ function resolvePrefill(
       asIsoDate(Object.values(summerPayload.fall_session_start_dates ?? {})[0]) ??
       null;
     return {
-      prefill_slots: toSlots(slots, startDate),
+      prefill_slots: toSlots(slots, startDate, knownCourse),
       prefill_start_date: startDate ?? FALL_TERM_START_DATE,
       prefill_pickup_requested: summerPayload.pickup_requested === true,
       prefill_pickup_school: asPickupSchool(summerPayload.pickup_school),
@@ -159,7 +164,7 @@ function resolvePrefill(
   }
 
   return {
-    prefill_slots: toSlots(currentSessions, null),
+    prefill_slots: toSlots(currentSessions, null, knownCourse),
     prefill_start_date: FALL_TERM_START_DATE,
     prefill_pickup_requested: Boolean(currentSessions[0]?.pickup_school),
     prefill_pickup_school: asPickupSchool(currentSessions[0]?.pickup_school),

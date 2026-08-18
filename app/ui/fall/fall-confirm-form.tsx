@@ -193,6 +193,16 @@ export default function FallConfirmForm({
         const entry = students[student.student_id];
         const selectedKeys = new Set(entry.slots.map(s => slotKey(s.weekday, s.start_time)));
         const hasSession = entry.slots.length > 0;
+        // A prefill can legitimately differ from what they're in now — e.g. they asked to
+        // move classes on the summer form. Say so, or the mismatch reads as our error.
+        const currentKeys = new Set(
+          student.current_sessions.map(session => slotKey(session.weekday, session.start_time)),
+        );
+        const movedFromCurrent =
+          student.prefill_source === 'summer_form' &&
+          student.current_sessions.length > 0 &&
+          entry.slots.length > 0 &&
+          entry.slots.every(slot => !currentKeys.has(slotKey(slot.weekday, slot.start_time)));
         const knownCourse =
           student.prefill_slots.find(slot => slot.course_name)?.course_name ??
           student.current_sessions.find(session => session.course_name)?.course_name ??
@@ -247,6 +257,12 @@ export default function FallConfirmForm({
                 <label className="block text-sm font-medium text-slate-700">Class times</label>
                 <p className="text-xs text-slate-500 mb-2">
                   Select a different class time if needed (can select more than one session per week)</p>
+                {movedFromCurrent && (
+                  <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-100">
+                    This differs from {student.student_name}&apos;s current class because you asked
+                    to change times earlier. Adjust below if that&apos;s no longer what you want.
+                  </p>
+                )}
                 <div className="space-y-2">
                   {[...slotsByWeekday.entries()].map(([weekday, slots]) => (
                     <div key={weekday} className="flex flex-wrap items-center gap-2">
