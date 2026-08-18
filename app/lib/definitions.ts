@@ -1109,6 +1109,12 @@ export type FallSlotChoice = {
   // ISO 'YYYY-MM-DD'. Per slot, so a student can start one class in September and
   // another later. Drives that enrolment's start_date on approval.
   start_date: string | null;
+  // The course they are currently in for this slot, carried through for display and so
+  // staff can see what a change request is moving away from. Null for a newly picked slot.
+  course_name: string | null;
+  // Parent flagged that they want a different course in this slot. Enrolment still
+  // inherits their existing course; staff follow up.
+  change_course: boolean;
 };
 
 export type FallConfirmationPayload = {
@@ -1184,10 +1190,14 @@ export type FallResponseRow = {
     weekday: string;
     start_time: string;
     start_date: string | null;
+    course_name: string | null;
+    change_course: boolean;
     matched_session_id: string | null;
     is_full: boolean;
   }[];
   unmatched_slot_count: number;
+  // How many slots the parent asked to change course in.
+  change_course_count: number;
   pickup_requested: boolean;
   pickup_school: string | null;
   notes: string | null;

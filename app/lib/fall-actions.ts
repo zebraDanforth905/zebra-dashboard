@@ -10,7 +10,7 @@ import {
   FallPickupSchool,
   FallSlotChoice,
 } from './definitions';
-import { FALL_PICKUP_SCHOOLS } from './fall-policy';
+import { catalogueEndTime, FALL_PICKUP_SCHOOLS, isCatalogueSlot } from './fall-policy';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 type PostgresJsonValue = Parameters<typeof sql.json>[0];
@@ -136,17 +136,50 @@ export async function submitFallConfirmation(
     }
   }
 
+  // A slot is acceptable if it is in the hard-coded catalogue, or if this family has a
+  // history with it (a past enrolment, the token's frozen roster, or the class recorded on
+  // their summer response). Deliberately NOT checked against the sessions table: the
+  // nightly scrape prunes empty non-summer sessions, so a catalogue slot nobody is in yet
+  // has no row and a table check would reject every first enrolment.
   const allSlots = confirmed.flatMap(entry => entry.slots ?? []);
-  if (allSlots.length > 0) {
-    const offered = await sql<{ weekday: string; start_time: string }[]>`
-      SELECT DISTINCT weekday, start_time::text AS start_time
-      FROM sessions
-      WHERE is_summer = FALSE
-        AND weekday = ANY(${allSlots.map(s => s.weekday)}::text[])
-        AND start_time::text = ANY(${allSlots.map(s => s.start_time)}::text[])
+  const offCatalogue = allSlots.filter(slot => !isCatalogueSlot(slot.weekday, slot.start_time));
+  if (offCatalogue.length > 0) {
+    const historical = await sql<{ weekday: string; start_time: string }[]>`
+      -- Past or present enrolments, at any date.
+      SELECT DISTINCT se.weekday, se.start_time::text AS start_time
+      FROM enrolments e
+      JOIN sessions se ON se.id = e.session_id
+      JOIN students s ON s.id = e.student_id
+      WHERE s.customer_id = ${customerId}::uuid
+        AND se.is_summer = FALSE
+      UNION
+      -- The token's frozen last-school-year roster.
+      SELECT DISTINCT snapshot.weekday, snapshot.start_time
+      FROM parent_tokens pt,
+        jsonb_to_recordset(COALESCE(to_jsonb(pt)->'last_active_snapshot', '[]'::jsonb))
+          AS snapshot(weekday TEXT, start_time TEXT)
+      WHERE pt.id = ${tokenId}::uuid
+        AND NULLIF(snapshot.weekday, '') IS NOT NULL
+        AND NULLIF(snapshot.start_time, '') IS NOT NULL
+      UNION
+      -- Whatever their summer response recorded as current or preferred.
+      SELECT DISTINCT snapshot.weekday, snapshot.start_time
+      FROM parent_requests pr,
+        jsonb_to_recordset(
+          CASE
+            WHEN jsonb_typeof(pr.payload->'current_sessions_snapshot') = 'array'
+              THEN pr.payload->'current_sessions_snapshot'
+            ELSE '[]'::jsonb
+          END
+        ) AS snapshot(weekday TEXT, start_time TEXT)
+      WHERE pr.token_id = ${tokenId}::uuid
+        AND pr.request_type IN ('summer_scheduling', 'other')
+        AND pr.removed_at IS NULL
+        AND NULLIF(snapshot.weekday, '') IS NOT NULL
+        AND NULLIF(snapshot.start_time, '') IS NOT NULL
     `;
-    const offeredSlots = new Set(offered.map(row => `${row.weekday}|${row.start_time}`));
-    if (allSlots.some(slot => !offeredSlots.has(`${slot.weekday}|${slot.start_time}`))) {
+    const allowed = new Set(historical.map(row => `${row.weekday}|${row.start_time}`));
+    if (offCatalogue.some(slot => !allowed.has(`${slot.weekday}|${slot.start_time}`))) {
       return { error: 'One or more selected class times are not available. Please reload and try again.' };
     }
   }
@@ -171,6 +204,8 @@ export async function submitFallConfirmation(
               weekday: slot.weekday,
               start_time: slot.start_time,
               start_date: slot.start_date ?? null,
+              course_name: slot.course_name?.trim() || null,
+              change_course: slot.change_course === true,
             }))
           : [],
         pickup_requested: isConfirmed ? Boolean(entry.pickup_requested) : false,
@@ -212,6 +247,42 @@ export async function submitFallConfirmation(
 
 type EnrolResult = { error?: string; created?: number };
 
+/**
+ * Resolve a weekday+time to a fall session row, creating it if the nightly scrape has
+ * pruned it (it deletes non-summer sessions with no enrolments). Mirrors getSessionId in
+ * insert_from_portal.ts, including the session_coverage conflict target.
+ */
+async function getOrCreateFallSessionId(weekday: string, startTime: string): Promise<string> {
+  const existing = await sql<{ id: string }[]>`
+    SELECT id::text FROM sessions
+    WHERE is_summer = FALSE AND weekday = ${weekday} AND start_time = ${startTime}::time
+    ORDER BY id
+    LIMIT 1
+  `;
+  if (existing.length > 0) return existing[0].id;
+
+  const endTime = catalogueEndTime(weekday, startTime);
+  const inserted = await sql<{ id: string }[]>`
+    INSERT INTO sessions (weekday, start_time, end_time, is_summer, is_full)
+    VALUES (${weekday}, ${startTime}::time, ${endTime}::time, FALSE, FALSE)
+    ON CONFLICT ON CONSTRAINT session_coverage DO NOTHING
+    RETURNING id::text
+  `;
+  if (inserted.length > 0) return inserted[0].id;
+
+  // Lost the race to a concurrent insert — re-read.
+  const raced = await sql<{ id: string }[]>`
+    SELECT id::text FROM sessions
+    WHERE is_summer = FALSE AND weekday = ${weekday} AND start_time = ${startTime}::time
+    ORDER BY id
+    LIMIT 1
+  `;
+  if (raced.length === 0) {
+    throw new Error(`Could not create a fall session for ${weekday} ${startTime}.`);
+  }
+  return raced[0].id;
+}
+
 async function enrolOne(requestId: string): Promise<EnrolResult> {
   const reqs = await sql<{
     id: string;
@@ -245,19 +316,8 @@ async function enrolOne(requestId: string): Promise<EnrolResult> {
     if (!slot.start_date || !ISO_DATE.test(slot.start_date)) {
       return { error: `No valid start date for ${slot.weekday} ${slot.start_time}.` };
     }
-    const sessionRows = await sql<{ id: string }[]>`
-      SELECT id::text
-      FROM sessions
-      WHERE is_summer = FALSE
-        AND weekday = ${slot.weekday}
-        AND start_time = ${slot.start_time}::time
-      ORDER BY id
-      LIMIT 1
-    `;
-    if (sessionRows.length === 0) {
-      return { error: `No fall session exists for ${slot.weekday} ${slot.start_time}.` };
-    }
-    targets.push({ sessionId: sessionRows[0].id, startDate: slot.start_date });
+    const sessionId = await getOrCreateFallSessionId(slot.weekday, slot.start_time);
+    targets.push({ sessionId, startDate: slot.start_date });
   }
 
   // Auto-inherit course from the student's most recent enrolment, same rule the

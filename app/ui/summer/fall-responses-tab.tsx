@@ -124,6 +124,7 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
         r => r.fall_confirmation_status === 'confirmed' && r.unmatched_slot_count > 0,
       ).length,
       multiClass: rows.filter(r => r.slots.length > 1).length,
+      courseChanges: rows.filter(r => r.change_course_count > 0).length,
     }),
     [rows],
   );
@@ -217,6 +218,9 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
         <span><span className="font-semibold text-sky-700">{counts.enrolled}</span> enrolled</span>
         {counts.multiClass > 0 && (
           <span><span className="font-semibold text-slate-800">{counts.multiClass}</span> multi-class</span>
+        )}
+        {counts.courseChanges > 0 && (
+          <span><span className="font-semibold text-amber-700">{counts.courseChanges}</span> course change</span>
         )}
         <span className="ml-auto text-xs text-slate-500">{filtered.length} of {counts.total} shown</span>
       </div>
@@ -333,6 +337,14 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                               <div className="text-xs text-slate-500">
                                 from {formatDate(slot.start_date)}
                               </div>
+                              <div className="text-xs text-slate-500">
+                                {slot.course_name ?? 'Course to be assigned'}
+                              </div>
+                              {slot.change_course && (
+                                <div className="text-xs font-medium text-amber-700">
+                                  ⚠ course change requested
+                                </div>
+                              )}
                             </div>
                           ))}
                           {row.slots.length > 1 && (

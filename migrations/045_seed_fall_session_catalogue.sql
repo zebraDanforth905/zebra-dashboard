@@ -1,3 +1,11 @@
+-- SUPERSEDED — do not rely on this migration.
+--
+-- The nightly portal scrape (insert_from_portal.ts) deletes every non-summer session with
+-- no enrolments, trials, or makeups, so the rows this seeds are pruned within a day; that
+-- already happened. The fall confirmation form now takes its offered slots from the
+-- hard-coded FALL_CATALOGUE_SLOTS in app/lib/fall-policy.ts, and creates a session row on
+-- demand when staff actually enrol someone. Kept for history; harmless to re-run.
+--
 -- Manual deployment required.
 --
 -- Seed the fall (non-summer) session catalogue, mirroring what 011_add_summer_sessions.sql

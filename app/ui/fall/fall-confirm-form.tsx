@@ -117,8 +117,32 @@ export default function FallConfirmForm({
             ? entry.slots.filter(s => slotKey(s.weekday, s.start_time) !== key)
             : [
                 ...entry.slots,
-                { weekday, start_time: startTime, start_date: entry.default_start_date },
+                {
+                  weekday,
+                  start_time: startTime,
+                  start_date: entry.default_start_date,
+                  course_name: null,
+                  change_course: false,
+                },
               ],
+        },
+      };
+    });
+  }
+
+  function toggleChangeCourse(studentId: string, weekday: string, startTime: string) {
+    setStudents(prev => {
+      const entry = prev[studentId];
+      const key = slotKey(weekday, startTime);
+      return {
+        ...prev,
+        [studentId]: {
+          ...entry,
+          slots: entry.slots.map(s =>
+            slotKey(s.weekday, s.start_time) === key
+              ? { ...s, change_course: !s.change_course }
+              : s,
+          ),
         },
       };
     });
@@ -381,32 +405,67 @@ export default function FallConfirmForm({
                     class starts partway through a month, that month is discounted — four classes
                     is a full month.
                   </p>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {entry.slots.map(slot => {
                       const key = slotKey(slot.weekday, slot.start_time);
                       return (
-                        <div key={key} className="flex flex-wrap items-center gap-2">
-                          <label
-                            htmlFor={`start-date-${student.student_id}-${key}`}
-                            className="w-48 shrink-0 text-sm text-slate-600"
-                          >
-                            {slot.weekday}{' '}
-                            {formatRange(slot.start_time, endTimeBySlot.get(key) ?? null)}
-                          </label>
-                          <input
-                            id={`start-date-${student.student_id}-${key}`}
-                            type="date"
-                            value={slot.start_date ?? ''}
-                            onChange={e =>
-                              setSlotDate(
-                                student.student_id,
-                                slot.weekday,
-                                slot.start_time,
-                                e.target.value,
-                              )
-                            }
-                            className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
-                          />
+                        <div key={key} className="rounded-lg bg-slate-50 px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label
+                              htmlFor={`start-date-${student.student_id}-${key}`}
+                              className="w-48 shrink-0 text-sm font-medium text-slate-700"
+                            >
+                              {slot.weekday}{' '}
+                              {formatRange(slot.start_time, endTimeBySlot.get(key) ?? null)}
+                            </label>
+                            <input
+                              id={`start-date-${student.student_id}-${key}`}
+                              type="date"
+                              value={slot.start_date ?? ''}
+                              onChange={e =>
+                                setSlotDate(
+                                  student.student_id,
+                                  slot.weekday,
+                                  slot.start_time,
+                                  e.target.value,
+                                )
+                              }
+                              className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
+                            />
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <span className="text-xs text-slate-500">
+                              Course:{' '}
+                              <span
+                                className={
+                                  slot.change_course
+                                    ? 'text-slate-400 line-through'
+                                    : 'font-medium text-slate-700'
+                                }
+                              >
+                                {slot.course_name ?? 'To be assigned'}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              aria-pressed={slot.change_course}
+                              onClick={() =>
+                                toggleChangeCourse(student.student_id, slot.weekday, slot.start_time)
+                              }
+                              className={`rounded-lg border px-2 py-1 text-xs transition ${
+                                slot.change_course
+                                  ? 'border-amber-400 bg-amber-50 font-medium text-amber-800'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                              }`}
+                            >
+                              {slot.change_course ? '✓ Course change requested' : 'Change course'}
+                            </button>
+                          </div>
+                          {slot.change_course && (
+                            <p className="mt-1 text-xs text-amber-700">
+                              We&apos;ll reach out, or discuss a new course at the first class.
+                            </p>
+                          )}
                         </div>
                       );
                     })}

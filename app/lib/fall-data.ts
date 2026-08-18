@@ -12,7 +12,13 @@ import {
   FallResponseRow,
   ParentRequestStatus,
 } from './definitions';
-import { FALL_TERM_START_DATE, isVisibleFallSession } from './fall-policy';
+import {
+  assumedEndTime,
+  FALL_CATALOGUE_SLOTS,
+  FALL_TERM_START_DATE,
+  slotKey,
+  weekdayIndex,
+} from './fall-policy';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
@@ -72,7 +78,13 @@ function normalizeTokenSnapshot(value: unknown): Map<string, CurrentSessionSumma
  *   3. their current enrolment (never answered anything — show what they're in today)
  */
 function toSlots(
-  sessions: { weekday: string; start_time: string; start_date?: string | null }[],
+  sessions: {
+    weekday: string;
+    start_time: string;
+    start_date?: string | null;
+    course_name?: string | null;
+    change_course?: boolean;
+  }[],
   defaultStartDate: string,
 ): FallSlotChoice[] {
   const seen = new Set<string>();
@@ -86,6 +98,8 @@ function toSlots(
       weekday: session.weekday,
       start_time: session.start_time,
       start_date: asIsoDate(session.start_date) ?? defaultStartDate,
+      course_name: session.course_name?.trim() || null,
+      change_course: session.change_course === true,
     });
   }
   return slots;
@@ -94,7 +108,12 @@ function toSlots(
 function resolvePrefill(
   fallPayload: Partial<FallConfirmationPayload> | null,
   summerPayload: SummerPayloadShape | null,
-  summerFallSlots: { weekday: string; start_time: string; start_date?: string | null }[],
+  summerFallSlots: {
+    weekday: string;
+    start_time: string;
+    start_date?: string | null;
+    course_name?: string | null;
+  }[],
   currentSessions: CurrentSessionSummary[],
 ): Pick<
   FallFormStudentData,
@@ -206,6 +225,7 @@ export async function fetchFallFormData(
         start_time: string;
         end_time: string | null;
         start_date: string | null;
+        course_name: string | null;
       }[];
     }[]>`
       SELECT
@@ -287,6 +307,7 @@ export async function fetchFallFormData(
               'weekday', se.weekday,
               'start_time', se.start_time::text,
               'end_time', se.end_time::text,
+              'course_name', sfc.course_name,
               -- fall_session_start_dates is keyed by session id on the summer payload
               'start_date', sr.payload->'fall_session_start_dates'->>se.id::text
             )
@@ -302,6 +323,14 @@ export async function fetchFallFormData(
           END
         ) AS fid
         JOIN sessions se ON se.id::text = fid
+        -- Course the student already takes in that slot, when they have one.
+        LEFT JOIN LATERAL (
+          SELECT co.name AS course_name
+          FROM enrolments e2
+          LEFT JOIN courses co ON co.id = e2.course_id
+          WHERE e2.student_id = s.id AND e2.session_id = se.id
+          LIMIT 1
+        ) sfc ON TRUE
         -- Summer slots run at times we don't offer in fall, so a stray summer id in the
         -- payload must never become a prefill the parent could confirm.
         WHERE se.is_summer = FALSE
@@ -315,33 +344,27 @@ export async function fetchFallFormData(
       ORDER BY s.name
     `;
 
-    // Every distinct fall slot, merged by weekday+start_time the same way the summer
-    // registration form merges them, so both forms offer an identical list.
-    const slotRows = await sql<{
+    // Only used to label a slot as full and to recover a real end time for a student's
+    // own off-catalogue slot. NOT the source of which slots are offered — see
+    // FALL_CATALOGUE_SLOTS for why that cannot come from this table.
+    const existingRows = await sql<{
       weekday: string;
       start_time: string;
       end_time: string;
       is_full: boolean;
-      student_count: number;
     }[]>`
       SELECT
         s.weekday,
         s.start_time::text AS start_time,
         MIN(s.end_time)::text AS end_time,
-        BOOL_OR(COALESCE(s.is_full, FALSE)) AS is_full,
-        COUNT(e.id)::int AS student_count
+        BOOL_OR(COALESCE(s.is_full, FALSE)) AS is_full
       FROM sessions s
-      LEFT JOIN enrolments e ON e.session_id = s.id
       WHERE s.is_summer = FALSE
       GROUP BY s.weekday, s.start_time
-      ORDER BY
-        CASE LOWER(TRIM(s.weekday))
-          WHEN 'monday' THEN 1 WHEN 'tuesday' THEN 2 WHEN 'wednesday' THEN 3
-          WHEN 'thursday' THEN 4 WHEN 'friday' THEN 5 WHEN 'saturday' THEN 6
-          WHEN 'sunday' THEN 7 ELSE 8
-        END,
-        s.start_time
     `;
+    const existingByKey = new Map(
+      existingRows.map(row => [slotKey(row.weekday, row.start_time), row]),
+    );
 
     const students: FallFormStudentData[] = studentRows.map(row => {
       // Same precedence as fetchParentFormData: live enrolments, then the token's frozen
@@ -388,31 +411,39 @@ export async function fetchFallFormData(
       };
     });
 
-    // Offered slots, plus any slot a student on this token is already prefilled into.
-    // Without the union, a family in a non-standard time (a 3pm class, a Sunday slot
-    // that dropped off the offered list) could not choose "keep what we have".
-    const slotKey = (weekday: string, startTime: string) => `${weekday}|${startTime}`;
-    const fallSlots = slotRows.filter(isVisibleFallSession);
+    // The hard-coded catalogue, plus any slot a student on this token is prefilled into
+    // (a previous enrolment or their stated summer preference). The extras keep "keep
+    // what we have" workable for families in a non-standard time.
+    const fallSlots: { weekday: string; start_time: string; end_time: string; is_full: boolean }[] =
+      FALL_CATALOGUE_SLOTS.map(slot => ({
+        weekday: slot.weekday,
+        start_time: slot.start_time,
+        end_time: slot.end_time,
+        is_full: existingByKey.get(slotKey(slot.weekday, slot.start_time))?.is_full ?? false,
+      }));
     const offeredKeys = new Set(fallSlots.map(slot => slotKey(slot.weekday, slot.start_time)));
 
     for (const student of students) {
       for (const prefill of student.prefill_slots) {
         const key = slotKey(prefill.weekday, prefill.start_time);
         if (offeredKeys.has(key)) continue;
-        const existing = slotRows.find(slot => slotKey(slot.weekday, slot.start_time) === key);
-        if (!existing) continue;
         offeredKeys.add(key);
-        fallSlots.push(existing);
+        const existing = existingByKey.get(key);
+        fallSlots.push({
+          weekday: prefill.weekday,
+          start_time: prefill.start_time,
+          // A pruned session leaves no end time behind, so assume a one-hour class.
+          end_time: existing?.end_time ?? assumedEndTime(prefill.start_time),
+          is_full: existing?.is_full ?? false,
+        });
       }
     }
 
-    fallSlots.sort((a, b) => {
-      const order = (weekday: string) =>
-        ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].indexOf(
-          weekday.trim().toLowerCase(),
-        );
-      return order(a.weekday) - order(b.weekday) || a.start_time.localeCompare(b.start_time);
-    });
+    fallSlots.sort(
+      (a, b) =>
+        weekdayIndex(a.weekday) - weekdayIndex(b.weekday) ||
+        a.start_time.localeCompare(b.start_time),
+    );
 
     return {
       token_id,
@@ -454,6 +485,7 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
         pr.payload->>'fall_confirmation_status' AS fall_confirmation_status,
         COALESCE(sls.slots, '[]'::json) AS slots,
         COALESCE(sls.unmatched_slot_count, 0)::int AS unmatched_slot_count,
+        COALESCE(sls.change_course_count, 0)::int AS change_course_count,
         COALESCE((pr.payload->>'pickup_requested')::boolean, FALSE) AS pickup_requested,
         pr.payload->>'pickup_school' AS pickup_school,
         pr.custom_notes AS notes,
@@ -512,12 +544,16 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
               'weekday', el.val->>'weekday',
               'start_time', el.val->>'start_time',
               'start_date', el.val->>'start_date',
+              'course_name', el.val->>'course_name',
+              'change_course', COALESCE((el.val->>'change_course')::boolean, FALSE),
               'matched_session_id', ms.id,
               'is_full', COALESCE(ms.is_full, FALSE)
             )
             ORDER BY el.ord
           ) AS slots,
-          COUNT(*) FILTER (WHERE ms.id IS NULL)::int AS unmatched_slot_count
+          COUNT(*) FILTER (WHERE ms.id IS NULL)::int AS unmatched_slot_count,
+          COUNT(*) FILTER (WHERE COALESCE((el.val->>'change_course')::boolean, FALSE))::int
+            AS change_course_count
         FROM jsonb_array_elements(
           CASE
             WHEN jsonb_typeof(pr.payload->'slots') = 'array' THEN pr.payload->'slots'
