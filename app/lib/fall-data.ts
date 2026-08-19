@@ -1,5 +1,4 @@
 import postgres from 'postgres';
-import { cacheTag } from 'next/cache';
 import {
   CurrentSessionSummary,
   FallConfirmationPayload,
@@ -503,9 +502,13 @@ export async function fetchFallFormData(
   }
 }
 
+/**
+ * NOT cached. These rows report enrolment state, which the nightly portal scrape changes
+ * without going through any of our actions — so a cached copy kept showing a student as
+ * enrolled after their portal enrolment was removed. The fall-responses tag only ever
+ * covered our own writes, and the portal is the system of record.
+ */
 export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
-  'use cache';
-  cacheTag('fall-responses');
   try {
     const rows = await sql<FallResponseRow[]>`
       SELECT
