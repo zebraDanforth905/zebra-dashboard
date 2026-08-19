@@ -441,16 +441,20 @@ export async function endFallEnrolment(
 }
 
 /**
- * "Dismiss": the staff member has handled this response and wants it out of the queue,
- * without any enrolment change. Stored as status 'reviewed' — an existing value in the
- * parent_requests CHECK constraint, so no migration is needed — as distinct from
- * 'completed', which means an enrolment was actually created or ended.
+ * Back to 'pending' so the row returns to the Needs action queue. 'reviewed' is still
+ * accepted for rows filed before the states collapsed to Needs action / Complete.
+ * Reopening does NOT undo any enrolment already created.
  */
-export async function dismissFallResponse(requestId: string): Promise<void> {
+/**
+ * "Mark complete": staff have enrolled the student AND verified the next invoice. This is
+ * a deliberate judgement, never a side effect — enrolling deliberately leaves the row in
+ * Needs action so the invoice still gets a look.
+ */
+export async function markFallResponseComplete(requestId: string): Promise<void> {
   await requireAdmin();
   await sql`
     UPDATE parent_requests
-    SET status = 'reviewed', reviewed_at = NOW(), reviewed_by = ${await staffDisplayName()}, updated_at = NOW()
+    SET status = 'completed', reviewed_at = NOW(), reviewed_by = ${await staffDisplayName()}, updated_at = NOW()
     WHERE id = ${requestId}::uuid
       AND request_type = 'fall_confirmation'
       AND is_latest = TRUE
@@ -459,11 +463,6 @@ export async function dismissFallResponse(requestId: string): Promise<void> {
   revalidateFall();
 }
 
-/**
- * Undo a dismiss: back to 'pending' so the row returns to the Needs action queue.
- * Scoped to status 'reviewed' so it can never reopen a 'completed' row, where an
- * enrolment was actually created or ended and reopening would misrepresent the state.
- */
 export async function undismissFallResponse(requestId: string): Promise<{ reopened: boolean }> {
   await requireAdmin();
   const rows = await sql<{ id: string }[]>`
@@ -473,7 +472,7 @@ export async function undismissFallResponse(requestId: string): Promise<{ reopen
       AND request_type = 'fall_confirmation'
       AND is_latest = TRUE
       AND removed_at IS NULL
-      AND status = 'reviewed'
+      AND status IN ('reviewed', 'completed')
     RETURNING id::text
   `;
   revalidateFall();

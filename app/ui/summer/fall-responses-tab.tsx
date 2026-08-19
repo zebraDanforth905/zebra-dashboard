@@ -6,10 +6,10 @@ import Link from 'next/link';
 import { FallResponseRow } from '@/app/lib/definitions';
 import {
   deleteFallResponse,
-  dismissFallResponse,
   endFallEnrolment,
   enrollAllConfirmedFall,
   enrollFallStudent,
+  markFallResponseComplete,
   undismissFallResponse,
 } from '@/app/lib/fall-actions';
 
@@ -44,8 +44,8 @@ const STATUS_LABEL: Record<string, string> = {
 // STATUS_LABEL above, which is the parent's answer.
 const ROW_STATUS_LABEL: Record<string, string> = {
   pending: 'Needs action',
-  reviewed: 'Dismissed',
-  completed: 'Actioned',
+  reviewed: 'Complete',
+  completed: 'Complete — invoice checked',
   needs_manual_followup: 'Needs follow-up',
 };
 
@@ -242,7 +242,7 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
           </h2>
           {activeRows.length === 0 ? (
             <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
-              Nothing waiting — everything here has been enrolled or dismissed.
+              Nothing waiting — everything here is complete.
             </div>
           ) : (
             renderTable(activeRows)
@@ -257,7 +257,7 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
               className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-800"
             >
               <span className="text-slate-400">{showDone ? '▾' : '▸'}</span>
-              Completed &amp; dismissed{' '}
+              Complete{' '}
               <span className="font-normal text-slate-500">({doneRows.length})</span>
             </button>
             {showDone && renderTable(doneRows)}
@@ -462,25 +462,24 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
 
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1.5">
-                        {/* Only a row still awaiting a decision can be dismissed — an
-                            already-dismissed row offers Un-dismiss instead. */}
-                        {row.status === 'pending' && (
+
+                        {row.status !== 'completed' && (
                           <button
                             onClick={() =>
                               run(row.request_id, async () => {
-                                await dismissFallResponse(row.request_id);
-                                return `Dismissed ${row.student_name}.`;
+                                await markFallResponseComplete(row.request_id);
+                                return `Marked ${row.student_name} complete.`;
                               })
                             }
                             disabled={busy}
-                            title="Move to Completed & dismissed without changing any enrolment"
-                            className="whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+                            title="Enrolled and next invoice checked — file under Complete"
+                            className="whitespace-nowrap rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-40"
                           >
-                            Dismiss
+                            Mark complete
                           </button>
                         )}
 
-                        {row.status === 'reviewed' && (
+                        {(row.status === 'reviewed' || row.status === 'completed') && (
                           <button
                             onClick={() =>
                               run(row.request_id, async () => {
@@ -489,10 +488,10 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                               })
                             }
                             disabled={busy}
-                            title="Move back to Needs action"
+                            title="Move back to Needs action (does not undo any enrolment)"
                             className="whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
                           >
-                            Un-dismiss
+                            Move to Needs action
                           </button>
                         )}
 
