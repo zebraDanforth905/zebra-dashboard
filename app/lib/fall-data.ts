@@ -13,6 +13,7 @@ import {
   ParentRequestStatus,
 } from './definitions';
 import {
+  assumedEndTime,
   FALL_CATALOGUE_SLOTS,
   FALL_TERM_START_DATE,
   firstClassDateFor,
@@ -423,12 +424,7 @@ export async function fetchFallFormData(
     // The hard-coded catalogue, plus any slot a student on this token is prefilled into
     // (a previous enrolment or their stated summer preference). The extras keep "keep
     // what we have" workable for families in a non-standard time.
-    const fallSlots: {
-      weekday: string;
-      start_time: string;
-      end_time: string | null;
-      is_full: boolean;
-    }[] =
+    const fallSlots: { weekday: string; start_time: string; end_time: string; is_full: boolean }[] =
       FALL_CATALOGUE_SLOTS.map(slot => ({
         weekday: slot.weekday,
         start_time: slot.start_time,
@@ -455,9 +451,9 @@ export async function fetchFallFormData(
         fallSlots.push({
           weekday: prefill.weekday,
           start_time: prefill.start_time,
-          // A pruned session leaves no end time behind. Guessing +1h printed a wrong
-          // time to parents (a 10:30-12:00 class showed as 10:30-11:30), so show none.
-          end_time: existing?.end_time ?? null,
+          // A pruned session leaves no end time behind, so assume a one-hour class.
+          // Students on a longer class are handled case by case.
+          end_time: existing?.end_time ?? assumedEndTime(prefill.start_time),
           is_full: existing?.is_full ?? false,
         });
       }

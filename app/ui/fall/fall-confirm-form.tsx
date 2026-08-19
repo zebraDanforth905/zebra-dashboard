@@ -58,7 +58,7 @@ export default function FallConfirmForm({
   // Grouped by day so every slot is visible at once — with multi-select there is no
   // "pick a day, then a time" funnel, since a student can attend on several days.
   const slotsByWeekday = useMemo(() => {
-    const map = new Map<string, { start_time: string; end_time: string | null }[]>();
+    const map = new Map<string, { start_time: string; end_time: string }[]>();
     for (const slot of data.fall_slots) {
       map.set(slot.weekday, [
         ...(map.get(slot.weekday) ?? []),
@@ -71,7 +71,7 @@ export default function FallConfirmForm({
   const endTimeBySlot = useMemo(() => {
     const map = new Map<string, string>();
     for (const slot of data.fall_slots) {
-      if (slot.end_time) map.set(`${slot.weekday}|${slot.start_time}`, slot.end_time);
+      map.set(`${slot.weekday}|${slot.start_time}`, slot.end_time);
     }
     return map;
   }, [data.fall_slots]);
