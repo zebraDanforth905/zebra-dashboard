@@ -640,9 +640,16 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
     // blocked every catalogue slot with no students yet, since the nightly scrape prunes
     // empty non-summer sessions.
     return rows.map(row => {
+      // Enrolment state is read from the student's actual live enrolments, not from
+      // parent_requests.enrolment_ids: an enrolment made in the portal (or before this
+      // flow existed) arrives via the scrape and never touches that column.
+      const enrolledKeys = new Set(
+        row.current_enrolments.map(enrolment => slotKey(enrolment.weekday, enrolment.start_time)),
+      );
       const slots = row.slots.map(slot => ({
         ...slot,
         bookable: Boolean(slot.matched_session_id) || isCatalogueSlot(slot.weekday, slot.start_time),
+        already_enrolled: enrolledKeys.has(slotKey(slot.weekday, slot.start_time)),
       }));
       return {
         ...row,

@@ -353,10 +353,10 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                           {/* Enrol sits with the class it acts on, like the summer tab's
                               row-level approve. */}
                           <div className="mt-2 flex flex-wrap items-center gap-2">
-                            {row.enrolment_ids.length > 0 ? (
+                            {row.slots.length > 0 && row.slots.every(slot => slot.already_enrolled) ? (
                               <span
                                 className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800"
-                                title={`${row.enrolment_ids.length} enrolment(s) created`}
+                                title="Already enrolled in every requested class"
                               >
                                 ✓ Enrolled
                               </span>

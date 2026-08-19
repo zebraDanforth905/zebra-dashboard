@@ -1202,6 +1202,9 @@ export type FallResponseRow = {
     // True when this slot can be enrolled into: either a session row already exists, or it
     // is a catalogue slot the enrol action will create one for.
     bookable: boolean;
+    // The student already has a live enrolment at this weekday and time — whether we
+    // created it or the portal scrape brought it in.
+    already_enrolled: boolean;
     is_full: boolean;
   }[];
   // Slots that are NOT bookable — a time we do not offer and have no history with.
