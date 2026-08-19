@@ -89,7 +89,16 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // Unenrolling asks for its end date in a dialog: a single toolbar date applied silently
+  // to whichever row was clicked, and end-dating the wrong enrolment is not obvious after
+  // the fact.
+  const [unenrol, setUnenrol] = useState<{
+    enrolmentId: string;
+    requestId: string;
+    studentName: string;
+    label: string;
+    endDate: string;
+  } | null>(null);
   // Done work is collapsed so the queue above it stays the focus.
   const [showDone, setShowDone] = useState(false);
 
@@ -147,6 +156,72 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
 
   return (
     <div className="space-y-4">
+      {unenrol && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setUnenrol(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl"
+            onClick={event => event.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-slate-900">Unenrol {unenrol.studentName}</h3>
+            <p className="mt-1 text-sm text-slate-600">{unenrol.label}</p>
+
+            <label
+              htmlFor="unenrol-end-date"
+              className="mt-4 block text-sm font-medium text-slate-700"
+            >
+              Last day of class
+            </label>
+            <input
+              id="unenrol-end-date"
+              type="date"
+              autoFocus
+              value={unenrol.endDate}
+              onChange={event =>
+                setUnenrol(current => (current ? { ...current, endDate: event.target.value } : current))
+              }
+              className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              The enrolment is end-dated here; it is not deleted.
+            </p>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setUnenrol(null)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!unenrol.endDate || isPending}
+                onClick={() => {
+                  const pending = unenrol;
+                  setUnenrol(null);
+                  run(pending.requestId, async () => {
+                    const res = await endFallEnrolment(pending.enrolmentId, pending.endDate);
+                    return res.error
+                      ? { text: res.error, error: true }
+                      : {
+                          text: `Ended ${pending.studentName}'s ${pending.label} on ${pending.endDate}.`,
+                        };
+                  });
+                }}
+                className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-rose-500 disabled:opacity-40"
+              >
+                Unenrol
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {counts.unmatched > 0 && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
           {counts.unmatched} confirmed response{counts.unmatched === 1 ? '' : 's'} include a class time with no
@@ -175,16 +250,6 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
           className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 sm:w-64"
         />
 
-        <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
-        <label className="flex items-center gap-1.5 text-xs text-slate-500">
-          Unenrol end date
-          <input
-            type="date"
-            value={endDate}
-            onChange={e => setEndDate(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
-          />
-        </label>
       </div>
 
       {message && (
@@ -403,19 +468,18 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                               ) : null}
                               <button
                                 onClick={() =>
-                                  run(row.request_id, async () => {
-                                    const res = await endFallEnrolment(enrolment.enrolment_id, endDate);
-                                    return res.error
-                                      ? { text: res.error, error: true }
-                                      : {
-                                          text: `Ended ${row.student_name}'s ${enrolment.weekday} ${formatTime(
-                                            enrolment.start_time,
-                                          )} class on ${endDate}.`,
-                                        };
+                                  setUnenrol({
+                                    enrolmentId: enrolment.enrolment_id,
+                                    requestId: row.request_id,
+                                    studentName: row.student_name,
+                                    label: `${enrolment.weekday} ${formatTime(enrolment.start_time)}${
+                                      enrolment.course_name ? ` · ${enrolment.course_name}` : ''
+                                    }`,
+                                    endDate: new Date().toISOString().slice(0, 10),
                                   })
                                 }
                                 disabled={busy}
-                                title={`End this enrolment on ${endDate} (set the date in the toolbar)`}
+                                title="Choose an end date and unenrol this class"
                                 className="mt-0.5 whitespace-nowrap rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
                               >
                                 Unenrol
