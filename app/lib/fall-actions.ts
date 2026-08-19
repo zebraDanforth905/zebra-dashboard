@@ -11,6 +11,12 @@ import {
   FallSlotChoice,
 } from './definitions';
 import { catalogueEndTime, FALL_PICKUP_SCHOOLS, isCatalogueSlot } from './fall-policy';
+import {
+  createEnrolment,
+  fetchCourseBatches,
+  fetchCourseFees,
+  fetchPrograms,
+} from './scraper_helpers';
 
 const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 type PostgresJsonValue = Parameters<typeof sql.json>[0];
@@ -283,6 +289,85 @@ async function getOrCreateFallSessionId(weekday: string, startTime: string): Pro
   return raced[0].id;
 }
 
+
+/**
+ * Resolves one fall slot to the portal ids a POST /students/batch needs, then creates the
+ * enrolment there.
+ *
+ * Dashboard enrolments are a mirror of the portal: the nightly scrape deletes any
+ * non-summer enrolment the portal does not have, so a dashboard-only insert is erased
+ * within a day. The portal write is what actually persists.
+ *
+ * Choices, per staff instruction:
+ *  - sub-course: the lowest-numbered level (beginner). Level is not tracked in the
+ *    dashboard, and it is not tracked in the portal today either.
+ *  - batch: among batches matching weekday + start AND end time, the one with the largest
+ *    capacity. Several batches routinely share a time slot.
+ *  - fee: the first fee on the course. Billing is driven by the dashboard's recurring
+ *    invoices, not by this value.
+ */
+async function createPortalEnrolment(opts: {
+  studentId: number;
+  courseCode: string;
+  weekday: string;
+  startTime: string;
+  endTime: string;
+  startDate: string;
+}): Promise<{ error?: string; batchId?: number }> {
+  const programs = await fetchPrograms();
+  const program = programs.find(
+    candidate => candidate.course_code?.trim().toLowerCase() === opts.courseCode.trim().toLowerCase(),
+  );
+  if (!program) {
+    return { error: `No portal course matches "${opts.courseCode}".` };
+  }
+
+  const batches = await fetchCourseBatches(program.id);
+  const sameSlot = batches.filter(
+    batch =>
+      batch.day?.trim().toLowerCase() === opts.weekday.trim().toLowerCase() &&
+      batch.start_time === opts.startTime &&
+      batch.end_time === opts.endTime,
+  );
+  if (sameSlot.length === 0) {
+    return {
+      error:
+        `No portal batch for ${program.course_code} on ${opts.weekday} ` +
+        `${opts.startTime}-${opts.endTime}. Create it in the portal first.`,
+    };
+  }
+  // Largest capacity wins; ties resolve on the lower id so repeat runs are deterministic.
+  const batch = [...sameSlot].sort(
+    (a, b) => (b.maximum_student ?? 0) - (a.maximum_student ?? 0) || a.batch_id - b.batch_id,
+  )[0];
+
+  const subCourses = [...(program.subCourses ?? [])].sort(
+    (a, b) => (a.sub_course_order_num ?? 0) - (b.sub_course_order_num ?? 0),
+  );
+  const subCourseId = subCourses[0]?.sub_course_id;
+  if (subCourseId == null) {
+    return { error: `Portal course ${program.course_code} has no sub-course to enrol into.` };
+  }
+
+  const fees = await fetchCourseFees(program.id);
+  const fee = fees[0];
+  if (!fee) {
+    return { error: `Portal course ${program.course_code} has no fee configured.` };
+  }
+
+  await createEnrolment({
+    studentId: opts.studentId,
+    courseId: program.id,
+    subCourseId,
+    batchId: batch.batch_id,
+    feeId: fee.branch_course_fee_id,
+    price: fee.course_fee,
+    startDate: opts.startDate,
+  });
+
+  return { batchId: batch.batch_id };
+}
+
 async function enrolOne(requestId: string): Promise<EnrolResult> {
   const reqs = await sql<{
     id: string;
@@ -311,33 +396,55 @@ async function enrolOne(requestId: string): Promise<EnrolResult> {
 
   // Resolve every slot up front — enrolling into some but not all of a multi-class
   // request would leave the family half-booked with no record of which half.
-  const targets: { sessionId: string; startDate: string }[] = [];
+  // Every slot must carry a course: it is the portal course_code, and without it there is
+  // nothing to enrol into there.
+  const missingCourse = slots.find(slot => !slot.course_id);
+  if (missingCourse) {
+    return {
+      error:
+        `No course on ${missingCourse.weekday} ${missingCourse.start_time}. ` +
+        'Set the course before enrolling.',
+    };
+  }
+
+  const targets: { sessionId: string; startDate: string; courseId: string }[] = [];
   for (const slot of slots) {
     if (!slot.start_date || !ISO_DATE.test(slot.start_date)) {
       return { error: `No valid start date for ${slot.weekday} ${slot.start_time}.` };
     }
     const sessionId = await getOrCreateFallSessionId(slot.weekday, slot.start_time);
-    targets.push({ sessionId, startDate: slot.start_date });
+    targets.push({ sessionId, startDate: slot.start_date, courseId: slot.course_id as string });
   }
 
-  // Auto-inherit course from the student's most recent enrolment, same rule the
-  // summer approval flow uses.
-  const courseRows = await sql<{ course_id: string }[]>`
-    SELECT course_id::text
-    FROM enrolments
-    WHERE student_id = ${req.student_id}
-    ORDER BY start_date DESC NULLS LAST
-    LIMIT 1
-  `;
-  if (courseRows.length === 0) {
-    return { error: 'No existing enrolment to inherit a course from. Enrol manually.' };
+  // The portal is the system of record — the nightly scrape deletes any non-summer
+  // enrolment it does not have, so writing only to our tables would be undone. Do the
+  // portal writes FIRST and stop on the first failure, so we never record an enrolment
+  // here that does not exist there.
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const result = await createPortalEnrolment({
+      studentId: Number(req.student_id),
+      courseCode: slot.course_id as string,
+      weekday: slot.weekday,
+      startTime: slot.start_time,
+      endTime: catalogueEndTime(slot.weekday, slot.start_time),
+      startDate: targets[i].startDate,
+    });
+    if (result.error) {
+      return {
+        error:
+          i === 0
+            ? result.error
+            : `${result.error} (${i} of ${slots.length} classes were already created in the portal.)`,
+      };
+    }
   }
-  const courseId = courseRows[0].course_id;
+
   const reviewedBy = await staffDisplayName();
 
   await sql.begin(async tx => {
     const enrolmentIds: string[] = [];
-    for (const { sessionId, startDate } of targets) {
+    for (const { sessionId, startDate, courseId } of targets) {
       const inserted = await tx<{ id: string }[]>`
         INSERT INTO enrolments (student_id, course_id, session_id, start_date)
         VALUES (${req.student_id}, ${courseId}, ${sessionId}::uuid, ${startDate}::date)
@@ -369,43 +476,6 @@ export async function enrollFallStudent(requestId: string): Promise<{ error?: st
   const result = await enrolOne(requestId);
   revalidateFall();
   return result.error ? { error: result.error } : {};
-}
-
-export async function enrollAllConfirmedFall(): Promise<{
-  created: number;
-  skipped: number;
-  errors: string[];
-}> {
-  await requireAdmin();
-  const pending = await sql<{ id: string; student_name: string }[]>`
-    SELECT pr.id::text, s.name AS student_name
-    FROM parent_requests pr
-    JOIN students s ON s.id = pr.student_id
-    WHERE pr.request_type = 'fall_confirmation'
-      AND pr.is_latest = TRUE
-      AND pr.removed_at IS NULL
-      AND pr.status = 'pending'
-      AND pr.payload->>'fall_confirmation_status' = 'confirmed'
-      -- Enrolling no longer flips status, so skip rows already enrolled or this would
-      -- re-run over them every time and report an inflated count.
-      AND COALESCE(ARRAY_LENGTH(pr.enrolment_ids, 1), 0) = 0
-  `;
-
-  let created = 0;
-  let skipped = 0;
-  const errors: string[] = [];
-  for (const row of pending) {
-    const result = await enrolOne(row.id);
-    if (result.error) {
-      skipped++;
-      errors.push(`${row.student_name}: ${result.error}`);
-    } else {
-      created++;
-    }
-  }
-
-  revalidateFall();
-  return { created, skipped, errors };
 }
 
 /**

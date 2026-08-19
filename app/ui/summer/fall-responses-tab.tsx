@@ -7,7 +7,6 @@ import { FallResponseRow } from '@/app/lib/definitions';
 import {
   deleteFallResponse,
   endFallEnrolment,
-  enrollAllConfirmedFall,
   enrollFallStudent,
   markFallResponseComplete,
   undismissFallResponse,
@@ -115,14 +114,6 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
       notReturning: rows.filter(r => r.fall_confirmation_status === 'not_returning').length,
       paused: rows.filter(r => r.fall_confirmation_status === 'paused').length,
       enrolled: rows.filter(r => r.enrolment_ids.length > 0).length,
-      readyToEnrol: rows.filter(
-        r =>
-          r.fall_confirmation_status === 'confirmed' &&
-          r.status === 'pending' &&
-          r.enrolment_ids.length === 0 &&
-          r.slots.length > 0 &&
-          r.unmatched_slot_count === 0,
-      ).length,
       unmatched: rows.filter(
         r => r.fall_confirmation_status === 'confirmed' && r.unmatched_slot_count > 0,
       ).length,
@@ -160,22 +151,6 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
 
       {/* Action bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() =>
-            run('bulk', async () => {
-              const res = await enrollAllConfirmedFall();
-              return `Enrolled ${res.created}, skipped ${res.skipped}.${
-                res.errors.length > 0 ? ` ${res.errors.slice(0, 3).join('; ')}` : ''
-              }`;
-            })
-          }
-          disabled={isPending || counts.readyToEnrol === 0}
-          className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-40"
-        >
-          {busyId === 'bulk' ? 'Enrolling…' : `Enrol all confirmed (${counts.readyToEnrol})`}
-        </button>
-
-        <div className="hidden h-5 shrink-0 border-l border-slate-200 sm:block" />
 
         <select
           value={filter}
