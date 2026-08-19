@@ -1,7 +1,7 @@
 'use server';
 
 import postgres from 'postgres';
-import { revalidateTag } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
 import {
@@ -49,6 +49,9 @@ async function staffDisplayName(): Promise<string> {
 function revalidateFall(): void {
   revalidateTag('fall-responses', 'max');
   revalidateTag('summer-tokens', 'max');
+  // The tag alone left the rendered tab stale after enrolling: the new enrolment exists,
+  // but the "Currently in" column is server-rendered and the route was not re-run.
+  revalidatePath('/dashboard/summer');
 }
 
 const VALID_STATUSES = new Set<FallConfirmationStatus>(['confirmed', 'not_returning', 'paused']);
