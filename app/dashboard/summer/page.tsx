@@ -8,7 +8,7 @@ import {
   fetchSummerStats,
   fetchUntokenizedActiveFamilyCount,
 } from '@/app/lib/summer-data';
-import { fetchFallResponseRows } from '@/app/lib/fall-data';
+import { fetchFallCourseOptions, fetchFallResponseRows } from '@/app/lib/fall-data';
 import { fetchLatestSummerResponseNotes } from '@/app/lib/data';
 import FallResponsesTab from '@/app/ui/summer/fall-responses-tab';
 import LinkManagement from '@/app/ui/summer/link-management';
@@ -40,12 +40,13 @@ export default async function SummerPage({
 
   const { tab = 'links' } = await searchParams;
 
-  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, fallResponseRows, scheduleRows, fallScheduleRows, snapshotRows, snapshotCourseOptions] = await Promise.all([
+  const [linkRows, untokenizedActiveFamilyCount, stats, responseRows, fallResponseRows, fallCourseOptions, scheduleRows, fallScheduleRows, snapshotRows, snapshotCourseOptions] = await Promise.all([
     tab === 'links' ? fetchParentLinkRows() : null,
     tab === 'links' ? fetchUntokenizedActiveFamilyCount() : null,
     tab === 'responses' ? fetchSummerStats() : null,
     tab === 'responses' ? fetchSummerResponseRows() : null,
     tab === 'fall-responses' ? fetchFallResponseRows() : null,
+    tab === 'fall-responses' ? fetchFallCourseOptions() : null,
     tab === 'schedule' ? fetchSummerSchedule() : null,
     tab === 'fall-schedule' ? fetchFallSchedule() : null,
     tab === 'snapshot' ? fetchSummerSnapshotRows() : null,
@@ -108,8 +109,8 @@ export default async function SummerPage({
         <ResponsesTab rows={enrichedResponseRows} stats={stats} currentUserName={currentUserName} />
       )}
 
-      {tab === 'fall-responses' && fallResponseRows && (
-        <FallResponsesTab rows={fallResponseRows} />
+      {tab === 'fall-responses' && fallResponseRows && fallCourseOptions && (
+        <FallResponsesTab rows={fallResponseRows} courseOptions={fallCourseOptions} />
       )}
 
       {tab === 'schedule' && scheduleRows && (

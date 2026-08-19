@@ -376,7 +376,12 @@ async function createPortalEnrolment(opts: {
   return { batchId: batch.batch_id };
 }
 
-async function enrolOne(requestId: string): Promise<EnrolResult> {
+async function enrolOne(
+  requestId: string,
+  // slotKey -> course id, set by staff when a parent asked to change course. Without it
+  // enrolment inherits the course they were already in, which is wrong for those slots.
+  courseOverrides: Record<string, string> = {},
+): Promise<EnrolResult> {
   const reqs = await sql<{
     id: string;
     student_id: string;
@@ -411,7 +416,23 @@ async function enrolOne(requestId: string): Promise<EnrolResult> {
     SELECT id::text, name FROM courses WHERE name IS NOT NULL
   `;
   const { canonical, fromName } = buildCourseResolvers(courseRows);
-  const courseCodes = slots.map(slot => canonical(slot.course_id) ?? fromName(slot.course_name));
+  const courseCodes = slots.map(slot => {
+    const override = courseOverrides[`${slot.weekday}|${slot.start_time}`];
+    if (override) return canonical(override) ?? override;
+    return canonical(slot.course_id) ?? fromName(slot.course_name);
+  });
+  // A change-course slot must be given a course; silently reusing the old one is the
+  // thing the parent asked us not to do.
+  const unresolvedChange = slots.findIndex(
+    (slot, i) => slot.change_course && !courseOverrides[`${slot.weekday}|${slot.start_time}`] && !courseCodes[i],
+  );
+  if (unresolvedChange !== -1) {
+    const slot = slots[unresolvedChange];
+    return {
+      error: `Choose the new course for ${slot.weekday} ${slot.start_time} before enrolling.`,
+    };
+  }
+
   const missingIndex = courseCodes.findIndex(code => !code);
   if (missingIndex !== -1) {
     const slot = slots[missingIndex];
@@ -486,9 +507,12 @@ async function enrolOne(requestId: string): Promise<EnrolResult> {
   return { created: targets.length };
 }
 
-export async function enrollFallStudent(requestId: string): Promise<{ error?: string }> {
+export async function enrollFallStudent(
+  requestId: string,
+  courseOverrides: Record<string, string> = {},
+): Promise<{ error?: string }> {
   await requireAdmin();
-  const result = await enrolOne(requestId);
+  const result = await enrolOne(requestId, courseOverrides);
   revalidateFall();
   return result.error ? { error: result.error } : {};
 }

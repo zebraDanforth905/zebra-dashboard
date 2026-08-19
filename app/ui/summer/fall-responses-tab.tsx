@@ -82,7 +82,13 @@ function applyFilter(rows: FallResponseRow[], filter: FilterValue): FallResponse
   }
 }
 
-export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) {
+export default function FallResponsesTab({
+  rows,
+  courseOptions,
+}: {
+  rows: FallResponseRow[];
+  courseOptions: { id: string; name: string }[];
+}) {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterValue>('all');
   const [search, setSearch] = useState('');
@@ -98,6 +104,13 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
     studentName: string;
     label: string;
     endDate: string;
+  } | null>(null);
+  // Set when a parent asked to change course: staff pick the new one before we enrol,
+  // rather than silently repeating the course they wanted to leave.
+  const [coursePick, setCoursePick] = useState<{
+    requestId: string;
+    studentName: string;
+    slots: { key: string; label: string; courseId: string }[];
   } | null>(null);
   // Done work is collapsed so the queue above it stays the focus.
   const [showDone, setShowDone] = useState(false);
@@ -156,6 +169,94 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
 
   return (
     <div className="space-y-4">
+      {coursePick && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setCoursePick(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+            onClick={event => event.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-slate-900">
+              New course for {coursePick.studentName}
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              They asked to change course, so pick the course to enrol into.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              {coursePick.slots.map((slot, index) => (
+                <div key={slot.key}>
+                  <label
+                    htmlFor={`course-pick-${slot.key}`}
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    {slot.label}
+                  </label>
+                  <select
+                    id={`course-pick-${slot.key}`}
+                    value={slot.courseId}
+                    onChange={event =>
+                      setCoursePick(current =>
+                        current
+                          ? {
+                              ...current,
+                              slots: current.slots.map((entry, i) =>
+                                i === index ? { ...entry, courseId: event.target.value } : entry,
+                              ),
+                            }
+                          : current,
+                      )
+                    }
+                    className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
+                  >
+                    <option value="">Choose a course…</option>
+                    {courseOptions.map(course => (
+                      <option key={course.id} value={course.id}>
+                        {course.name} ({course.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCoursePick(null)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={coursePick.slots.some(slot => !slot.courseId) || isPending}
+                onClick={() => {
+                  const pending = coursePick;
+                  setCoursePick(null);
+                  const overrides = Object.fromEntries(
+                    pending.slots.map(slot => [slot.key, slot.courseId]),
+                  );
+                  run(pending.requestId, async () => {
+                    const res = await enrollFallStudent(pending.requestId, overrides);
+                    return res.error
+                      ? { text: res.error, error: true }
+                      : { text: `Enrolled ${pending.studentName} in the new course (portal + dashboard).` };
+                  });
+                }}
+                className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-40"
+              >
+                Enrol
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {unenrol && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
@@ -427,7 +528,20 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                               </span>
                             ) : (
                               <button
-                                onClick={() =>
+                                onClick={() => {
+                                  const changing = row.slots.filter(slot => slot.change_course);
+                                  if (changing.length > 0) {
+                                    setCoursePick({
+                                      requestId: row.request_id,
+                                      studentName: row.student_name,
+                                      slots: changing.map(slot => ({
+                                        key: `${slot.weekday}|${slot.start_time}`,
+                                        label: `${slot.weekday} ${formatTime(slot.start_time)}`,
+                                        courseId: '',
+                                      })),
+                                    });
+                                    return;
+                                  }
                                   run(row.request_id, async () => {
                                     const res = await enrollFallStudent(row.request_id);
                                     return res.error
@@ -437,8 +551,8 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                                             row.slots.length === 1 ? '' : 'es'
                                           } (portal + dashboard).`,
                                         };
-                                  })
-                                }
+                                  });
+                                }}
                                 disabled={busy || row.slots.length === 0 || row.unmatched_slot_count > 0}
                                 className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-40"
                               >

@@ -665,3 +665,30 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
     throw new Error('Failed to fetch fall response rows.');
   }
 }
+
+/**
+ * Courses staff can pick from when a parent asked to change course. Deduped to the
+ * canonical (portal course_code) row, since that is what an enrolment resolves against.
+ */
+export async function fetchFallCourseOptions(): Promise<{ id: string; name: string }[]> {
+  try {
+    const rows = await sql<{ id: string; name: string }[]>`
+      SELECT id::text, name FROM courses WHERE name IS NOT NULL AND name !~* 'day\s*camp'
+    `;
+    const { canonical } = buildCourseResolvers(rows);
+    const byId = new Map<string, string>();
+    for (const row of rows) {
+      const id = canonical(row.id);
+      if (!id) continue;
+      // Prefer the plain name (the code row's), not the alias that repeats the code.
+      const existing = byId.get(id);
+      if (!existing || row.name.length < existing.length) byId.set(id, row.name);
+    }
+    return [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw new Error('Failed to fetch fall course options.');
+  }
+}
