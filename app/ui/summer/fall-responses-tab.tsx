@@ -110,7 +110,14 @@ export default function FallResponsesTab({
   const [coursePick, setCoursePick] = useState<{
     requestId: string;
     studentName: string;
-    slots: { key: string; label: string; courseId: string }[];
+    slots: {
+      key: string;
+      label: string;
+      needsCourse: boolean;
+      courseId: string;
+      needsEndTime: boolean;
+      endTime: string;
+    }[];
   } | null>(null);
   // Done work is collapsed so the queue above it stays the focus.
   const [showDone, setShowDone] = useState(false);
@@ -181,21 +188,49 @@ export default function FallResponsesTab({
             onClick={event => event.stopPropagation()}
           >
             <h3 className="text-base font-semibold text-slate-900">
-              New course for {coursePick.studentName}
+              Enrol {coursePick.studentName}
             </h3>
             <p className="mt-1 text-sm text-slate-600">
-              They asked to change course, so pick the course to enrol into.
+              A few details are needed before the enrolment can be created in the portal.
             </p>
 
             <div className="mt-4 space-y-3">
               {coursePick.slots.map((slot, index) => (
                 <div key={slot.key}>
-                  <label
-                    htmlFor={`course-pick-${slot.key}`}
-                    className="block text-sm font-medium text-slate-700"
-                  >
-                    {slot.label}
-                  </label>
+                  <p className="text-sm font-medium text-slate-700">{slot.label}</p>
+                  {slot.needsEndTime && (
+                    <div className="mt-1">
+                      <label
+                        htmlFor={`end-time-${slot.key}`}
+                        className="block text-xs text-slate-500"
+                      >
+                        End time — we have no record of it, and the portal class is matched on
+                        both start and end time
+                      </label>
+                      <input
+                        id={`end-time-${slot.key}`}
+                        type="time"
+                        step={60}
+                        value={slot.endTime.slice(0, 5)}
+                        onChange={event =>
+                          setCoursePick(current =>
+                            current
+                              ? {
+                                  ...current,
+                                  slots: current.slots.map((entry, i) =>
+                                    i === index
+                                      ? { ...entry, endTime: `${event.target.value}:00` }
+                                      : entry,
+                                  ),
+                                }
+                              : current,
+                          )
+                        }
+                        className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      />
+                    </div>
+                  )}
+                  {slot.needsCourse && (
                   <select
                     id={`course-pick-${slot.key}`}
                     value={slot.courseId}
@@ -220,6 +255,7 @@ export default function FallResponsesTab({
                       </option>
                     ))}
                   </select>
+                  )}
                 </div>
               ))}
             </div>
@@ -234,18 +270,32 @@ export default function FallResponsesTab({
               </button>
               <button
                 type="button"
-                disabled={coursePick.slots.some(slot => !slot.courseId) || isPending}
+                disabled={
+                  coursePick.slots.some(
+                    slot =>
+                      (slot.needsCourse && !slot.courseId) || (slot.needsEndTime && !slot.endTime),
+                  ) || isPending
+                }
                 onClick={() => {
                   const pending = coursePick;
                   setCoursePick(null);
-                  const overrides = Object.fromEntries(
-                    pending.slots.map(slot => [slot.key, slot.courseId]),
+                  const courseOverrides = Object.fromEntries(
+                    pending.slots
+                      .filter(slot => slot.courseId)
+                      .map(slot => [slot.key, slot.courseId]),
+                  );
+                  const endTimeOverrides = Object.fromEntries(
+                    pending.slots.filter(slot => slot.endTime).map(slot => [slot.key, slot.endTime]),
                   );
                   run(pending.requestId, async () => {
-                    const res = await enrollFallStudent(pending.requestId, overrides);
+                    const res = await enrollFallStudent(
+                      pending.requestId,
+                      courseOverrides,
+                      endTimeOverrides,
+                    );
                     return res.error
                       ? { text: res.error, error: true }
-                      : { text: `Enrolled ${pending.studentName} in the new course (portal + dashboard).` };
+                      : { text: `Enrolled ${pending.studentName} (portal + dashboard).` };
                   });
                 }}
                 className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-40"
@@ -529,15 +579,23 @@ export default function FallResponsesTab({
                             ) : (
                               <button
                                 onClick={() => {
-                                  const changing = row.slots.filter(slot => slot.change_course);
-                                  if (changing.length > 0) {
+                                  // Anything we cannot answer ourselves is asked up front: a
+                                  // course when they requested a change, an end time when the
+                                  // slot is off-catalogue and its session row is gone.
+                                  const asking = row.slots.filter(
+                                    slot => slot.change_course || !slot.end_time,
+                                  );
+                                  if (asking.length > 0) {
                                     setCoursePick({
                                       requestId: row.request_id,
                                       studentName: row.student_name,
-                                      slots: changing.map(slot => ({
+                                      slots: asking.map(slot => ({
                                         key: `${slot.weekday}|${slot.start_time}`,
                                         label: `${slot.weekday} ${formatTime(slot.start_time)}`,
+                                        needsCourse: slot.change_course,
                                         courseId: '',
+                                        needsEndTime: !slot.end_time,
+                                        endTime: '',
                                       })),
                                     });
                                     return;
@@ -553,7 +611,7 @@ export default function FallResponsesTab({
                                         };
                                   });
                                 }}
-                                disabled={busy || row.slots.length === 0 || row.unmatched_slot_count > 0}
+                                disabled={busy || row.slots.length === 0}
                                 className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-40"
                               >
                                 Enrol

@@ -1205,6 +1205,10 @@ export type FallResponseRow = {
     // The student already has a live enrolment at this weekday and time — whether we
     // created it or the portal scrape brought it in.
     already_enrolled: boolean;
+    // Known end time, from the catalogue or an existing session row. Null when the slot is
+    // off-catalogue and its session was pruned — staff are asked for it before enrolling,
+    // since the portal batch is matched on start AND end time.
+    end_time: string | null;
     is_full: boolean;
   }[];
   // Slots that are NOT bookable — a time we do not offer and have no history with.

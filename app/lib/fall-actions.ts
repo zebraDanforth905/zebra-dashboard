@@ -338,10 +338,17 @@ async function createPortalEnrolment(opts: {
       batch.end_time === opts.endTime,
   );
   if (sameSlot.length === 0) {
+    const nearby = batches
+      .filter(batch => batch.day?.trim().toLowerCase() === opts.weekday.trim().toLowerCase())
+      .map(batch => `${batch.start_time}-${batch.end_time}`);
     return {
       error:
-        `No portal batch for ${program.course_code} on ${opts.weekday} ` +
-        `${opts.startTime}-${opts.endTime}. Create it in the portal first.`,
+        `No suitable batch in the portal: ${program.course_code} has no ` +
+        `${opts.weekday} ${opts.startTime}-${opts.endTime} class.` +
+        (nearby.length > 0
+          ? ` That day offers ${[...new Set(nearby)].join(', ')}.`
+          : ` Nothing runs that day.`) +
+        ' Create the batch in the portal, or pick a time that exists.',
     };
   }
   // Largest capacity wins; ties resolve on the lower id so repeat runs are deterministic.
@@ -381,6 +388,9 @@ async function enrolOne(
   // slotKey -> course id, set by staff when a parent asked to change course. Without it
   // enrolment inherits the course they were already in, which is wrong for those slots.
   courseOverrides: Record<string, string> = {},
+  // slotKey -> "HH:MM:SS". Supplied for off-catalogue slots whose session row was pruned,
+  // where we have no recorded end time and the portal batch is matched on start AND end.
+  endTimeOverrides: Record<string, string> = {},
 ): Promise<EnrolResult> {
   const reqs = await sql<{
     id: string;
@@ -463,7 +473,9 @@ async function enrolOne(
       courseCode: courseCodes[i] as string,
       weekday: slot.weekday,
       startTime: slot.start_time,
-      endTime: catalogueEndTime(slot.weekday, slot.start_time),
+      endTime:
+        endTimeOverrides[`${slot.weekday}|${slot.start_time}`] ||
+        catalogueEndTime(slot.weekday, slot.start_time),
       startDate: targets[i].startDate,
     });
     if (result.error) {
@@ -510,9 +522,12 @@ async function enrolOne(
 export async function enrollFallStudent(
   requestId: string,
   courseOverrides: Record<string, string> = {},
+  // slotKey -> "HH:MM:SS". Supplied for off-catalogue slots whose session row was pruned,
+  // where we have no recorded end time and the portal batch is matched on start AND end.
+  endTimeOverrides: Record<string, string> = {},
 ): Promise<{ error?: string }> {
   await requireAdmin();
-  const result = await enrolOne(requestId, courseOverrides);
+  const result = await enrolOne(requestId, courseOverrides, endTimeOverrides);
   revalidateFall();
   return result.error ? { error: result.error } : {};
 }

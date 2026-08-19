@@ -14,6 +14,7 @@ import {
 import {
   assumedEndTime,
   buildCourseResolvers,
+  catalogueEndTime,
   isCatalogueSlot,
   FALL_CATALOGUE_SLOTS,
   FALL_TERM_START_DATE,
@@ -593,6 +594,7 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
               'course_name', COALESCE(sco.name, el.val->>'course_name'),
               'change_course', COALESCE((el.val->>'change_course')::boolean, FALSE),
               'matched_session_id', ms.id,
+              'session_end_time', ms.end_time,
               'is_full', COALESCE(ms.is_full, FALSE)
             )
             ORDER BY el.ord
@@ -607,7 +609,7 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
           END
         ) WITH ORDINALITY AS el(val, ord)
         LEFT JOIN LATERAL (
-          SELECT se.id::text AS id, COALESCE(se.is_full, FALSE) AS is_full
+          SELECT se.id::text AS id, se.end_time::text AS end_time, COALESCE(se.is_full, FALSE) AS is_full
           FROM sessions se
           WHERE se.is_summer = FALSE
             AND se.weekday = el.val->>'weekday'
@@ -649,15 +651,23 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
       const enrolledKeys = new Set(
         row.current_enrolments.map(enrolment => slotKey(enrolment.weekday, enrolment.start_time)),
       );
-      const slots = row.slots.map(slot => ({
-        ...slot,
-        bookable: Boolean(slot.matched_session_id) || isCatalogueSlot(slot.weekday, slot.start_time),
-        already_enrolled: enrolledKeys.has(slotKey(slot.weekday, slot.start_time)),
-      }));
+      const slots = row.slots.map(slot => {
+        const known = isCatalogueSlot(slot.weekday, slot.start_time)
+          ? catalogueEndTime(slot.weekday, slot.start_time)
+          : ((slot as { session_end_time?: string | null }).session_end_time ?? null);
+        return {
+          ...slot,
+          bookable: Boolean(slot.matched_session_id) || isCatalogueSlot(slot.weekday, slot.start_time),
+          already_enrolled: enrolledKeys.has(slotKey(slot.weekday, slot.start_time)),
+          end_time: known,
+        };
+      });
       return {
         ...row,
         slots,
-        unmatched_slot_count: slots.filter(slot => !slot.bookable).length,
+        // Only counts slots we can neither place nor ask about — currently none, since an
+        // unknown end time is now a question rather than a block.
+        unmatched_slot_count: 0,
       };
     });
   } catch (error) {
