@@ -142,3 +142,42 @@ export function isVisibleFallSession(session: {
   if (minute !== 0) return false;
   return FALL_WEEKDAY_HOURS.has(hour);
 }
+
+/**
+ * Course id resolution for the fall flow.
+ *
+ * The courses table holds two rows per course: the portal course code with a plain name
+ * (R301 -> "Moving Models") and a legacy alias whose name carries the code
+ * ("Mov. Models" -> "Moving Models (R301)"). Snapshots record only a NAME, and it is
+ * usually the alias one — so a naive name lookup yields "Mov. Models", which the portal
+ * cannot key on.
+ *
+ * canonical() maps any id to the code-style row when one exists, so a stored course_id is
+ * always the value a portal enrolment call needs.
+ */
+export function buildCourseResolvers(rows: { id: string; name: string }[]) {
+  const ids = new Set(rows.map(row => row.id));
+  const canonical = (id: string | null | undefined): string | null => {
+    if (!id) return null;
+    const row = rows.find(candidate => candidate.id === id);
+    const codeInName = row?.name?.match(/\(([^)]+)\)/)?.[1]?.trim();
+    if (codeInName && ids.has(codeInName)) return codeInName;
+    return id;
+  };
+
+  const idByName = new Map<string, string>();
+  for (const row of rows) {
+    if (!row.name) continue;
+    idByName.set(row.name.trim().toLowerCase(), row.id);
+  }
+  const fromName = (name: string | null | undefined): string | null => {
+    if (!name) return null;
+    // The code inside the name wins outright when it is a real course id.
+    const codeInName = name.match(/\(([^)]+)\)/)?.[1]?.trim();
+    if (codeInName && ids.has(codeInName)) return codeInName;
+    return canonical(idByName.get(name.trim().toLowerCase()) ?? null);
+  };
+
+  return { canonical, fromName };
+}
+

@@ -10,7 +10,12 @@ import {
   FallPickupSchool,
   FallSlotChoice,
 } from './definitions';
-import { catalogueEndTime, FALL_PICKUP_SCHOOLS, isCatalogueSlot } from './fall-policy';
+import {
+  buildCourseResolvers,
+  catalogueEndTime,
+  FALL_PICKUP_SCHOOLS,
+  isCatalogueSlot,
+} from './fall-policy';
 import {
   createEnrolment,
   fetchCourseBatches,
@@ -374,7 +379,8 @@ async function enrolOne(requestId: string): Promise<EnrolResult> {
     student_id: string;
     payload: {
       fall_confirmation_status?: string;
-      slots?: FallSlotChoice[];
+      // course_name appears on responses stored before slots carried course_id.
+      slots?: (FallSlotChoice & { course_name?: string | null })[];
     };
   }[]>`
     SELECT id, student_id, payload
@@ -396,24 +402,30 @@ async function enrolOne(requestId: string): Promise<EnrolResult> {
 
   // Resolve every slot up front — enrolling into some but not all of a multi-class
   // request would leave the family half-booked with no record of which half.
-  // Every slot must carry a course: it is the portal course_code, and without it there is
-  // nothing to enrol into there.
-  const missingCourse = slots.find(slot => !slot.course_id);
-  if (missingCourse) {
+  // Resolve each slot's course to a portal course_code. Responses submitted before slots
+  // carried course_id have only a name, so fall back to resolving that.
+  const courseRows = await sql<{ id: string; name: string }[]>`
+    SELECT id::text, name FROM courses WHERE name IS NOT NULL
+  `;
+  const { canonical, fromName } = buildCourseResolvers(courseRows);
+  const courseCodes = slots.map(slot => canonical(slot.course_id) ?? fromName(slot.course_name));
+  const missingIndex = courseCodes.findIndex(code => !code);
+  if (missingIndex !== -1) {
+    const slot = slots[missingIndex];
     return {
       error:
-        `No course on ${missingCourse.weekday} ${missingCourse.start_time}. ` +
-        'Set the course before enrolling.',
+        `No course on ${slot.weekday} ${slot.start_time}` +
+        (slot.course_name ? ` — "${slot.course_name}" is not a known course.` : '. Set the course before enrolling.'),
     };
   }
 
   const targets: { sessionId: string; startDate: string; courseId: string }[] = [];
-  for (const slot of slots) {
+  for (const [i, slot] of slots.entries()) {
     if (!slot.start_date || !ISO_DATE.test(slot.start_date)) {
       return { error: `No valid start date for ${slot.weekday} ${slot.start_time}.` };
     }
     const sessionId = await getOrCreateFallSessionId(slot.weekday, slot.start_time);
-    targets.push({ sessionId, startDate: slot.start_date, courseId: slot.course_id as string });
+    targets.push({ sessionId, startDate: slot.start_date, courseId: courseCodes[i] as string });
   }
 
   // The portal is the system of record — the nightly scrape deletes any non-summer
@@ -424,7 +436,7 @@ async function enrolOne(requestId: string): Promise<EnrolResult> {
     const slot = slots[i];
     const result = await createPortalEnrolment({
       studentId: Number(req.student_id),
-      courseCode: slot.course_id as string,
+      courseCode: courseCodes[i] as string,
       weekday: slot.weekday,
       startTime: slot.start_time,
       endTime: catalogueEndTime(slot.weekday, slot.start_time),

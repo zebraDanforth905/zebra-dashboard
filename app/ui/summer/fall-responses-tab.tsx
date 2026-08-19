@@ -86,7 +86,7 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
   const router = useRouter();
   const [filter, setFilter] = useState<FilterValue>('all');
   const [search, setSearch] = useState('');
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -123,16 +123,22 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
     [rows],
   );
 
-  function run(id: string, fn: () => Promise<string | null>) {
+  // Actions report failure by RETURNING an error string, not by throwing, so the tone is
+  // passed explicitly — a failed portal enrolment rendered as a grey notice reads as
+  // success and the enrolment silently never happens.
+  function run(id: string, fn: () => Promise<{ text: string; error?: boolean } | null>) {
     setBusyId(id);
     setMessage(null);
     startTransition(async () => {
       try {
         const result = await fn();
-        if (result) setMessage(result);
+        if (result) setMessage({ text: result.text, error: result.error === true });
         router.refresh();
       } catch (err) {
-        setMessage(err instanceof Error ? err.message : 'Action failed');
+        setMessage({
+          text: err instanceof Error ? err.message : 'Action failed',
+          error: true,
+        });
       } finally {
         setBusyId(null);
       }
@@ -182,8 +188,15 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
       </div>
 
       {message && (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700">
-          {message}
+        <div
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            message.error
+              ? 'border-rose-300 bg-rose-50 font-medium text-rose-900'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+          }`}
+        >
+          {message.error ? '⚠ ' : '✓ '}
+          {message.text}
         </div>
       )}
 
@@ -349,12 +362,13 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                                 onClick={() =>
                                   run(row.request_id, async () => {
                                     const res = await enrollFallStudent(row.request_id);
-                                    return (
-                                      res.error ??
-                                      `Enrolled ${row.student_name} in ${row.slots.length} class${
-                                        row.slots.length === 1 ? '' : 'es'
-                                      }.`
-                                    );
+                                    return res.error
+                                      ? { text: res.error, error: true }
+                                      : {
+                                          text: `Enrolled ${row.student_name} in ${row.slots.length} class${
+                                            row.slots.length === 1 ? '' : 'es'
+                                          } (portal + dashboard).`,
+                                        };
                                   })
                                 }
                                 disabled={busy || row.slots.length === 0 || row.unmatched_slot_count > 0}
@@ -388,12 +402,13 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                                 onClick={() =>
                                   run(row.request_id, async () => {
                                     const res = await endFallEnrolment(enrolment.enrolment_id, endDate);
-                                    return (
-                                      res.error ??
-                                      `Ended ${row.student_name}'s ${enrolment.weekday} ${formatTime(
-                                        enrolment.start_time,
-                                      )} class on ${endDate}.`
-                                    );
+                                    return res.error
+                                      ? { text: res.error, error: true }
+                                      : {
+                                          text: `Ended ${row.student_name}'s ${enrolment.weekday} ${formatTime(
+                                            enrolment.start_time,
+                                          )} class on ${endDate}.`,
+                                        };
                                   })
                                 }
                                 disabled={busy}
@@ -443,7 +458,7 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                             onClick={() =>
                               run(row.request_id, async () => {
                                 await markFallResponseComplete(row.request_id);
-                                return `Marked ${row.student_name} complete.`;
+                                return { text: `Marked ${row.student_name} complete.` };
                               })
                             }
                             disabled={busy}
@@ -459,7 +474,7 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                             onClick={() =>
                               run(row.request_id, async () => {
                                 await undismissFallResponse(row.request_id);
-                                return `Moved ${row.student_name} back to Needs action.`;
+                                return { text: `Moved ${row.student_name} back to Needs action.` };
                               })
                             }
                             disabled={busy}
@@ -482,7 +497,7 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                           onClick={() =>
                             run(row.request_id, async () => {
                               await deleteFallResponse(row.request_id);
-                              return `Removed response for ${row.student_name}.`;
+                              return { text: `Removed response for ${row.student_name}.` };
                             })
                           }
                           disabled={busy}
