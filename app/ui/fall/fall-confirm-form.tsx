@@ -58,7 +58,7 @@ export default function FallConfirmForm({
   // Grouped by day so every slot is visible at once — with multi-select there is no
   // "pick a day, then a time" funnel, since a student can attend on several days.
   const slotsByWeekday = useMemo(() => {
-    const map = new Map<string, { start_time: string; end_time: string }[]>();
+    const map = new Map<string, { start_time: string; end_time: string | null }[]>();
     for (const slot of data.fall_slots) {
       map.set(slot.weekday, [
         ...(map.get(slot.weekday) ?? []),
@@ -71,7 +71,7 @@ export default function FallConfirmForm({
   const endTimeBySlot = useMemo(() => {
     const map = new Map<string, string>();
     for (const slot of data.fall_slots) {
-      map.set(`${slot.weekday}|${slot.start_time}`, slot.end_time);
+      if (slot.end_time) map.set(`${slot.weekday}|${slot.start_time}`, slot.end_time);
     }
     return map;
   }, [data.fall_slots]);
@@ -302,7 +302,8 @@ export default function FallConfirmForm({
               {/* Pickup */}
               <div>
                 <label className="block text-sm font-medium text-slate-700">
-                  Pickup <span className="font-normal text-slate-500">($50 per month)</span>
+                  After-school pickup{' '}
+                  <span className="font-normal text-slate-500">($50 per month)</span>
                 </label>
                 <div className="mt-1.5 flex flex-wrap gap-2">
                   <button
@@ -519,7 +520,7 @@ export default function FallConfirmForm({
         <p className="text-sm font-medium text-rose-600">
           {unanswered.length > 0
             ? `Choose an option for ${unanswered.map(s => s.student_name).join(', ')}.`
-            : `Complete the class time, pickup, and first class date for ${incomplete
+            : `Complete the class time, after-school pickup, and first class date for ${incomplete
                 .map(s => s.student_name)
                 .join(', ')}.`}
         </p>

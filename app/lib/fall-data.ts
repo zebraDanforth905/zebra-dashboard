@@ -13,7 +13,6 @@ import {
   ParentRequestStatus,
 } from './definitions';
 import {
-  assumedEndTime,
   FALL_CATALOGUE_SLOTS,
   FALL_TERM_START_DATE,
   firstClassDateFor,
@@ -424,7 +423,12 @@ export async function fetchFallFormData(
     // The hard-coded catalogue, plus any slot a student on this token is prefilled into
     // (a previous enrolment or their stated summer preference). The extras keep "keep
     // what we have" workable for families in a non-standard time.
-    const fallSlots: { weekday: string; start_time: string; end_time: string; is_full: boolean }[] =
+    const fallSlots: {
+      weekday: string;
+      start_time: string;
+      end_time: string | null;
+      is_full: boolean;
+    }[] =
       FALL_CATALOGUE_SLOTS.map(slot => ({
         weekday: slot.weekday,
         start_time: slot.start_time,
@@ -434,7 +438,16 @@ export async function fetchFallFormData(
     const offeredKeys = new Set(fallSlots.map(slot => slotKey(slot.weekday, slot.start_time)));
 
     for (const student of students) {
-      for (const prefill of student.prefill_slots) {
+      // Both sources: a student who answered PAUSE has no prefill slots, but their current
+      // class must still be selectable if they change their mind on this form.
+      const studentSlots = [
+        ...student.prefill_slots,
+        ...student.current_sessions.map(session => ({
+          weekday: session.weekday,
+          start_time: session.start_time,
+        })),
+      ];
+      for (const prefill of studentSlots) {
         const key = slotKey(prefill.weekday, prefill.start_time);
         if (offeredKeys.has(key)) continue;
         offeredKeys.add(key);
@@ -442,8 +455,9 @@ export async function fetchFallFormData(
         fallSlots.push({
           weekday: prefill.weekday,
           start_time: prefill.start_time,
-          // A pruned session leaves no end time behind, so assume a one-hour class.
-          end_time: existing?.end_time ?? assumedEndTime(prefill.start_time),
+          // A pruned session leaves no end time behind. Guessing +1h printed a wrong
+          // time to parents (a 10:30-12:00 class showed as 10:30-11:30), so show none.
+          end_time: existing?.end_time ?? null,
           is_full: existing?.is_full ?? false,
         });
       }

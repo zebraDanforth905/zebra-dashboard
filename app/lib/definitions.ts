@@ -1168,7 +1168,9 @@ export type FallFormData = {
   customer_alternate_name: string | null;
   students: FallFormStudentData[];
   // Distinct weekday/time slots offered for fall, deduped by weekday+start_time.
-  fall_slots: { weekday: string; start_time: string; end_time: string; is_full: boolean }[];
+  // end_time is null when the slot is not in the catalogue and its session row has been
+  // pruned — we genuinely don't know it, so it renders as a start time only.
+  fall_slots: { weekday: string; start_time: string; end_time: string | null; is_full: boolean }[];
   default_start_date: string;
 };
 
