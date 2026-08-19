@@ -1199,8 +1199,12 @@ export type FallResponseRow = {
     course_name: string | null;
     change_course: boolean;
     matched_session_id: string | null;
+    // True when this slot can be enrolled into: either a session row already exists, or it
+    // is a catalogue slot the enrol action will create one for.
+    bookable: boolean;
     is_full: boolean;
   }[];
+  // Slots that are NOT bookable — a time we do not offer and have no history with.
   unmatched_slot_count: number;
   // How many slots the parent asked to change course in.
   change_course_count: number;

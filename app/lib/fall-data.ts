@@ -15,6 +15,7 @@ import {
 import {
   assumedEndTime,
   buildCourseResolvers,
+  isCatalogueSlot,
   FALL_CATALOGUE_SLOTS,
   FALL_TERM_START_DATE,
   firstClassDateFor,
@@ -506,7 +507,7 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
   'use cache';
   cacheTag('fall-responses');
   try {
-    return await sql<FallResponseRow[]>`
+    const rows = await sql<FallResponseRow[]>`
       SELECT
         pr.id::text AS request_id,
         pr.token_id::text AS token_id,
@@ -633,6 +634,22 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
         AND pr.removed_at IS NULL
       ORDER BY c.name, s.name
     `;
+
+    // A slot is bookable when a session row exists OR it is one of our catalogue times —
+    // the enrol action creates the session on demand. Gating on the sessions table alone
+    // blocked every catalogue slot with no students yet, since the nightly scrape prunes
+    // empty non-summer sessions.
+    return rows.map(row => {
+      const slots = row.slots.map(slot => ({
+        ...slot,
+        bookable: Boolean(slot.matched_session_id) || isCatalogueSlot(slot.weekday, slot.start_time),
+      }));
+      return {
+        ...row,
+        slots,
+        unmatched_slot_count: slots.filter(slot => !slot.bookable).length,
+      };
+    });
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch fall response rows.');

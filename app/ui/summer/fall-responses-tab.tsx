@@ -314,9 +314,12 @@ export default function FallResponsesTab({ rows }: { rows: FallResponseRow[] }) 
                             <div key={i} className="mb-1">
                               <div className="flex items-center gap-1">
                                 <span>{slot.weekday} {formatTime(slot.start_time)}</span>
-                                {!slot.matched_session_id && (
-                                  <span className="text-xs font-medium text-amber-700" title="No fall session exists at this day and time">
-                                    ⚠ no session
+                                {!slot.bookable && (
+                                  <span
+                                    className="text-xs font-medium text-amber-700"
+                                    title="Not a class time we offer, and this family has no history with it"
+                                  >
+                                    ⚠ not offered
                                   </span>
                                 )}
                                 {slot.matched_session_id && slot.is_full && (
