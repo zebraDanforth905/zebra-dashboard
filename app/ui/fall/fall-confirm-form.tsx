@@ -107,7 +107,7 @@ export default function FallConfirmForm({
                   // Carry the student's existing course over: moving to a different time
                   // is not the same as needing a new course, and blanking it made the row
                   // read "To be assigned" while the header still showed their course.
-                  course_name: knownCourse,
+                  course_id: knownCourse,
                   change_course: false,
                 },
               ],
@@ -203,8 +203,8 @@ export default function FallConfirmForm({
           entry.slots.length > 0 &&
           entry.slots.every(slot => !currentKeys.has(slotKey(slot.weekday, slot.start_time)));
         const knownCourse =
-          student.prefill_slots.find(slot => slot.course_name)?.course_name ??
-          student.current_sessions.find(session => session.course_name)?.course_name ??
+          student.prefill_slots.find(slot => slot.course_id)?.course_id ??
+          student.current_sessions.find(session => session.course_id)?.course_id ??
           null;
 
         return (
@@ -386,7 +386,8 @@ export default function FallConfirmForm({
                                     : 'font-medium text-slate-700'
                                 }
                               >
-                                {slot.course_name ?? 'To be assigned'}
+                                {(slot.course_id ? data.course_names[slot.course_id] : null) ??
+                                  'To be assigned'}
                               </span>
                             </span>
                             <button

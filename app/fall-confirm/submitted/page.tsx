@@ -77,7 +77,8 @@ export default async function FallSubmittedPage({
                             Course:{' '}
                             {slot.change_course
                               ? 'Change requested — we’ll be in touch'
-                              : slot.course_name ?? 'To be assigned'}
+                              : (slot.course_id ? data?.course_names[slot.course_id] : null) ??
+                                'To be assigned'}
                           </span>
                           {slot.start_date && (
                             <span className="block text-slate-500">

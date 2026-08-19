@@ -864,6 +864,7 @@ export type CurrentSessionSummary = {
   weekday: string;
   start_time: string;
   pickup_school: string | null;
+  course_id?: string | null;
   course_name?: string | null;
   end_date?: string | null;
 };
@@ -1106,12 +1107,13 @@ export type FallConfirmationStatus = 'confirmed' | 'not_returning' | 'paused';
 export type FallSlotChoice = {
   weekday: string;
   start_time: string;
+  // The course itself, not its label. courses.id matches the portal's course_code, so
+  // this is what a portal enrolment call resolves against; the display name is looked up
+  // from FallFormData.course_names and can change without rewriting stored responses.
+  course_id: string | null;
   // ISO 'YYYY-MM-DD'. Per slot, so a student can start one class in September and
   // another later. Drives that enrolment's start_date on approval.
   start_date: string | null;
-  // The course they are currently in for this slot, carried through for display and so
-  // staff can see what a change request is moving away from. Null for a newly picked slot.
-  course_name: string | null;
   // Parent flagged that they want a different course in this slot. Enrolment still
   // inherits their existing course; staff follow up.
   change_course: boolean;
@@ -1169,6 +1171,9 @@ export type FallFormData = {
   students: FallFormStudentData[];
   // Distinct weekday/time slots offered for fall, deduped by weekday+start_time.
   fall_slots: { weekday: string; start_time: string; end_time: string; is_full: boolean }[];
+  // courses.id -> display name, so a stored course_id can be rendered without the
+  // response carrying a name that may go stale.
+  course_names: Record<string, string>;
   default_start_date: string;
 };
 
@@ -1190,6 +1195,7 @@ export type FallResponseRow = {
     weekday: string;
     start_time: string;
     start_date: string | null;
+    course_id: string | null;
     course_name: string | null;
     change_course: boolean;
     matched_session_id: string | null;

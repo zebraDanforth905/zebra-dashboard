@@ -66,10 +66,49 @@ function normalizeTokenSnapshot(value: unknown): Map<string, CurrentSessionSumma
         start_time: startTime,
         pickup_school: typeof entry.pickup_school === 'string' ? entry.pickup_school : null,
         course_name: typeof entry.course_name === 'string' ? entry.course_name : null,
+        course_id: typeof entry.course_id === 'string' ? entry.course_id : null,
       },
     ]);
   }
   return byStudent;
+}
+
+/**
+ * Course id resolution for the fall flow.
+ *
+ * The courses table holds two rows per course: the portal course code with a plain name
+ * (R301 -> "Moving Models") and a legacy alias whose name carries the code
+ * ("Mov. Models" -> "Moving Models (R301)"). Snapshots record only a NAME, and it is
+ * usually the alias one — so a naive name lookup yields "Mov. Models", which the portal
+ * cannot key on.
+ *
+ * canonical() maps any id to the code-style row when one exists, so a stored course_id is
+ * always the value a portal enrolment call needs.
+ */
+function buildCourseResolvers(rows: { id: string; name: string }[]) {
+  const ids = new Set(rows.map(row => row.id));
+  const canonical = (id: string | null | undefined): string | null => {
+    if (!id) return null;
+    const row = rows.find(candidate => candidate.id === id);
+    const codeInName = row?.name?.match(/\(([^)]+)\)/)?.[1]?.trim();
+    if (codeInName && ids.has(codeInName)) return codeInName;
+    return id;
+  };
+
+  const idByName = new Map<string, string>();
+  for (const row of rows) {
+    if (!row.name) continue;
+    idByName.set(row.name.trim().toLowerCase(), row.id);
+  }
+  const fromName = (name: string | null | undefined): string | null => {
+    if (!name) return null;
+    // The code inside the name wins outright when it is a real course id.
+    const codeInName = name.match(/\(([^)]+)\)/)?.[1]?.trim();
+    if (codeInName && ids.has(codeInName)) return codeInName;
+    return canonical(idByName.get(name.trim().toLowerCase()) ?? null);
+  };
+
+  return { canonical, fromName };
 }
 
 /**
@@ -83,6 +122,7 @@ function toSlots(
     weekday: string;
     start_time: string;
     start_date?: string | null;
+    course_id?: string | null;
     course_name?: string | null;
     change_course?: boolean;
   }[],
@@ -105,7 +145,7 @@ function toSlots(
       // on or after the term start.
       start_date:
         asIsoDate(session.start_date) ?? defaultStartDate ?? firstClassDateFor(session.weekday),
-      course_name: session.course_name?.trim() || fallbackCourse,
+      course_id: session.course_id?.trim() || fallbackCourse,
       change_course: session.change_course === true,
     });
   }
@@ -119,7 +159,7 @@ function resolvePrefill(
     weekday: string;
     start_time: string;
     start_date?: string | null;
-    course_name?: string | null;
+    course_id?: string | null;
   }[],
   currentSessions: CurrentSessionSummary[],
 ): Pick<
@@ -130,7 +170,7 @@ function resolvePrefill(
   | 'prefill_pickup_school'
   | 'prefill_source'
 > {
-  const knownCourse = currentSessions.find(session => session.course_name)?.course_name ?? null;
+  const knownCourse = currentSessions.find(session => session.course_id)?.course_id ?? null;
 
   if (fallPayload) {
     const slots = fallPayload.slots ?? [];
@@ -258,6 +298,7 @@ export async function fetchFallFormData(
               'weekday', slots.weekday,
               'start_time', slots.start_time,
               'pickup_school', slots.pickup_school,
+              'course_id', slots.course_id,
               'course_name', slots.course_name,
               'end_date', slots.end_date
             )
@@ -268,6 +309,7 @@ export async function fetchFallFormData(
           SELECT DISTINCT
             se.weekday,
             se.start_time::text AS start_time,
+            co.id AS course_id,
             co.name AS course_name,
             e.end_date::text AS end_date,
             NULL::text AS pickup_school,
@@ -317,7 +359,7 @@ export async function fetchFallFormData(
               'weekday', se.weekday,
               'start_time', se.start_time::text,
               'end_time', se.end_time::text,
-              'course_name', sfc.course_name,
+              'course_id', sfc.course_id,
               -- fall_session_start_dates is keyed by session id on the summer payload
               'start_date', sr.payload->'fall_session_start_dates'->>se.id::text
             )
@@ -335,7 +377,7 @@ export async function fetchFallFormData(
         JOIN sessions se ON se.id::text = fid
         -- Course the student already takes in that slot, when they have one.
         LEFT JOIN LATERAL (
-          SELECT co.name AS course_name
+          SELECT co.id AS course_id
           FROM enrolments e2
           LEFT JOIN courses co ON co.id = e2.course_id
           WHERE e2.student_id = s.id AND e2.session_id = se.id
@@ -376,13 +418,24 @@ export async function fetchFallFormData(
       existingRows.map(row => [slotKey(row.weekday, row.start_time), row]),
     );
 
+    const courseRows = await sql<{ id: string; name: string }[]>`
+      SELECT id::text, name FROM courses WHERE name IS NOT NULL
+    `;
+    const courseNames = Object.fromEntries(courseRows.map(row => [row.id, row.name]));
+    const { canonical, fromName } = buildCourseResolvers(courseRows);
+    const withCourseId = (sessions: CurrentSessionSummary[]): CurrentSessionSummary[] =>
+      sessions.map(session => ({
+        ...session,
+        course_id: canonical(session.course_id) ?? fromName(session.course_name),
+      }));
+
     const students: FallFormStudentData[] = studentRows.map(row => {
       // Same precedence as fetchParentFormData: live enrolments, then the token's frozen
       // roster, then the snapshot captured on the summer response. Families whose
       // enrolment rows were cleared after the school year still have a class to confirm.
-      const dbCurrentSessions = row.current_sessions ?? [];
-      const tokenCurrentSessions = tokenSnapshotByStudentId.get(row.student_id) ?? [];
-      const payloadCurrentSessions = row.summer_payload?.current_sessions_snapshot ?? [];
+      const dbCurrentSessions = withCourseId(row.current_sessions ?? []);
+      const tokenCurrentSessions = withCourseId(tokenSnapshotByStudentId.get(row.student_id) ?? []);
+      const payloadCurrentSessions = withCourseId(row.summer_payload?.current_sessions_snapshot ?? []);
       const currentSessions =
         dbCurrentSessions.length > 0
           ? dbCurrentSessions
@@ -478,6 +531,7 @@ export async function fetchFallFormData(
         is_full,
       })),
       default_start_date: FALL_TERM_START_DATE,
+      course_names: courseNames,
     };
   } catch (error) {
     console.error('Database Error:', error);
@@ -529,6 +583,7 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
               'enrolment_id', slots.enrolment_id,
               'weekday', slots.weekday,
               'start_time', slots.start_time,
+              'course_id', slots.course_id,
               'course_name', slots.course_name,
               'end_date', slots.end_date
             )
@@ -540,6 +595,7 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
             e.id::text AS enrolment_id,
             se.weekday,
             se.start_time::text AS start_time,
+            co.id AS course_id,
             co.name AS course_name,
             e.end_date::text AS end_date,
             CASE LOWER(TRIM(se.weekday))
@@ -564,7 +620,10 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
               'weekday', el.val->>'weekday',
               'start_time', el.val->>'start_time',
               'start_date', el.val->>'start_date',
-              'course_name', el.val->>'course_name',
+              'course_id', el.val->>'course_id',
+              -- Resolved at read time, so a renamed course shows its current name and
+              -- older responses that stored a name still display.
+              'course_name', COALESCE(sco.name, el.val->>'course_name'),
               'change_course', COALESCE((el.val->>'change_course')::boolean, FALSE),
               'matched_session_id', ms.id,
               'is_full', COALESCE(ms.is_full, FALSE)
@@ -589,6 +648,7 @@ export async function fetchFallResponseRows(): Promise<FallResponseRow[]> {
           ORDER BY se.id
           LIMIT 1
         ) ms ON TRUE
+        LEFT JOIN courses sco ON sco.id = el.val->>'course_id'
       ) sls ON TRUE
       LEFT JOIN LATERAL (
         SELECT

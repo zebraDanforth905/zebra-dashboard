@@ -204,7 +204,7 @@ export async function submitFallConfirmation(
               weekday: slot.weekday,
               start_time: slot.start_time,
               start_date: slot.start_date ?? null,
-              course_name: slot.course_name?.trim() || null,
+              course_id: slot.course_id?.trim() || null,
               change_course: slot.change_course === true,
             }))
           : [],
