@@ -8,14 +8,12 @@ import {
   FallPickupSchool,
   FallSlotChoice,
 } from '@/app/lib/definitions';
-import { weekdayIndex } from '@/app/lib/fall-policy';
+import { firstClassDateFor, weekdayIndex } from '@/app/lib/fall-policy';
 
 type StudentState = {
   status: FallConfirmationStatus | null;
   // A student attending more than once a week has several, each with its own start date.
   slots: FallSlotChoice[];
-  // Default for newly selected slots; never submitted on its own.
-  default_start_date: string;
   pickup_requested: boolean;
   pickup_school: FallPickupSchool | null;
   notes: string;
@@ -38,7 +36,6 @@ function initialState(student: FallFormData['students'][number]): StudentState {
   return {
     status: null,
     slots: student.prefill_slots,
-    default_start_date: student.prefill_start_date ?? '',
     pickup_requested: student.prefill_pickup_requested,
     pickup_school: student.prefill_pickup_school,
     notes: '',
@@ -104,7 +101,9 @@ export default function FallConfirmForm({
                 {
                   weekday,
                   start_time: startTime,
-                  start_date: entry.default_start_date,
+                  // Each weekday gets its own first class date. Reusing another slot's
+                  // date put a newly picked Saturday class on, say, a Monday.
+                  start_date: firstClassDateFor(weekday),
                   // Carry the student's existing course over: moving to a different time
                   // is not the same as needing a new course, and blanking it made the row
                   // read "To be assigned" while the header still showed their course.
