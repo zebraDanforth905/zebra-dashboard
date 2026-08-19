@@ -301,8 +301,10 @@ export default function FallConfirmForm({
 
               {/* Pickup */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Pickup</label>
-                <div className="flex flex-wrap gap-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  Pickup <span className="font-normal text-slate-500">($50 per month)</span>
+                </label>
+                <div className="mt-1.5 flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() =>
