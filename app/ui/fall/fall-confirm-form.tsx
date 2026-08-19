@@ -472,8 +472,8 @@ export default function FallConfirmForm({
                   onClick={() => update(student.student_id, { status: 'not_returning' })}
                   className={`rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition ${
                     entry.status === 'not_returning'
-                      ? 'bg-slate-600 text-white ring-2 ring-slate-300'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      ? 'bg-purple-600 text-white ring-2 ring-purple-300'
+                      : 'bg-purple-50 text-purple-800 hover:bg-purple-100'
                   }`}
                 >
                   PAUSE
