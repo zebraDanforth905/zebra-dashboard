@@ -189,6 +189,33 @@ export async function saveCanvasApiTokenToDb(rawToken: string | null | undefined
   canvasTokenCache = null;
 }
 
+/**
+ * Canvas reports errors as {"errors":[{"message":"..."}]} or a bare [{"message":"..."}],
+ * not as {message}. Reading only the object form silently produced an empty reason, so
+ * every failure looked identical and Canvas's own explanation never reached the screen.
+ */
+async function readCanvasError(response: Response): Promise<string> {
+  try {
+    const data: unknown = await response.clone().json();
+    const fromEntry = (entry: unknown): string =>
+      entry && typeof entry === 'object' && 'message' in entry
+        ? String((entry as { message?: unknown }).message ?? '')
+        : '';
+
+    if (Array.isArray(data)) return data.map(fromEntry).filter(Boolean).join(' ');
+    if (data && typeof data === 'object') {
+      const direct = fromEntry(data);
+      if (direct) return direct;
+      const errors = (data as { errors?: unknown }).errors;
+      if (Array.isArray(errors)) return errors.map(fromEntry).filter(Boolean).join(' ');
+      if (typeof errors === 'string') return errors;
+    }
+    return '';
+  } catch {
+    return (await response.text()).slice(0, 160);
+  }
+}
+
 export async function validateCanvasApiToken(rawToken: string | null | undefined) {
   const token = normalizeToken(rawToken);
   if (!token) {
@@ -226,20 +253,20 @@ export async function validateCanvasApiToken(rawToken: string | null | undefined
 
     if (response.ok) continue;
 
-    let message = '';
-    try {
-      const data = await response.clone().json();
-      message = typeof data === 'object' && data && 'message' in data
-        ? String((data as { message?: unknown }).message)
-        : '';
-    } catch {
-      message = (await response.text()).slice(0, 160);
-    }
+    const message = await readCanvasError(response);
 
+    // Canvas uses 401 for BOTH an unusable token and a valid token whose role lacks the
+    // permission, so the wording has to follow what Canvas actually said. Telling someone
+    // to re-copy their token when the real problem is a missing account permission sends
+    // them round in circles.
+    const looksUnauthorized = /not authoriz|unauthorized|permission/i.test(message);
+    const advice = looksUnauthorized
+      ? `The token works, but the Canvas user it belongs to is not allowed to do this on account "${accountId}". Grant that user account-level access, or set CANVAS_ACCOUNT_ID to the sub-account they administer.`
+      : 'Confirm the token was copied fully and has access to the Canvas account used for LMS sync.';
     const reason = message ? ` ${message}` : '';
     return {
       ok: false as const,
-      error: `${check.label} check failed (${response.status}).${reason} Confirm the token was copied fully and has access to the Canvas account used for LMS sync.`,
+      error: `${check.label} check failed (${response.status}).${reason} ${advice}`,
     };
   }
 
