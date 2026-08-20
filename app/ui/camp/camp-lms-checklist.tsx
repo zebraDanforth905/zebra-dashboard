@@ -9,7 +9,9 @@ import {
   UserPlusIcon,
 } from '@heroicons/react/24/outline';
 import {
-  provisionCampLmsCanvasWeek,
+  fetchCampLmsProvisionTargets,
+  provisionCampLmsCanvasBatch,
+  finishCampLmsProvisioning,
   refreshCampLmsWeek,
   runCampLmsCanvasTestAction,
   syncCampLmsCanvasWeek,
@@ -311,6 +313,10 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  // Bulk Canvas setup reports which campers it is on; null when nothing is running.
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(
+    null,
+  );
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>(
     () => makeInitialNotes(checklist.rows)
   );
@@ -379,20 +385,70 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
 
     setMessage(null);
     startTransition(async () => {
-      const result = await provisionCampLmsCanvasWeek(startDate, endDate);
-      if (!result.ok) {
-        setMessage(result.error ?? 'Bulk Canvas LMS setup failed.');
+      const targetResult = await fetchCampLmsProvisionTargets(startDate, endDate);
+      if (!targetResult.ok) {
+        setMessage(targetResult.error ?? 'Bulk Canvas LMS setup failed.');
         return;
       }
 
-      const errorCount = result.errors?.length ?? 0;
+      const targets = targetResult.targets;
+      if (targets.length === 0) {
+        setMessage('No campers to set up for this week.');
+        return;
+      }
+
+      // Walked in small batches so progress is visible and no single request runs long
+      // enough to hit the serverless time limit. Campers within a batch run concurrently.
+      const BATCH_SIZE = 3;
+      const totals = {
+        usersCreated: 0,
+        coursesAdded: 0,
+        coursesReactivated: 0,
+        skipped: 0,
+        errors: 0,
+      };
+
+      for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+        const batch = targets.slice(i, i + BATCH_SIZE);
+        setProgress({
+          done: i,
+          total: targets.length,
+          current: batch.map((target) => target.studentName).join(', '),
+        });
+
+        const result = await provisionCampLmsCanvasBatch(
+          startDate,
+          endDate,
+          batch.map((target) => target.enrolmentId),
+        );
+
+        if (!result.ok) {
+          setProgress(null);
+          setMessage(
+            `${result.error ?? 'Bulk Canvas LMS setup failed.'} Stopped after ${i} of ${targets.length} camper(s); the ones already done are saved.`
+          );
+          router.refresh();
+          return;
+        }
+
+        totals.usersCreated += result.usersCreated;
+        totals.coursesAdded += result.coursesAdded;
+        totals.coursesReactivated += result.coursesReactivated;
+        totals.skipped += result.skipped;
+        totals.errors += result.errors.length;
+      }
+
+      setProgress({ done: targets.length, total: targets.length, current: '' });
+      await finishCampLmsProvisioning(startDate, endDate);
+      setProgress(null);
+
       const parts = [
-        `created ${result.usersCreated} account(s)`,
-        `added ${result.coursesAdded} course(s)`,
-        `reactivated ${result.coursesReactivated} course(s)`,
+        `created ${totals.usersCreated} account(s)`,
+        `added ${totals.coursesAdded} course(s)`,
+        `reactivated ${totals.coursesReactivated} course(s)`,
       ];
-      setMessage(errorCount > 0
-        ? `Bulk LMS setup finished: ${parts.join(', ')}; ${errorCount} row(s) need manual review.`
+      setMessage(totals.errors > 0
+        ? `Bulk LMS setup finished: ${parts.join(', ')}; ${totals.errors} row(s) need manual review.`
         : `Bulk LMS setup finished: ${parts.join(', ')}.`
       );
       router.refresh();
@@ -700,6 +756,32 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
             </Link>
             .
           </span>
+        </div>
+      )}
+
+      {progress && (
+        <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 p-3">
+          <div className="flex items-baseline justify-between text-sm font-medium text-sky-900">
+            <span>
+              Setting up Canvas — {progress.done} of {progress.total} camper
+              {progress.total === 1 ? '' : 's'}
+            </span>
+            <span className="text-xs text-sky-700">
+              {Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%
+            </span>
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-sky-100">
+            <div
+              className="h-full rounded-full bg-sky-600 transition-[width] duration-300"
+              style={{ width: `${Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%` }}
+            />
+          </div>
+          {progress.current && (
+            <p className="mt-2 truncate text-xs text-sky-800">Now: {progress.current}</p>
+          )}
+          <p className="mt-1 text-xs text-sky-700">
+            Campers already finished are saved, so stopping here loses nothing.
+          </p>
         </div>
       )}
 

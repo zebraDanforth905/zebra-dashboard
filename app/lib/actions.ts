@@ -2895,8 +2895,12 @@ async function saveCampLmsCanvasError(row: CampLmsSyncRow, error: unknown) {
 
 async function syncCampLmsCanvasState(row: CampLmsSyncRow, client = createCanvasClient()) {
   try {
-    const loginMatches = await client.searchUsers(row.suggested_lms_login);
-    const nameMatches = await client.searchUsers(row.student_name);
+    // Independent lookups, and each one paginates the whole account — running them in
+    // sequence doubled the wait for every camper.
+    const [loginMatches, nameMatches] = await Promise.all([
+      client.searchUsers(row.suggested_lms_login),
+      client.searchUsers(row.student_name),
+    ]);
     const users = dedupeCanvasUsers([...loginMatches, ...nameMatches]);
     const selectedUser = findBestCanvasUser(users, row);
     const matches = users.slice(0, 8).map(canvasUserSummary);
@@ -3199,163 +3203,204 @@ export async function syncCampLmsCanvasWeek(startDate: string, endDate: string) 
   }
 }
 
-export async function provisionCampLmsCanvasWeek(startDate: string, endDate: string) {
-  const session = await auth();
-  if (!session?.user) {
-    return { ok: false, error: 'Unauthorized: Please log in' };
+type CampLmsProvisionTally = {
+  synced: number;
+  usersCreated: number;
+  coursesAdded: number;
+  coursesReactivated: number;
+  skipped: number;
+  errors: Array<{ enrolmentId: string; studentName: string; error: string }>;
+};
+
+function emptyTally(): CampLmsProvisionTally {
+  return { synced: 0, usersCreated: 0, coursesAdded: 0, coursesReactivated: 0, skipped: 0, errors: [] };
+}
+
+function mergeTallies(tallies: CampLmsProvisionTally[]): CampLmsProvisionTally {
+  return tallies.reduce((total, tally) => ({
+    synced: total.synced + tally.synced,
+    usersCreated: total.usersCreated + tally.usersCreated,
+    coursesAdded: total.coursesAdded + tally.coursesAdded,
+    coursesReactivated: total.coursesReactivated + tally.coursesReactivated,
+    skipped: total.skipped + tally.skipped,
+    errors: [...total.errors, ...tally.errors],
+  }), emptyTally());
+}
+
+/** Provisions one camper: sync state, create the Canvas user if needed, add their courses. */
+async function provisionOneCampLmsRow(
+  syncRow: CampLmsSyncRow,
+  client: ReturnType<typeof createCanvasClient>,
+): Promise<CampLmsProvisionTally> {
+  const tally = emptyTally();
+  const fail = (error: string) => {
+    tally.errors.push({
+      enrolmentId: syncRow.camp_enrolment_id,
+      studentName: syncRow.student_name,
+      error,
+    });
+    return tally;
+  };
+
+  const syncResult = await syncCampLmsCanvasState(syncRow, client);
+  if (!syncResult.ok) {
+    return fail(`Sync LMS failed before setup: ${syncResult.error ?? 'unknown error'}`);
+  }
+  tally.synced += 1;
+
+  let row = await fetchCampLmsCanvasActionRow(syncRow.camp_enrolment_id);
+  if (!row) return fail('Camp enrolment not found');
+
+  if (!row.canvas_user_id) {
+    const candidateCount = Array.isArray(row.canvas_user_matches) ? row.canvas_user_matches.length : 0;
+    if (candidateCount > 0) {
+      tally.skipped += 1;
+      return fail('Canvas returned possible matching users. Review candidate matches before creating a new user.');
+    }
+
+    const createResult = await runCampLmsCanvasTestAction({
+      campEnrolmentId: syncRow.camp_enrolment_id,
+      type: 'create_user',
+    });
+    if (!createResult.ok) return fail(createResult.error ?? 'Canvas user creation failed');
+    tally.usersCreated += 1;
+
+    const resyncResult = await syncCampLmsCanvasState(syncRow, client);
+    if (!resyncResult.ok) {
+      return fail(`Canvas user was created, but Sync LMS failed before course setup: ${resyncResult.error ?? 'unknown error'}`);
+    }
+    row = await fetchCampLmsCanvasActionRow(syncRow.camp_enrolment_id);
+    if (!row?.canvas_user_id) {
+      return fail('Canvas user was created, but Sync LMS did not find it yet. Sync LMS and run bulk setup again.');
+    }
   }
 
-  const parsed = CampLmsBulkProvisionSchema.safeParse({ startDate, endDate });
-  if (!parsed.success) {
-    return { ok: false, error: 'Invalid camp week dates' };
+  const expectedCourseIds = expectedCanvasCourseIdsForActionRow(row);
+  if (expectedCourseIds.length === 0) {
+    tally.skipped += 1;
+    return tally;
   }
+
+  const activeEnrollments = Array.isArray(row.active_enrollments)
+    ? row.active_enrollments as Array<Record<string, unknown>>
+    : [];
+  const inactiveEnrollments = Array.isArray(row.inactive_enrollments)
+    ? row.inactive_enrollments as Array<Record<string, unknown>>
+    : [];
+
+  for (const courseId of expectedCourseIds) {
+    if (activeEnrollments.some((candidate) => String(candidate.course_id) === courseId)) continue;
+
+    const inactiveEnrollment = inactiveEnrollments.find((candidate) => String(candidate.course_id) === courseId);
+    const enrollmentId = inactiveEnrollment?.enrollment_id == null ? undefined : String(inactiveEnrollment.enrollment_id);
+    const courseResult = await runCampLmsCanvasTestAction({
+      campEnrolmentId: syncRow.camp_enrolment_id,
+      type: 'activate_course',
+      canvasCourseId: courseId,
+      canvasEnrollmentId: enrollmentId,
+    });
+
+    if (!courseResult.ok) {
+      tally.errors.push({
+        enrolmentId: syncRow.camp_enrolment_id,
+        studentName: syncRow.student_name,
+        error: courseResult.error ?? `Failed to add Canvas course ${courseId}`,
+      });
+      continue;
+    }
+
+    if (enrollmentId) {
+      tally.coursesReactivated += 1;
+    } else {
+      tally.coursesAdded += 1;
+    }
+  }
+
+  return tally;
+}
+
+/** The campers bulk setup would act on, so the UI can drive and report its own progress. */
+export async function fetchCampLmsProvisionTargets(startDate: string, endDate: string) {
+  const session = await auth();
+  if (!session?.user) return { ok: false as const, error: 'Unauthorized: Please log in' };
+
+  const parsed = CampLmsBulkProvisionSchema.safeParse({ startDate, endDate });
+  if (!parsed.success) return { ok: false as const, error: 'Invalid camp week dates' };
 
   try {
     if (!(await campLmsChecklistSchemaReady())) {
-      return { ok: false, error: 'Apply LMS checklist migrations before running bulk Canvas setup.' };
+      return { ok: false as const, error: 'Apply LMS checklist migrations before running bulk Canvas setup.' };
     }
     if (!(await isCanvasTokenConfigured())) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas writes' };
+      return { ok: false as const, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas writes' };
+    }
+    const rows = await fetchCampLmsSyncRows(parsed.data.startDate, parsed.data.endDate);
+    return {
+      ok: true as const,
+      targets: rows.map((row) => ({
+        enrolmentId: row.camp_enrolment_id,
+        studentName: row.student_name,
+      })),
+    };
+  } catch (error) {
+    console.error('Error listing camp LMS provisioning targets:', error);
+    return { ok: false as const, error: 'Failed to list campers for bulk Canvas setup' };
+  }
+}
+
+/**
+ * Provisions one batch of campers. The whole week used to run in a single request, which
+ * gave no progress and risked the serverless time limit; the UI now walks batches so it
+ * can show what is happening and keep each request short.
+ */
+export async function provisionCampLmsCanvasBatch(
+  startDate: string,
+  endDate: string,
+  enrolmentIds: string[],
+) {
+  const session = await auth();
+  if (!session?.user) return { ok: false as const, error: 'Unauthorized: Please log in' };
+
+  const parsed = CampLmsBulkProvisionSchema.safeParse({ startDate, endDate });
+  if (!parsed.success) return { ok: false as const, error: 'Invalid camp week dates' };
+  if (!Array.isArray(enrolmentIds) || enrolmentIds.length === 0) {
+    return { ok: true as const, ...emptyTally() };
+  }
+
+  try {
+    if (!(await isCanvasTokenConfigured())) {
+      return { ok: false as const, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas writes' };
     }
 
     const client = createCanvasClient();
-    const rows = await fetchCampLmsSyncRows(parsed.data.startDate, parsed.data.endDate);
-    let synced = 0;
-    let usersCreated = 0;
-    let coursesAdded = 0;
-    let coursesReactivated = 0;
-    let skipped = 0;
-    const errors: Array<{ enrolmentId: string; studentName: string; error: string }> = [];
+    const wanted = new Set(enrolmentIds);
+    const rows = (await fetchCampLmsSyncRows(parsed.data.startDate, parsed.data.endDate))
+      .filter((row) => wanted.has(row.camp_enrolment_id));
 
-    for (const syncRow of rows) {
-      const syncResult = await syncCampLmsCanvasState(syncRow, client);
-      if (syncResult.ok) {
-        synced += 1;
-      } else {
-        errors.push({
-          enrolmentId: syncRow.camp_enrolment_id,
-          studentName: syncRow.student_name,
-          error: `Sync LMS failed before setup: ${syncResult.error ?? 'unknown error'}`,
-        });
-        continue;
-      }
+    // Campers are independent, so a batch runs concurrently. The batch size is set by the
+    // caller and kept small — Canvas rate-limits, and this is a write path.
+    const tally = mergeTallies(
+      await Promise.all(rows.map((row) => provisionOneCampLmsRow(row, client))),
+    );
 
-      let row = await fetchCampLmsCanvasActionRow(syncRow.camp_enrolment_id);
-      if (!row) {
-        errors.push({
-          enrolmentId: syncRow.camp_enrolment_id,
-          studentName: syncRow.student_name,
-          error: 'Camp enrolment not found',
-        });
-        continue;
-      }
-
-      if (!row.canvas_user_id) {
-        const candidateCount = Array.isArray(row.canvas_user_matches) ? row.canvas_user_matches.length : 0;
-        if (candidateCount > 0) {
-          skipped += 1;
-          errors.push({
-            enrolmentId: syncRow.camp_enrolment_id,
-            studentName: syncRow.student_name,
-            error: 'Canvas returned possible matching users. Review candidate matches before creating a new user.',
-          });
-          continue;
-        }
-
-        const createResult = await runCampLmsCanvasTestAction({
-          campEnrolmentId: syncRow.camp_enrolment_id,
-          type: 'create_user',
-        });
-        if (!createResult.ok) {
-          errors.push({
-            enrolmentId: syncRow.camp_enrolment_id,
-            studentName: syncRow.student_name,
-            error: createResult.error ?? 'Canvas user creation failed',
-          });
-          continue;
-        }
-        usersCreated += 1;
-
-        const resyncResult = await syncCampLmsCanvasState(syncRow, client);
-        if (!resyncResult.ok) {
-          errors.push({
-            enrolmentId: syncRow.camp_enrolment_id,
-            studentName: syncRow.student_name,
-            error: `Canvas user was created, but Sync LMS failed before course setup: ${resyncResult.error ?? 'unknown error'}`,
-          });
-          continue;
-        }
-        row = await fetchCampLmsCanvasActionRow(syncRow.camp_enrolment_id);
-        if (!row?.canvas_user_id) {
-          errors.push({
-            enrolmentId: syncRow.camp_enrolment_id,
-            studentName: syncRow.student_name,
-            error: 'Canvas user was created, but Sync LMS did not find it yet. Sync LMS and run bulk setup again.',
-          });
-          continue;
-        }
-      }
-
-      const expectedCourseIds = expectedCanvasCourseIdsForActionRow(row);
-      if (expectedCourseIds.length === 0) {
-        skipped += 1;
-        continue;
-      }
-
-      const activeEnrollments = Array.isArray(row.active_enrollments)
-        ? row.active_enrollments as Array<Record<string, unknown>>
-        : [];
-      const inactiveEnrollments = Array.isArray(row.inactive_enrollments)
-        ? row.inactive_enrollments as Array<Record<string, unknown>>
-        : [];
-
-      for (const courseId of expectedCourseIds) {
-        const alreadyActive = activeEnrollments.some((candidate) => String(candidate.course_id) === courseId);
-        if (alreadyActive) continue;
-
-        const inactiveEnrollment = inactiveEnrollments.find((candidate) => String(candidate.course_id) === courseId);
-        const enrollmentId = inactiveEnrollment?.enrollment_id == null ? undefined : String(inactiveEnrollment.enrollment_id);
-        const courseResult = await runCampLmsCanvasTestAction({
-          campEnrolmentId: syncRow.camp_enrolment_id,
-          type: 'activate_course',
-          canvasCourseId: courseId,
-          canvasEnrollmentId: enrollmentId,
-        });
-
-        if (!courseResult.ok) {
-          errors.push({
-            enrolmentId: syncRow.camp_enrolment_id,
-            studentName: syncRow.student_name,
-            error: courseResult.error ?? `Failed to add Canvas course ${courseId}`,
-          });
-          continue;
-        }
-
-        if (enrollmentId) {
-          coursesReactivated += 1;
-        } else {
-          coursesAdded += 1;
-        }
-      }
-    }
-
-    await revalidateCampLmsPaths(parsed.data.startDate, parsed.data.endDate);
-    return {
-      ok: true,
-      synced,
-      usersCreated,
-      coursesAdded,
-      coursesReactivated,
-      skipped,
-      errors,
-    };
+    return { ok: true as const, ...tally };
   } catch (error) {
     if (error instanceof CanvasConfigError) {
-      return { ok: false, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas writes' };
+      return { ok: false as const, error: 'CANVAS_API_TOKEN is not configured for server-side Canvas writes' };
     }
-    console.error('Error running bulk camp LMS Canvas setup:', error);
-    return { ok: false, error: 'Failed to run bulk Canvas LMS setup' };
+    console.error('Error running camp LMS Canvas batch:', error);
+    return { ok: false as const, error: 'Failed to run Canvas LMS setup for this batch' };
   }
+}
+
+/** Revalidates the camp pages once the UI has finished walking every batch. */
+export async function finishCampLmsProvisioning(startDate: string, endDate: string) {
+  const session = await auth();
+  if (!session?.user) return { ok: false as const, error: 'Unauthorized: Please log in' };
+  const parsed = CampLmsBulkProvisionSchema.safeParse({ startDate, endDate });
+  if (!parsed.success) return { ok: false as const, error: 'Invalid camp week dates' };
+  await revalidateCampLmsPaths(parsed.data.startDate, parsed.data.endDate);
+  return { ok: true as const };
 }
 
 export async function saveCampLmsCourseMapping(input: {
