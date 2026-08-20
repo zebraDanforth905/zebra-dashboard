@@ -280,6 +280,111 @@ export async function scrapeSummerEnrolmentWeek(opts?: {
   return { ok: true, rows: normalized.length, customers: customerRes, emails: emailRes, ...res };
 }
 
+/**
+ * Gives every camper a row in that week's 3D print log.
+ *
+ * The original seed only fired when a week had no rows at all, so anyone enrolled after
+ * the first visit to the tab never appeared and staff had to add them by hand.
+ *
+ * Strictly additive:
+ *  - a camper already covered by a row is left alone, so several rows for one student
+ *    (multiple prints) survive;
+ *  - staff-added rows, including blank ones and campers who have since left, are never
+ *    touched or deleted — notes about a print already in progress must not vanish.
+ *
+ * Matching is deliberately loose. Staff routinely type a first name ("Ryan") where the
+ * enrolment holds the full name ("Ryan Countryman"), and exact matching would file a
+ * duplicate row for that camper every scrape. A shorter written name counts as covering a
+ * camper when it is a whole-word prefix of exactly one enrolled name that week; if it is
+ * ambiguous (two Ryans) the full names are added, which is the safe way to be wrong.
+ */
+function printLogNameCovers(written: string, studentName: string): boolean {
+  const a = written.trim().toLowerCase();
+  const b = studentName.trim().toLowerCase();
+  if (!a) return false;
+  if (a === b) return true;
+  // Whole-word prefix only: "ryan" covers "ryan countryman", "ry" does not.
+  return b.startsWith(`${a} `);
+}
+
+export async function syncCampPrintLogWithEnrolments(opts?: {
+  startDate?: string;
+  endDate?: string;
+}) {
+  try {
+    const enrolled = await sql<Array<{ week_start: string; student: string }>>`
+      SELECT DISTINCT cs.start_date::text AS week_start, TRIM(st.name) AS student
+      FROM camp_sessions cs
+      JOIN camp_enrolments ce ON ce.camp_session_id = cs.id
+      JOIN students st ON st.id = ce.student_id
+      WHERE TRIM(COALESCE(st.name, '')) <> ''
+        AND (${opts?.startDate ?? null}::date IS NULL OR cs.start_date >= ${opts?.startDate ?? null}::date)
+        AND (${opts?.endDate ?? null}::date IS NULL OR cs.start_date <= ${opts?.endDate ?? null}::date)
+      ORDER BY 1, 2
+    `;
+    if (enrolled.length === 0) return { ok: true as const, added: 0 };
+
+    const weeks = [...new Set(enrolled.map((row) => row.week_start))];
+    const existing = await sql<Array<{ week_start: string; student: string | null; position: number }>>`
+      SELECT week_start::text, student, position
+      FROM camp_print_log
+      WHERE week_start = ANY(${weeks}::date[])
+    `;
+
+    const writtenByWeek = new Map<string, string[]>();
+    const maxPositionByWeek = new Map<string, number>();
+    for (const row of existing) {
+      const names = writtenByWeek.get(row.week_start) ?? [];
+      if (row.student && row.student.trim()) names.push(row.student);
+      writtenByWeek.set(row.week_start, names);
+      maxPositionByWeek.set(
+        row.week_start,
+        Math.max(maxPositionByWeek.get(row.week_start) ?? -1, row.position ?? -1),
+      );
+    }
+
+    const studentsByWeek = new Map<string, string[]>();
+    for (const row of enrolled) {
+      studentsByWeek.set(row.week_start, [...(studentsByWeek.get(row.week_start) ?? []), row.student]);
+    }
+
+    const toInsert: Array<{ week: string; student: string; position: number }> = [];
+    for (const [week, students] of studentsByWeek) {
+      const written = writtenByWeek.get(week) ?? [];
+      let nextPosition = (maxPositionByWeek.get(week) ?? -1) + 1;
+
+      for (const student of students) {
+        const covered = written.some((name) => {
+          if (!printLogNameCovers(name, student)) return false;
+          // An ambiguous shorthand ("Ryan" with two Ryans enrolled) covers nobody.
+          const matches = students.filter((candidate) => printLogNameCovers(name, candidate));
+          return matches.length === 1;
+        });
+        if (covered) continue;
+        toInsert.push({ week, student, position: nextPosition });
+        nextPosition += 1;
+      }
+    }
+
+    if (toInsert.length === 0) return { ok: true as const, added: 0 };
+
+    await sql`
+      INSERT INTO camp_print_log ${sql(
+        toInsert.map((row) => ({ week_start: row.week, position: row.position, student: row.student })),
+        'week_start',
+        'position',
+        'student',
+      )}
+    `;
+
+    revalidateTag('camps', 'max');
+    return { ok: true as const, added: toInsert.length };
+  } catch (error) {
+    console.error('Error syncing camp print log with enrolments:', error);
+    return { ok: false as const, error: 'Failed to sync camp print log' };
+  }
+}
+
 export async function scrapeCampEnrolments(opts?: {
   startDate?: string; // YYYY-MM-DD
   endDate?: string;   // YYYY-MM-DD
@@ -304,13 +409,22 @@ export async function scrapeCampEnrolments(opts?: {
   const customerRows = extractCustomerRows(raw);
   const customerRes = await syncCustomers(customerRows);
 
+  // Keep the 3D print log in step with who is actually enrolled.
+  const printLog = await syncCampPrintLogWithEnrolments({ startDate, endDate });
+
   // refresh any pages that read from these tables
   revalidatePath("/dashboard", 'layout');
   revalidatePath("/students", 'layout');
   revalidatePath("/dashboard/camp", 'layout');
   revalidateTag('camps', 'max');
 
-  return { ok: true, rows: normalized.length, customers: customerRes, ...res };
+  return {
+    ok: true,
+    rows: normalized.length,
+    customers: customerRes,
+    printLogRowsAdded: printLog.ok ? printLog.added : 0,
+    ...res,
+  };
 }
 
 
@@ -3144,6 +3258,11 @@ export async function refreshCampLmsWeek(startDate: string, endDate: string) {
     });
     const normalized = normalizeCampEnrolments(raw);
     const result = await insertCampEnrolments(normalized, parsed.data);
+
+    await syncCampPrintLogWithEnrolments({
+      startDate: parsed.data.startDate,
+      endDate: parsed.data.endDate,
+    });
 
     revalidateTag('camps', 'max');
     await revalidateCampLmsPaths(parsed.data.startDate, parsed.data.endDate);
