@@ -210,23 +210,23 @@ export async function submitFallConfirmation(
           AND removed_at IS NULL
       `;
 
-      const isConfirmed = entry.fall_confirmation_status === 'confirmed';
+      // Selections are kept whatever the answer. Clearing them on "still deciding" or
+      // "pause" meant a family who came back to change their mind found an empty form and
+      // had to rebuild a schedule they had already given us. Only fall_confirmation_status
+      // decides what staff act on, and enrolment already requires 'confirmed'.
       const payload: FallConfirmationPayload = {
         fall_confirmation_status: entry.fall_confirmation_status,
-        slots: isConfirmed
-          ? (entry.slots ?? []).map(slot => ({
-              weekday: slot.weekday,
-              start_time: slot.start_time,
-              start_date: slot.start_date ?? null,
-              course_id: slot.course_id?.trim() || null,
-              change_course: slot.change_course === true,
-            }))
-          : [],
-        pickup_requested: isConfirmed ? Boolean(entry.pickup_requested) : false,
-        pickup_school:
-          isConfirmed && entry.pickup_requested
-            ? (entry.pickup_school as FallConfirmationPayload['pickup_school'])
-            : null,
+        slots: (entry.slots ?? []).map(slot => ({
+          weekday: slot.weekday,
+          start_time: slot.start_time,
+          start_date: slot.start_date ?? null,
+          course_id: slot.course_id?.trim() || null,
+          change_course: slot.change_course === true,
+        })),
+        pickup_requested: Boolean(entry.pickup_requested),
+        pickup_school: entry.pickup_requested
+          ? (entry.pickup_school as FallConfirmationPayload['pickup_school'])
+          : null,
         prefill_source: entry.prefill_source ?? 'none',
       };
       const notes = typeof entry.notes === 'string' && entry.notes.trim() ? entry.notes.trim() : null;

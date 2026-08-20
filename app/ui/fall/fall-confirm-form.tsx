@@ -38,7 +38,8 @@ function initialState(student: FallFormData['students'][number]): StudentState {
     slots: student.prefill_slots,
     pickup_requested: student.prefill_pickup_requested,
     pickup_school: student.prefill_pickup_school,
-    notes: '',
+    // Their previous note comes back so a resubmission does not silently drop it.
+    notes: student.latest_notes ?? '',
   };
 }
 
