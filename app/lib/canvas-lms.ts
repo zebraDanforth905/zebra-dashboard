@@ -80,6 +80,28 @@ function maskToken(value: string | null | undefined) {
   return `${value.slice(0, 4)}••••${value.slice(-4)}`;
 }
 
+/**
+ * Account used for COURSE lookups — the sub-account whose courses we manage.
+ */
+function coursesAccountId(): string {
+  return process.env.CANVAS_ACCOUNT_ID || 'self';
+}
+
+/**
+ * Account used for USER lookups, which must be wider than the course account.
+ *
+ * A Canvas login (pseudonym unique_id) is unique across the whole ROOT account, but
+ * searching a sub-account only returns users inside it. Searching the sub-account
+ * therefore missed users who exist elsewhere under the root, so provisioning tried to
+ * create them and Canvas rejected it with "ID already in use for this account and
+ * authentication provider" — every camper failed and nothing was created.
+ *
+ * Defaults to the root account ('self'). Set CANVAS_USERS_ACCOUNT_ID to override.
+ */
+function usersAccountId(): string {
+  return process.env.CANVAS_USERS_ACCOUNT_ID || 'self';
+}
+
 function canvasBaseUrl() {
   return (process.env.CANVAS_BASE_URL?.trim() || 'https://lms.zebrarobotics.com').replace(/\/+$/, '');
 }
@@ -222,7 +244,7 @@ export async function validateCanvasApiToken(rawToken: string | null | undefined
     return { ok: false as const, error: 'Paste a Canvas API token before saving.' };
   }
 
-  const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+  const accountId = coursesAccountId();
   const checks = [
     {
       label: 'Canvas profile',
@@ -230,7 +252,7 @@ export async function validateCanvasApiToken(rawToken: string | null | undefined
     },
     {
       label: 'Canvas account users',
-      url: new URL(`/api/v1/accounts/${accountId}/users`, canvasBaseUrl()),
+      url: new URL(`/api/v1/accounts/${usersAccountId()}/users`, canvasBaseUrl()),
     },
     {
       label: 'Canvas account courses',
@@ -430,16 +452,15 @@ export class CanvasClient {
   }
 
   async searchUsers(term: string) {
-    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
-    return this.requestAll<CanvasUser>(`/api/v1/accounts/${accountId}/users`, {
+    // Root, not the course sub-account — see usersAccountId.
+    return this.requestAll<CanvasUser>(`/api/v1/accounts/${usersAccountId()}/users`, {
       search_term: term,
       per_page: 50,
     });
   }
 
   async searchCourses(term: string) {
-    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
-    return this.requestAll<CanvasCourse>(`/api/v1/accounts/${accountId}/courses`, {
+    return this.requestAll<CanvasCourse>(`/api/v1/accounts/${coursesAccountId()}/courses`, {
       search_term: term,
       per_page: 50,
     });
@@ -523,7 +544,8 @@ export class CanvasClient {
   }
 
   async createUser({ name, loginId, email }: { name: string; loginId: string; email: string }) {
-    const accountId = process.env.CANVAS_ACCOUNT_ID || 'self';
+    // New users are created in the course sub-account, where they belong.
+    const accountId = coursesAccountId();
     const body = new URLSearchParams({
       'user[name]': name,
       'pseudonym[unique_id]': loginId,

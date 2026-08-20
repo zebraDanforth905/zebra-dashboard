@@ -317,6 +317,10 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
   const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(
     null,
   );
+  // Tracked separately from isPending: a transition stays pending until router.refresh()
+  // completes its server round-trip, which kept every button greyed out long after the
+  // work had finished.
+  const [bulkRunning, setBulkRunning] = useState(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>(
     () => makeInitialNotes(checklist.rows)
   );
@@ -384,7 +388,9 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
     if (!confirmed) return;
 
     setMessage(null);
-    startTransition(async () => {
+    setBulkRunning(true);
+    void (async () => {
+      try {
       const targetResult = await fetchCampLmsProvisionTargets(startDate, endDate);
       if (!targetResult.ok) {
         setMessage(targetResult.error ?? 'Bulk Canvas LMS setup failed.');
@@ -452,7 +458,13 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
         : `Bulk LMS setup finished: ${parts.join(', ')}.`
       );
       router.refresh();
-    });
+      } catch (error) {
+        setProgress(null);
+        setMessage(error instanceof Error ? error.message : 'Bulk Canvas LMS setup failed.');
+      } finally {
+        setBulkRunning(false);
+      }
+    })();
   };
 
   const handleCopy = async () => {
@@ -699,7 +711,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={isPending}
+            disabled={isPending || bulkRunning}
             className="inline-flex items-center gap-2 rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <ArrowPathIcon className="h-4 w-4" />
@@ -708,7 +720,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           <button
             type="button"
             onClick={handleSyncCanvas}
-            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
             className="inline-flex items-center gap-2 rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <ArrowPathIcon className="h-4 w-4" />
@@ -717,7 +729,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
           <button
             type="button"
             onClick={handleBulkCanvasSetup}
-            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
             className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <UserPlusIcon className="h-4 w-4" />
@@ -890,7 +902,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                           <button
                             type="button"
                             onClick={() => handleCreateUser(row)}
-                            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
                             className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Create LMS user
@@ -914,7 +926,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                       enrollments={row.active_canvas_enrollments}
                       actionLabel="Set inactive"
                       actionType="inactivate_enrollment"
-                      disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                      disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
                       onRun={(enrollment) => handleCanvasEnrollmentAction(row, 'inactivate_enrollment', enrollment)}
                       expanded={Boolean(expandedEnrollments[enrollmentListKey(row, 'active')])}
                       onToggleExpanded={() => toggleEnrollmentList(row, 'active')}
@@ -925,7 +937,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                       enrollments={row.inactive_canvas_enrollments}
                       actionLabel="Make active"
                       actionType="activate_course"
-                      disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                      disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
                       onRun={(enrollment) => handleCanvasEnrollmentAction(row, 'activate_course', enrollment)}
                       expanded={Boolean(expandedEnrollments[enrollmentListKey(row, 'inactive')])}
                       onToggleExpanded={() => toggleEnrollmentList(row, 'inactive')}
@@ -963,7 +975,7 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                             key={`${action.type}-${action.canvas_course_id ?? ''}-${action.canvas_enrollment_id ?? ''}`}
                             action={action}
                             row={row}
-                            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                            disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
                             onRun={handleCanvasAction}
                           />
                         ))}
@@ -978,12 +990,12 @@ export default function CampLmsChecklist({ startDate, endDate, checklist }: Prop
                           }))}
                           placeholder="New course ID"
                           className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs"
-                          disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                          disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
                         />
                         <button
                           type="button"
                           onClick={() => handleAddNewCourse(row)}
-                          disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending}
+                          disabled={!checklist.schema_ready || !checklist.canvas_configured || isPending || bulkRunning}
                           className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           Add new
